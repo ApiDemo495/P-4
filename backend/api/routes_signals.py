@@ -49,9 +49,8 @@ async def signals_socket(websocket: WebSocket) -> None:
                         "pending_asset": manager.pending_asset,
                         "lock": manager.lock.status(),
                         "status": manager.status(),
-                        "signal": manager.signal_payload()
-                        if manager.lock.current_signal
-                        else None,
+                        "signal": manager.signal_payload(),
+                        "window": manager.window_status(),
                         "formulas": manager.last_live_formulas,
                         "hold_warning": manager.hold_warning,
                         "assets": list(cfg.ASSETS),
@@ -116,8 +115,11 @@ async def current_signal() -> dict:
     return {
         "lock_state": manager.lock.state.value,
         "lock_icon": manager.lock.state.icon,
-        "signal": signal.to_dict() if signal else None,
+        # Never ``null``: while the lock is COMPUTING this is the sentinel, so
+        # clients can render the layout (and the countdown) immediately.
+        "signal": signal.to_dict() if signal else manager.signal_payload(),
         "hold_warning": manager.hold_warning if signal and signal.signal == "HOLD" else None,
+        "window": manager.window_status(),
         "asset": manager.asset,
         "pending_asset": manager.pending_asset,
         "degradation_level": int(manager.degradation),

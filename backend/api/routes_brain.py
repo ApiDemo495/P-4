@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 
 from backend.api.state import get_manager
+from backend.brain import explain as brain_explain
 
 router = APIRouter()
 
@@ -55,3 +56,15 @@ async def last_trace() -> dict:
     trace["cycle_number"] = manager.stats.cycle_number
     trace["asset"] = manager.asset
     return trace
+
+
+@router.get("/api/brain/wiring")
+async def brain_wiring() -> dict:
+    """How (and where) the Drosophila circuit is used, stage by stage."""
+    return brain_explain.wiring()
+
+
+@router.get("/api/brain/explain")
+async def brain_explanation() -> dict:
+    """Plain-language account of what the brain just did, for the locked window."""
+    return brain_explain.explain(get_manager())

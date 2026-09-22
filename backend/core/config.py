@@ -99,6 +99,18 @@ ASSETS: tuple[str, ...] = ("BTC", "PAXG")
 BINANCE_SYMBOLS: dict[str, str] = {"BTC": "btcusdt", "PAXG": "paxgusdt"}
 COINGECKO_IDS: dict[str, str] = {"BTC": "bitcoin", "PAXG": "pax-gold"}
 
+#: Take-profit / stop-loss geometry (Section 10.5).  The distances are
+#: multiples of the realised 1-minute volatility, so the levels breathe with
+#: the market instead of being fixed pip targets.
+RISK_PARAMS: dict[str, dict[str, float]] = {
+    "BTC": {"tp_sigma_mult": 1.6, "sl_sigma_mult": 1.0},
+    "PAXG": {"tp_sigma_mult": 1.4, "sl_sigma_mult": 1.0},
+}
+
+
+def risk_params(asset: str) -> dict[str, float]:
+    return dict(RISK_PARAMS.get(asset.upper(), RISK_PARAMS["BTC"]))
+
 
 def asset_params(asset: str) -> dict[str, float]:
     return dict(ASSET_PARAMS.get(asset.upper(), ASSET_PARAMS["BTC"]))
@@ -239,6 +251,22 @@ class Settings:
         default_factory=lambda: _env_float("FORMULA_REFRESH_SECONDS", 15.0)
     )
     outcome_horizon_seconds: float = 60.0
+
+    # --- Signal pipeline (Section 10.4) ---------------------------------
+    #: ``True`` (default): the signal that governs a countdown is *computed
+    #: during the previous countdown* and published at the boundary, so the
+    #: panel is never empty and the user never waits.  While a countdown runs,
+    #: the engine is already computing the next one's signal.
+    #: ``False`` restores the literal v2.0 draft (compute, then publish 8 s
+    #: into the same minute the signal applies to).
+    signal_pipeline: bool = field(default_factory=lambda: _env_bool("SIGNAL_PIPELINE", True))
+
+    # --- Risk levels (Section 10.5) -------------------------------------
+    min_tp_bps: float = 4.0
+    max_tp_bps: float = 150.0
+    min_sl_bps: float = 3.0
+    max_sl_bps: float = 120.0
+    default_volatility_bps: float = 12.0
 
     @property
     def cycle_period_seconds(self) -> float:

@@ -119,6 +119,10 @@ def fuse(
         "value": round(ccs_value, 4),
         "weight": default_weights["drosophila"],
         "status": "LIVE",
+        # Where the brain's vote lands in the final number - the UI shows this
+        # so "the fly is 40 % of the decision" is verifiable, not a claim.
+        "weighted_value": round(default_weights["drosophila"] * max(-1.0, min(1.0, ccs_value)), 4),
+        "source": "80-node mushroom body, 3-layer graph convolution",
     }
 
     for name in ("gemini", "local", "github"):

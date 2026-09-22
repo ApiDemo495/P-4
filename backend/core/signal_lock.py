@@ -70,6 +70,19 @@ class FrozenSignal(NamedTuple):
     superseded_by: str | None = None
     """The original directional signal, if an emergency override replaced it."""
 
+    # -- pipelined publication + risk (Sections 10.4 / 10.5) -------------
+    computed_at: str = ""
+    """When the formula pass ran.  With the pipeline on, this is *inside the
+    previous countdown*, which is the whole point: the user never waits."""
+    valid_from: str = ""
+    valid_until: str = ""
+    window_seconds: float = 60.0
+    preview: bool = False
+    """True for the bootstrap signal published at cold start before the first
+    pipelined window exists."""
+    risk: tuple = ()
+    """((key, value), ...) - take-profit / stop-loss block (Section 10.5)."""
+
     # ------------------------------------------------------------------
     def formula_dict(self) -> dict[str, float]:
         return {name: value for name, value in self.formula_values}
@@ -104,7 +117,39 @@ class FrozenSignal(NamedTuple):
             "total_ms": round(self.total_ms, 3),
             "emergency_headline": self.emergency_headline,
             "superseded_by": self.superseded_by,
+            "computed_at": self.computed_at,
+            "valid_from": self.valid_from,
+            "valid_until": self.valid_until,
+            "window_seconds": round(self.window_seconds, 1),
+            "preview": self.preview,
+            "risk": dict(self.risk),
+            "age_seconds": _age_seconds(self.valid_from),
+            "seconds_remaining": _seconds_remaining(self.valid_until),
         }
+
+
+def _parse_iso(value: str) -> float | None:
+    if not value:
+        return None
+    from datetime import datetime, timezone
+
+    for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%fZ"):
+        try:
+            return datetime.strptime(value, fmt).replace(tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            continue
+    return None
+
+
+def _age_seconds(valid_from: str) -> float | None:
+    """How long the user has been looking at this signal."""
+    started = _parse_iso(valid_from)
+    return None if started is None else round(max(0.0, time.time() - started), 1)
+
+
+def _seconds_remaining(valid_until: str) -> float | None:
+    ends = _parse_iso(valid_until)
+    return None if ends is None else round(max(0.0, ends - time.time()), 1)
 
 
 class SignalLockController:

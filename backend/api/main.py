@@ -145,6 +145,11 @@ async def system_config() -> dict:
         "news_enabled": settings.news_enabled,
         "market_data_mode": settings.market_data_mode,
         "simulator_allowed": settings.market_allow_simulator,
+        "signal_pipeline": settings.signal_pipeline,
+        # Live feed name + whether it is simulated, so the dashboard can label
+        # the numbers honestly instead of claiming a live tape in CI.
+        "market_source": state.get_manager().market.active_source,
+        "simulated": state.get_manager().market.active_source == "simulator",
         # Lets the dashboard show/hide the "Flutter app" link and the first-run
         # key banner without guessing.
         "flutter_web": (cfg.REPO_ROOT / "frontend" / "build" / "web").exists(),

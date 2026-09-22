@@ -135,61 +135,6 @@ class AgentList extends StatelessWidget {
   }
 }
 
-/// Full-screen red/amber overlay shown while an emergency override is active.
-class EmergencyOverlay extends StatelessWidget {
-  const EmergencyOverlay({super.key, required this.state});
-
-  final AppState state;
-
-  @override
-  Widget build(BuildContext context) {
-    final event = state.emergency;
-    if (event == null) return const SizedBox.shrink();
-    return Positioned.fill(
-      child: Container(
-        color: AppTheme.emergency.withAlpha(28),
-        child: Center(
-          child: Container(
-            width: 520,
-            margin: const EdgeInsets.all(24),
-            padding: const EdgeInsets.all(22),
-            decoration: BoxDecoration(
-              color: AppTheme.surface,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppTheme.emergency, width: 2),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('\u{26A1}  EMERGENCY OVERRIDE',
-                    style: TextStyle(
-                        color: AppTheme.emergency,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.2)),
-                const SizedBox(height: 12),
-                Text(event['headline']?.toString() ?? '',
-                    style: const TextStyle(fontSize: 15, height: 1.35)),
-                const SizedBox(height: 8),
-                Text(
-                  'Previous signal: ${event['previous_signal']} → HOLD · '
-                  '${state.emergencyRemaining.toStringAsFixed(0)}s remaining',
-                  style: const TextStyle(color: AppTheme.textMuted, fontSize: 12),
-                ),
-                const SizedBox(height: 16),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: FilledButton.tonal(
-                    onPressed: state.clearEmergency,
-                    child: const Text('Clear override'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
+// NOTE: the emergency notice used to be a full-screen overlay here.  It is now
+// an inline, glittering HOLD box inside the fixed-layout widget panel
+// (`signal_widget_panel.dart`), so nothing ever covers the dashboard.

@@ -9,25 +9,6 @@
 </head>
 <body>
 
-<!-- ===================== EMERGENCY OVERLAY ===================== -->
-<div id="emergency" class="emergency hidden">
-  <div class="emergency-card">
-    <div class="emergency-title">⚡⚡⚡ EMERGENCY OVERRIDE ⚡⚡⚡</div>
-    <div class="emergency-headline" id="em-headline">—</div>
-    <div class="emergency-body">
-      Signal overridden to <strong>HOLD</strong>.<br />
-      Exit any open positions immediately.
-    </div>
-    <div class="emergency-countdown">Normal operation resumes in: <span id="em-remaining">3:00</span></div>
-    <div class="emergency-actions">
-      <button class="btn danger" id="em-ack">Acknowledge</button>
-      <button class="btn ghost" id="em-dismiss">Dismiss Override</button>
-    </div>
-  </div>
-</div>
-
-<div id="shade" class="shade hidden"></div>
-
 <!-- ============================ HEADER ============================ -->
 <header class="topbar">
   <div class="brand"><span class="fly">🪰</span> DROSOPHILA TRADER <span class="ver">v2.0</span></div>
@@ -99,33 +80,95 @@
     </div>
   </section>
 
-  <!-- =========================== TIMER =========================== -->
-  <section class="card timer-card">
-    <div class="timer-row">
-      <div class="timer" id="timer">00:00 <span id="lock-icon">⏳</span></div>
-      <div class="timer-side">
-        <div class="kv"><span>cycle</span><b id="cycle-number">—</b></div>
-        <div class="kv"><span>utc</span><b id="utc">—</b></div>
-        <div class="kv"><span>state</span><b id="lock-state">COMPUTING</b></div>
+  <!-- ============ WIDGET PANEL (fixed layout, rows 1 and 2) ============ -->
+  <!-- Row 1: prediction | countdown 1-60 | HOLD box                          -->
+  <!-- Row 2: take profit / stop loss | prediction accuracy                  -->
+  <section class="card widget-panel">
+    <div class="widget-row row-top">
+
+      <div class="widget-cell cell-prediction">
+        <div class="cell-label">PREDICTION <span class="muted" id="w-window-label">—</span></div>
+        <div class="prediction-value" id="w-prediction">—</div>
+        <div class="prediction-sub" id="w-prediction-sub">waiting for the first lock…</div>
+        <!-- Small inline override notice - never a full-screen overlay. -->
+        <div class="emergency-chip hidden" id="w-emergency">
+          <span class="bolt">⚡</span>
+          <span id="w-emergency-text">emergency override — forced HOLD</span>
+          <button class="btn tiny ghost" id="w-emergency-clear">dismiss</button>
+        </div>
+      </div>
+
+      <div class="widget-cell cell-countdown">
+        <div class="cell-label">COUNTDOWN <span class="muted">seconds to the boundary</span></div>
+        <div class="countdown-ring" id="w-ring">
+          <div class="countdown-inner">
+            <div class="countdown-number" id="w-countdown">—</div>
+            <div class="countdown-unit">sec</div>
+          </div>
+        </div>
+        <div class="cell-sub" id="w-countdown-sub">—</div>
+        <div class="pipeline-track" title="the next window is computed while this one runs">
+          <div class="pipeline-fill" id="w-pipeline-fill"></div>
+        </div>
+        <div class="cell-sub" id="w-next">—</div>
+      </div>
+
+      <div class="widget-cell cell-holdbox">
+        <div class="cell-label">HOLD / WAIT</div>
+        <div class="hold-box" id="w-hold">
+          <div class="hold-title" id="w-hold-title">HOLD</div>
+          <div class="hold-text" id="w-hold-text">—</div>
+          <div class="hold-meta" id="w-hold-meta"></div>
+        </div>
       </div>
     </div>
-    <div class="progress"><div class="progress-fill" id="progress"></div></div>
-  </section>
 
-  <!-- ========================= SIGNAL PANEL ========================= -->
-  <section class="card signal-card">
-    <div id="computing" class="computing">
-      <div class="spinner"></div>
-      <div class="computing-text">⏳ Computing…</div>
-      <div class="computing-sub">Formulas, agents and the connectome are running.<br />
-        No signal is available for the first <b>8 seconds</b> of each minute.</div>
+    <div class="widget-row row-bottom">
+      <div class="widget-cell">
+        <div class="cell-label">TAKE PROFIT / STOP LOSS</div>
+        <div class="kv-grid">
+          <div class="kv-item"><span>Entry</span><b id="w-entry">—</b></div>
+          <div class="kv-item"><span>Take profit</span><b id="w-tp" class="pos">—</b></div>
+          <div class="kv-item"><span>Stop loss</span><b id="w-sl" class="neg">—</b></div>
+          <div class="kv-item"><span>Reward : risk</span><b id="w-rr">—</b></div>
+          <div class="kv-item"><span>Realised vol · 1 min</span><b id="w-vol">—</b></div>
+          <div class="kv-item"><span>Levels set</span><b id="w-levels">—</b></div>
+          <div class="kv-item wide"><span>Note</span><b id="w-risk-note" class="muted">—</b></div>
+        </div>
+      </div>
+      <div class="widget-cell">
+        <div class="cell-label">PREDICTION ACCURACY</div>
+        <div class="kv-grid">
+          <div class="kv-item"><span>Win rate</span><b id="w-winrate">—</b></div>
+          <div class="kv-item"><span>Evaluated windows</span><b id="w-samples">—</b></div>
+          <div class="kv-item"><span>Current streak</span><b id="w-streak">—</b></div>
+          <div class="kv-item"><span>Last outcome</span><b id="w-last-outcome">—</b></div>
+          <div class="kv-item wide"><span>Engine</span><b id="w-engine" class="muted">—</b></div>
+        </div>
+      </div>
     </div>
 
-    <div id="signal-body" class="hidden">
-      <div class="signal-badge" id="signal-badge">HOLD</div>
+    <div class="widget-strip">
+      <span class="kv"><span>cycle</span><b id="cycle-number">—</b></span>
+      <span class="kv"><span>state</span><b id="lock-state">COMPUTING</b></span>
+      <span class="kv"><span>utc</span><b id="utc">—</b></span>
+      <span class="kv"><span>window</span><b id="w-window-span">—</b></span>
+      <span style="flex:1"></span>
+      <span class="muted" id="w-clock-note"></span>
+    </div>
+  </section>
+
+  <!-- ===================== SIGNAL DETAIL (locked) ===================== -->
+  <section class="card signal-card">
+    <div class="card-head">
+      <h2>🔒 Locked signal detail</h2>
+      <span class="muted" id="signal-frozen">—</span>
+    </div>
+    <div id="signal-body">
       <div class="signal-meta">
         <span id="signal-icon">🔒</span>
-        <span id="signal-note">locked for this cycle</span>
+        <span id="signal-note">locked for this window</span>
+        <span class="badge" id="signal-cycle-badge">cycle —</span>
       </div>
       <div class="confidence-row">
         <span>Confidence</span>
@@ -135,9 +178,8 @@
       <div class="reasoning" id="reasoning">—</div>
       <div class="weights" id="weights"></div>
     </div>
-
     <div id="hold-warning" class="hold-warning hidden">
-      <div class="hw-title">⚠️ HOLD Warning</div>
+      <div class="hw-title">⚠️ HOLD warning</div>
       <div class="hw-text" id="hw-text"></div>
       <div class="hw-lean" id="hw-lean"></div>
     </div>
@@ -189,6 +231,34 @@
       <div class="card-head" style="margin-top:14px"><h2>Recent Outcomes</h2><span class="muted">for the DRG learner</span></div>
       <ul class="history" id="outcomes"></ul>
     </div>
+  </section>
+
+  <!-- ============== WHERE THE FLY BRAIN IS USED (item 6) ============== -->
+  <section class="card brain-card">
+    <div class="card-head">
+      <h2>🪰 Where the fly brain is used</h2>
+      <span class="muted">80-neuron mushroom body · 40% of the fusion</span>
+    </div>
+    <div class="brain-grid">
+      <div class="brain-pipeline" id="brain-pipeline"></div>
+      <div class="brain-live">
+        <div class="brain-verdict" id="brain-verdict">waiting for the first completed window…</div>
+        <div class="kv-grid" id="brain-kv">
+          <div class="kv-item"><span>Dominant inputs</span><b id="b-dominant">—</b></div>
+          <div class="kv-item"><span>Kenyon cells active</span><b id="b-kc">—</b></div>
+          <div class="kv-item"><span>MBON approach / avoid</span><b id="b-mbon">—</b></div>
+          <div class="kv-item"><span>Lateral horn</span><b id="b-lh">—</b></div>
+          <div class="kv-item"><span>Dopamine gates</span><b id="b-dan">—</b></div>
+          <div class="kv-item"><span>CCSv2 → fusion</span><b id="b-ccs">—</b></div>
+          <div class="kv-item wide"><span>Connectome</span><b id="b-source" class="muted">—</b></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <a class="btn ghost" href="/matrix" style="text-decoration:none">Open the 80×80 matrix</a>
+          <button class="btn tiny ghost" id="brain-toggle">Show the wiring diagram</button>
+        </div>
+      </div>
+    </div>
+    <div id="brain-wiring" class="brain-wiring hidden"></div>
   </section>
 
   <!-- ======================= FORMULA EXPLORER ======================= -->

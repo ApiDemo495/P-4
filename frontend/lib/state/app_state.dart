@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/signal.dart';
@@ -52,9 +53,21 @@ class AppState extends ChangeNotifier {
   double winRate = 0.0;
   int outcomeCount = 0;
 
+  // --- pipeline / window ----------------------------------------------------
+  WindowInfo? window;
+  bool nextWindowReady = false;
+  Map<String, dynamic> brainExplain = const {};
+  Map<String, dynamic> wiring = const {};
+
   // --- emergency -----------------------------------------------------------
   Map<String, dynamic>? emergency;
   double emergencyRemaining = 0;
+
+  /// Server countdown anchor: one reading, advanced with a monotonic stopwatch
+  /// so the number on screen always belongs to the published window.
+  final Stopwatch _windowClock = Stopwatch();
+  double _anchorRemaining = 60.0;
+  String? _lastPrediction;
 
   Timer? _countdown;
   Timer? _poll;
@@ -63,10 +76,14 @@ class AppState extends ChangeNotifier {
   bool get isComputing => lockState == 'COMPUTING';
   bool get isEmergency => lockState == 'EMERGENCY_OVERRIDE';
   bool get isLocked => lockState == 'LOCKED';
+  /// The Signal Lock Protocol state, phrased for the pipelined engine: while a
+  /// window is locked the engine is already working on the next one.
   String get lockLabel => isEmergency
       ? 'EMERGENCY OVERRIDE - HOLD'
       : isLocked
-          ? 'LOCKED - immutable for the rest of the cycle'
+          ? (nextWindowReady
+              ? 'LOCKED - next window computed and held until the boundary'
+              : 'LOCKED - computing the next window now')
           : 'COMPUTING...';
 
   // =========================================================================
@@ -79,6 +96,7 @@ class AppState extends ChangeNotifier {
     final config = await api.config();
     if (config != null) {
       cyclePeriodSeconds = config.cyclePeriodSeconds;
+      lockDeadlineSeconds = config.lockDeadlineSeconds;
       weights = config.weights;
       if (!config.assets.contains(asset) && config.assets.isNotEmpty) {
         asset = config.assets.first;
@@ -90,6 +108,8 @@ class AppState extends ChangeNotifier {
     await refreshNews();
     await refreshAgents();
     await refreshBrain();
+    await refreshWiring();
+    await refreshBrainExplain();
     await refreshHistory();
     await refreshOutcomes();
     await refreshTimings();
@@ -113,9 +133,9 @@ class AppState extends ChangeNotifier {
   }
 
   void _tick() {
-    if (secondsRemaining > 0) {
-      secondsRemaining = (secondsRemaining - 0.1).clamp(0, cyclePeriodSeconds);
-    }
+    // Anchor the countdown to the server reading, never to a local guess.
+    secondsRemaining = (_anchorRemaining - _windowClock.elapsedMilliseconds / 1000)
+        .clamp(0.0, cyclePeriodSeconds);
     if (emergencyRemaining > 0) {
       emergencyRemaining = (emergencyRemaining - 0.1).clamp(0, 600);
       if (emergencyRemaining == 0) emergency = null;
@@ -137,21 +157,29 @@ class AppState extends ChangeNotifier {
       case 'HELLO':
         asset = (event.data['asset'] ?? asset).toString();
         pendingAsset = event.data['pending_asset']?.toString();
+        _applyWindow(event.data['window'] ?? _statusWindow(event.data['status']));
         _applySignal(event.data['signal']);
         _applyStatus(event.data['status']);
+        refreshWiring();
+        refreshBrainExplain();
         break;
       case 'CYCLE_START':
+        // Only the non-pipelined mode sends this.  Even then the previous
+        // signal is kept on screen: a blank panel is never acceptable.
         cycleNumber = (event.data['cycle_number'] as num?)?.toInt() ?? cycleNumber;
         asset = (event.data['asset'] ?? asset).toString();
         lockState = 'COMPUTING';
         lockIcon = '\u{23F3}';
-        signal = null;
-        holdWarning = null;
-        secondsRemaining = cyclePeriodSeconds;
         break;
       case 'SIGNAL':
+        _applyWindow(event.data['window']);
         _applySignal(event.data);
         refreshHistory();
+        refreshBrainExplain();
+        break;
+      case 'NEXT_WINDOW_READY':
+        nextWindowReady = true;
+        refreshBrainExplain();
         break;
       case 'FORMULA_UPDATE':
         final raw = (event.data['formulas'] as Map?) ?? const {};
@@ -175,9 +203,37 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Haptics: the user should feel a new window arrive, not have to stare at
+  /// the screen.  A direction change is a medium impact, an emergency override
+  /// is a heavy double buzz, and the very first lock is a light selection tick.
+  void _hapticFor(String? previous, FrozenSignal next) {
+    if (previous == null) {
+      HapticFeedback.selectionClick();
+    } else if (previous == next.signal) {
+      return;
+    } else if (next.isEmergencyOverride) {
+      HapticFeedback.heavyImpact();
+      HapticFeedback.vibrate();
+      Future<void>.delayed(const Duration(milliseconds: 140), () {
+        HapticFeedback.mediumImpact();
+      });
+    } else {
+      HapticFeedback.mediumImpact();
+    }
+  }
+
   void _applySignal(dynamic raw) {
     if (raw is! Map) return;
+    if (raw['signal'] == null) {
+      // Sentinel from a cold start: keep the layout, wait for the first lock.
+      _applyWindow(raw['window']);
+      return;
+    }
     final parsed = FrozenSignal.fromJson(Map<String, dynamic>.from(raw));
+    final previous = signal?.signal ?? _lastPrediction;
+    if (parsed.window != null) _applyWindow(raw['window']);
+    _hapticFor(previous, parsed);
+    _lastPrediction = parsed.signal;
     signal = parsed;
     lockState = parsed.lockState;
     lockIcon = parsed.lockIcon;
@@ -187,6 +243,57 @@ class AppState extends ChangeNotifier {
       liveFormulas = parsed.formulas;
     }
   }
+
+  /// Adopt the window block and re-anchor the local countdown.
+  void _applyWindow(dynamic raw) {
+    if (raw is! Map) return;
+    final parsed = WindowInfo.fromJson(Map<String, dynamic>.from(raw));
+    window = parsed;
+    if (parsed.windowSeconds > 0) cyclePeriodSeconds = parsed.windowSeconds;
+    _anchorRemaining = parsed.secondsRemaining;
+    _windowClock
+      ..reset()
+      ..start();
+    secondsRemaining = parsed.secondsRemaining;
+    nextWindowReady = parsed.prefetchReady;
+  }
+
+  static dynamic _statusWindow(dynamic status) =>
+      status is Map ? status['window'] : null;
+
+  /// Progress of the *next* window's computation, 0..1.
+  double get nextComputeProgress {
+    if (nextWindowReady) return 1.0;
+    final w = window;
+    if (w == null || !w.pipeline) return 0.0;
+    final lead = _lockDeadlineSeconds <= 0 ? 8.0 : _lockDeadlineSeconds;
+    return ((lead - w.secondsRemaining) / lead).clamp(0.0, 1.0);
+  }
+
+  double _lockDeadlineSeconds = 8.0;
+
+  /// How long before the boundary the engine starts computing the next signal.
+  set lockDeadlineSeconds(double value) => _lockDeadlineSeconds = value;
+  double get lockDeadlineSeconds => _lockDeadlineSeconds;
+
+  /// Win/loss streak over the evaluated windows (positive = wins).
+  int get outcomeStreak {
+    var streak = 0;
+    for (final row in outcomes.reversed) {
+      if (row.outcome == 0) break;
+      final sign = row.outcome > 0 ? 1 : -1;
+      if (streak == 0) {
+        streak = sign;
+      } else if ((streak > 0 ? 1 : -1) == sign) {
+        streak += sign;
+      } else {
+        break;
+      }
+    }
+    return streak;
+  }
+
+  SignalOutcome? get lastOutcome => outcomes.isEmpty ? null : outcomes.first;
 
   void _applyStatus(dynamic raw) {
     if (raw is! Map) return;
@@ -204,6 +311,7 @@ class AppState extends ChangeNotifier {
           (clock['seconds_into_minute'] as num?)?.toDouble() ?? 0.0;
       secondsRemaining = (cyclePeriodSeconds - intoMinute).clamp(0, cyclePeriodSeconds);
     }
+    _applyWindow(status['window']);
     final lock = status['lock'];
     if (lock is Map) {
       lockState = (lock['state'] ?? lockState).toString();
@@ -253,6 +361,20 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The static map: which formula drives which neuron (item 6).
+  Future<void> refreshWiring() async {
+    final json = await api.brainWiring();
+    if (json != null) wiring = json;
+    notifyListeners();
+  }
+
+  /// The live per-window story of the circuit.
+  Future<void> refreshBrainExplain() async {
+    final json = await api.brainExplain();
+    if (json != null) brainExplain = json;
+    notifyListeners();
+  }
+
   Future<void> refreshHistory() async {
     final json = await api.history(limit: 12);
     if (json != null) {
@@ -297,6 +419,8 @@ class AppState extends ChangeNotifier {
     await refreshStatus();
     await refreshAgents();
     await refreshNews();
+    await refreshOutcomes();
+    await refreshBrainExplain();
     if (isEmergency) await refreshBrain();
   }
 

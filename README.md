@@ -105,11 +105,28 @@ PYTHONPATH=. python -m backend.tests.smoke --seconds 90   # cycle-by-cycle dump
 | `backend/agents` | Gemini, local GGUF/ONNX, GitHub Models, fusion, orchestrator |
 | `backend/web` | zero-build dashboard (`/`, `/matrix`, `/settings`) |
 | `backend/tests` | `smoke.py` + `test_e2e.py` (Appendix E) |
-| `frontend` | Flutter client (same protocol, same information architecture) |
+| `frontend` | Flutter client (same protocol, same fixed widget layout, **Brain** tab with the full wiring map) |
 | `docs` | [`SPECIFICATION_v2.md`](docs/SPECIFICATION_v2.md), [`SPEC_NOTES.md`](docs/SPEC_NOTES.md) |
 
 ## The parts that make it v2.0
 
+* **Pipelined countdown.** The 60-second countdown shows the signal that was
+  computed *during the previous countdown*, while the engine computes the next
+  one in the last ~8 seconds of the current window. The panel is never blank:
+  the only thing a cold start shows is a labelled sentinel. `SIGNAL_PIPELINE=0`
+  restores the literal "compute at t=0, lock at t=8 s" draft timeline.
+* **A dashboard you can read at a glance.** Row 1: prediction · countdown 1–60 ·
+  glittering HOLD box. Row 2: take-profit & stop-loss (volatility-derived) ·
+  prediction accuracy. An emergency override is a small inline chip under the
+  prediction — never a full-screen overlay. The Flutter client adds real haptics
+  (`mediumImpact` on a direction change, `heavyImpact` + `vibrate` on an
+  override).
+* **The fly brain is visible, not decorative.** `/api/brain/wiring` returns the
+  formula → neuron map and the five circuit stages; `/api/brain/explain` returns
+  what the circuit actually did in the locked window — dominant projection
+  neurons, KC sparsity, MBON and lateral-horn read-outs, the dopamine gates, and
+  the brain's exact share of the fused score. The **Brain** panel (web) and
+  **Brain** tab (Flutter) render both.
 * **Signal Lock Protocol.** `COMPUTING ⏳ → LOCKED 🔒 → EMERGENCY_OVERRIDE ⚡`.
   `lock()` is callable once per cycle and the frozen signal is a `NamedTuple`;
   a duplicate or late computation physically cannot rewrite what you are

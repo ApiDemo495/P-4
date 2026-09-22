@@ -94,6 +94,13 @@ class ApiClient {
 
   Future<Map<String, dynamic>?> brainStatus() => _getJson('/api/brain/status');
 
+  /// Where the fly brain is connected: formula -> neuron map, stage list and
+  /// fusion weight. Drives the Brain screen.
+  Future<Map<String, dynamic>?> brainWiring() => _getJson('/api/brain/wiring');
+
+  /// What the circuit actually did in the window that is locked right now.
+  Future<Map<String, dynamic>?> brainExplain() => _getJson('/api/brain/explain');
+
   Future<Map<String, dynamic>?> formulasLive() => _getJson('/api/formulas/live');
 
   Future<Map<String, dynamic>?> timings() => _getJson('/api/formulas/timings');

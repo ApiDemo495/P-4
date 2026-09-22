@@ -67,8 +67,42 @@ class ActivationTrace:
     confidence: float = 0.0
     active_kcs: int = 0
     diagnostics: dict = field(default_factory=dict)
+    # --- the wiring the UI needs to explain *how* the brain was used -----
+    pn_activations: np.ndarray = None
+    """The 20 projection-neuron activations: one per input formula, in PN order."""
+    mbon: dict = field(default_factory=dict)
+    """Behavioural read-outs: approach / avoid / neutral / confidence."""
+    dan: dict = field(default_factory=dict)
+    """Dopamine + octopamine gating actually applied this cycle."""
+
+    def dominant_pns(self, limit: int = 6) -> list[dict]:
+        if self.pn_activations is None:
+            return []
+        order = np.argsort(-np.abs(self.pn_activations))[:limit]
+        return [
+            {
+                "pn": int(i),
+                "formula": PN_NAMES[i] if i < len(PN_NAMES) else str(i),
+                "value": round(float(self.pn_activations[i]), 4),
+            }
+            for i in order
+        ]
+
+    def top_kcs(self, limit: int = 5) -> list[dict]:
+        if self.kc_activations is None or self.kc_activations.size == 0:
+            return []
+        order = np.argsort(-np.abs(self.kc_activations))[:limit]
+        return [
+            {"cluster": int(KC_START + i), "value": round(float(self.kc_activations[i]), 4)}
+            for i in order
+        ]
 
     def to_dict(self) -> dict:
+        pn = (
+            {name: round(float(v), 4) for name, v in zip(PN_NAMES, self.pn_activations)}
+            if self.pn_activations is not None
+            else {}
+        )
         return {
             "kcae": round(self.kcae, 4),
             "lh_approach": round(self.lh_approach, 4),
@@ -80,6 +114,23 @@ class ActivationTrace:
             "decisiveness": round(self.diagnostics.get("decisiveness", 0.0), 4),
             "active_kcs": self.active_kcs,
             "diagnostics": self.diagnostics,
+            # --- how the circuit was used -------------------------------
+            "pn": pn,
+            "dominant_pns": self.dominant_pns(),
+            "kenyon_cells": {
+                "active": self.active_kcs,
+                "of": N_KC,
+                "sparsity": SPARSITY,
+                "top": self.top_kcs(),
+                "kcae": round(self.kcae, 4),
+            },
+            "mbons": {k: round(float(v), 4) for k, v in self.mbon.items()},
+            "lateral_horn": {
+                "approach": round(self.lh_approach, 4),
+                "avoid": round(self.lh_avoid, 4),
+                "neutral": round(self.lh_neutral, 4),
+            },
+            "dan": {k: round(float(v), 4) for k, v in self.dan.items()},
         }
 
 
@@ -224,6 +275,20 @@ class GraphConvolution:
             lh_avoid=float(a3[LH_AVOID]),
             lh_neutral=float(a3[LH_NEUTRAL]),
             active_kcs=int(np.count_nonzero(a1[KC_START:KC_END])),
+            pn_activations=a0[:N_FORMULAS].copy(),
+            mbon={
+                "approach": float(a3[MBON_APPROACH]),
+                "avoid": float(a3[MBON_AVOID]),
+                "neutral": float(a3[MBON_NEUTRAL]),
+                "confidence": float(a3[MBON_CONFIDENCE]),
+            },
+            dan={
+                "drg": float(drg),
+                "pam": float(a1[PAM]),
+                "ppl1": float(a1[PPL1]),
+                "octopamine": float(a1[OA]),
+                "hsi": float(hsi),
+            },
         )
 
 

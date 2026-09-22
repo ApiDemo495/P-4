@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 
@@ -37,6 +38,7 @@ from backend.core.clock import WorldClock
 from backend.core.errors import ComponentStatus, DegradationLevel
 from backend.core.frozen_snapshot import FrozenMarketSnapshot
 from backend.core.redis_bus import Store
+from backend.core.risk import realized_volatility_bps, risk_levels
 from backend.core.signal_lock import FrozenSignal, LockState, SignalLockController
 from backend.data.market_hub import MarketDataHub
 from backend.data.ring_buffer import OutcomeBuffer
@@ -45,6 +47,11 @@ from backend.news.critical_event_detector import CriticalEvent
 from backend.news.news_engine import NewsEngine
 
 log = logging.getLogger("drosophila.cycle")
+
+
+def _iso(timestamp: float) -> str:
+    """Wall-clock ISO-8601 (UTC) stamp, second precision - what the UI renders."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp))
 
 
 @dataclass
@@ -95,10 +102,33 @@ class CycleManager:
         self.degradation = DegradationLevel.FULL
         self.warnings: list[str] = []
         self.last_snapshot: FrozenMarketSnapshot | None = None
+        #: The formula pass that produced the **locked** signal.  Kept separate
+        #: from the prefetch pass so /api/formulas/current and /api/brain/trace
+        #: always describe what the user is actually looking at.
         self.last_formula_result: FormulaResult | None = None
         self.last_live_formulas: dict[str, float] = {}
         self.last_fusion: dict = {}
         self.hold_warning: dict | None = None
+
+        # --- pipelined publication (Sections 10.4) ----------------------
+        self._pending_signal: FrozenSignal | None = None
+        self._pending_vol_bps: float = 0.0
+        self.pending_formula_result: FormulaResult | None = None
+        self.prefetch_ready: bool = False
+        self.prefetch_ms: float = 0.0
+        self.prefetch_at: float = 0.0
+        #: how long before the boundary the next signal starts being computed
+        self.prefetch_lead: float = min(
+            max(self.settings.scaled(self.settings.lock_deadline_seconds), 0.2),
+            self.settings.cycle_period_seconds * 0.5,
+        )
+        #: When the *published* signal was computed (it is always one window
+        #: before it goes live when the pipeline is on).
+        self.published_computed_at: float = 0.0
+        self.published_compute_ms: float = 0.0
+        self.window_valid_from: float = 0.0
+        self.window_valid_until: float = 0.0
+        self._origin_wall: float = 0.0
 
         self._subscribers: set[asyncio.Queue] = set()
         self._tasks: list[asyncio.Task] = []
@@ -171,6 +201,9 @@ class CycleManager:
     # The cycle
     # ==================================================================
     async def _cycle_loop(self) -> None:
+        if self.settings.signal_pipeline:
+            await self._pipelined_loop()
+            return
         while not self._stop.is_set():
             try:
                 await self._wait_for_cycle_start()
@@ -182,6 +215,242 @@ class CycleManager:
             except Exception as exc:  # noqa: BLE001 - the loop must never die
                 log.exception("cycle failed: %s", exc)
                 await asyncio.sleep(1.0)
+
+    # ==================================================================
+    # Pipelined publication (Section 10.4) - the default mode
+    #
+    #   window N   :  |--- publish signal N -- compute signal N+1 ---|
+    #                       ^ boundary                              ^ prefetch (lead before the
+    #                                                                  next boundary so the data
+    #                                                                  is as fresh as possible)
+    #
+    # The signal that governs a countdown is computed *during the previous
+    # countdown*, so the panel is never empty, the user never waits, and the
+    # engine is always working on the next window while the current one runs.
+    # ==================================================================
+    async def _pipelined_loop(self) -> None:
+        period = self.settings.cycle_period_seconds
+        lead = min(max(self.settings.scaled(self.settings.lock_deadline_seconds), 0.2), period * 0.5)
+
+        # --- bootstrap: one immediate window so the panel is never blank ----
+        # The signal in this window is computed now (there was no previous
+        # window to compute it in) and is flagged ``preview`` so the UI can say
+        # so instead of pretending the pipeline is already running.
+        await self._wait_for_cycle_start()
+        try:
+            await self._run_cycle(bootstrap=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.exception("bootstrap cycle failed: %s", exc)
+
+        boundary = self.window_valid_until or (time.time() + period)
+        self._origin_wall = boundary
+        index = 0
+        while not self._stop.is_set():
+            try:
+                deadline = boundary + index * period
+                if self.settings.use_world_clock:
+                    # Stay phase-locked to the UTC minute even across restarts.
+                    deadline = self._snap_to_minute(deadline)
+
+                # --- compute the NEXT window while this one is still running --
+                # Happens at the very end of the countdown (``lead`` seconds
+                # before the boundary) so the frozen snapshot is as fresh as it
+                # can be while still landing before the lock deadline.
+                await self._sleep_until(deadline - lead)
+                if self._stop.is_set():
+                    break
+                await self._prefetch(deadline)
+
+                # --- the boundary: publish what was just prepared ------------
+                await self._sleep_until(deadline)
+                if self._stop.is_set():
+                    break
+                await self._open_window(deadline)
+                index += 1
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                log.exception("window failed: %s", exc)
+                await asyncio.sleep(0.5)
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _snap_to_minute(timestamp: float) -> float:
+        """Round a wall-clock timestamp up to the next UTC minute boundary."""
+        return math.ceil((timestamp - 1e-6) / 60.0) * 60.0
+
+    async def _sleep_until(self, deadline_wall: float) -> None:
+        """Sleep until an absolute wall-clock deadline, without drift."""
+        while not self._stop.is_set():
+            remaining = deadline_wall - time.time()
+            if remaining <= 0:
+                return
+            await asyncio.sleep(min(0.2, remaining) if remaining > 0.05 else remaining)
+
+    async def _open_window(self, deadline_wall: float) -> None:
+        """Publish the pre-computed signal for the window that starts now."""
+        self.stats.cycle_number += 1
+        cycle = self.stats.cycle_number
+
+        # Asset switches are applied here and nowhere else (test case 13).
+        if self.pending_asset and self.pending_asset != self.asset:
+            log.info("Asset switch applied at window boundary: %s -> %s", self.asset, self.pending_asset)
+            self.asset = self.pending_asset
+            self.pending_asset = None
+
+        self.lock.new_cycle(cycle)
+        self.window_valid_from = deadline_wall
+        self.window_valid_until = deadline_wall + self.settings.cycle_period_seconds
+
+        pending = self._pending_signal
+        self._pending_signal = None
+        self.prefetch_ready = False
+        # Promote the prefetched formula pass: explain()/the Formula Explorer
+        # must describe the window that is now live, not the bootstrap one.
+        if self.pending_formula_result is not None:
+            self.last_formula_result = self.pending_formula_result
+            self.pending_formula_result = None
+
+        if pending is None:
+            # The prefetch failed or the first window is late: compute now.
+            log.warning("window %d opened without a prepared signal - computing inline", cycle)
+            await self._run_cycle(bootstrap=False, window_from=deadline_wall)
+            return
+
+        signal = self._stamp_window(pending, cycle, deadline_wall)
+        locked = self.lock.lock(signal)
+        self.stats.lock_ms = (time.time() - deadline_wall) * 1000.0
+        self.stats.cycles_completed += 1
+        self.stats.signal_counts[locked.signal] = self.stats.signal_counts.get(locked.signal, 0) + 1
+
+        self.published_computed_at = self.prefetch_at or deadline_wall
+        self.published_compute_ms = self.prefetch_ms
+        await self.broadcast({"type": "SIGNAL", "data": self.signal_payload(locked)})
+        self._schedule_outcome(locked, None)
+        asyncio.create_task(self._live_refresh_loop(cycle, time.perf_counter()))
+        log.info(
+            "window %d published %s (%.0f%%) computed %.1fs earlier",
+            cycle, locked.signal, locked.confidence * 100,
+            max(0.0, deadline_wall - self.prefetch_at) if self.prefetch_at else 0.0,
+        )
+
+    def _stamp_window(self, draft: FrozenSignal, cycle: int, deadline_wall: float) -> FrozenSignal:
+        """Re-anchor a pre-computed draft to the window it now governs.
+
+        The entry price and the take-profit / stop-loss levels are taken *at the
+        boundary*, not at prefetch time, because that is the price the user is
+        trading from.
+        """
+        period = self.settings.cycle_period_seconds
+        price = self.market.last_price(self.asset) or draft.price
+        emergency = self.lock.emergency_active()
+        risk = risk_levels(
+            self.asset,
+            "HOLD" if emergency else draft.signal,
+            price,
+            self._pending_vol_bps,
+            self.settings,
+            horizon_seconds=period,
+        )
+        signal = draft._replace(
+            cycle_number=cycle,
+            asset=self.asset,
+            timestamp=_iso(deadline_wall),
+            valid_from=_iso(deadline_wall),
+            valid_until=_iso(deadline_wall + period),
+            window_seconds=period,
+            price=price,
+            risk=tuple(sorted(risk.items())),
+            preview=False,
+        )
+        if emergency and not signal.is_emergency_override:
+            # The override may have fired while the signal was being prepared.
+            previous = signal.signal
+            signal = signal._replace(
+                signal="HOLD",
+                confidence=1.0,
+                is_emergency_override=True,
+                lock_state=LockState.EMERGENCY_OVERRIDE.value,
+                superseded_by=previous,
+                hold_lean=previous if previous in ("BUY", "SELL") else None,
+                emergency_headline=str(
+                    (self.lock.emergency_event or {}).get("headline", "")
+                ),
+            )
+        return signal
+
+    async def _prefetch(self, publish_deadline_wall: float) -> None:
+        """Compute the signal for the next window - during this one."""
+        started = time.perf_counter()
+        snapshot = self.market.freeze(
+            news_items=self.news.cache.latest(5),
+            drg_outcomes=self.outcomes.array(),
+        )
+        self._pending_vol_bps = realized_volatility_bps(snapshot, self.asset)
+        formula_result = self.formulas.run(snapshot, self.asset)
+        self.pending_formula_result = formula_result
+        self.last_live_formulas = dict(formula_result.values)
+
+        context = self._agent_context(snapshot, formula_result)
+        agent_results = await self.agents.run_all(context)
+
+        warnings = list(snapshot.warnings)
+        if formula_result.insufficient_evidence:
+            warnings.append("Insufficient formula evidence: 11+ formulas returned zero.")
+        for name, result in agent_results.items():
+            if result.status.value == "TIMEOUT":
+                warnings.append(f"{name} timed out this cycle.")
+
+        from backend.agents import fusion as fusion_module
+
+        fusion = fusion_module.fuse(
+            agents=agent_results,
+            ccs_value=float(formula_result.values.get("CCSv2", 0.0)),
+            ccs_confidence=formula_result.ccs_confidence,
+            hsi=float(formula_result.values.get("HSI", 0.0)),
+            settings=self.settings,
+            warnings=warnings,
+            insufficient_evidence=formula_result.insufficient_evidence,
+            emergency=self.lock.emergency_active(),
+        )
+        self.last_fusion = fusion.to_dict()
+        self.hold_warning = (
+            fusion_module.hold_warning(fusion.score, fusion.lean, fusion.confidence)
+            if fusion.decision == "HOLD"
+            else None
+        )
+        self.warnings = warnings
+        self.degradation = self._compute_degradation(snapshot)
+
+        draft = self._build_frozen_signal(snapshot, formula_result, agent_results, fusion, context)
+        draft = draft._replace(
+            computed_at=_iso(time.time()),
+            valid_from=_iso(publish_deadline_wall),
+            valid_until=_iso(publish_deadline_wall + self.settings.cycle_period_seconds),
+            window_seconds=self.settings.cycle_period_seconds,
+        )
+        self._pending_signal = draft
+        self.prefetch_ready = True
+        self.prefetch_ms = (time.perf_counter() - started) * 1000.0
+        self.prefetch_at = time.time()
+
+        # Deliberately does not reveal the direction: only that the next window
+        # is armed, so the UI can show readiness without breaking the lock.
+        await self.broadcast(
+            {
+                "type": "NEXT_WINDOW_READY",
+                "data": {
+                    "cycle_number": self.stats.cycle_number + 1,
+                    "prepared": True,
+                    "compute_ms": round(self.prefetch_ms, 1),
+                    "lead_seconds": round(max(0.0, publish_deadline_wall - time.time()), 1),
+                    "lock_state": "LOCKED",
+                    "message": "next signal computed and held until the countdown ends",
+                },
+            }
+        )
 
     async def _wait_for_cycle_start(self) -> None:
         """Sleep until the next boundary.
@@ -198,7 +467,14 @@ class CycleManager:
         else:
             await asyncio.sleep(max(0.01, self.settings.cycle_period_seconds))
 
-    async def _run_cycle(self) -> None:
+    async def _run_cycle(self, bootstrap: bool = False, window_from: float | None = None) -> None:
+        """Compute and publish the signal for the window that is starting.
+
+        In pipelined mode this is only used for the very first window (so the
+        dashboard is never blank) and as the fallback when a prefetch failed;
+        every other window is published by :meth:`_open_window` from a signal
+        that was computed during the previous countdown.
+        """
         started = time.perf_counter()
         self.stats.cycle_number += 1
         self.stats.last_cycle_started = started
@@ -271,15 +547,38 @@ class CycleManager:
             self.hold_warning = None
 
         signal = self._build_frozen_signal(snapshot, formula_result, agent_results, fusion, context)
+        self._pending_vol_bps = realized_volatility_bps(snapshot, self.asset)
 
-        # Section 10.3: the UI shows "Computing..." for the first 8 seconds and
-        # the lock is published at the end of that window.  Computation itself
-        # is usually far quicker (formulas ~3 ms, agents when configured up to
-        # their 7 s timeout), so we hold the publication until the deadline -
-        # unless an emergency fires, in which case we lock immediately.
-        await self._hold_until_lock_deadline(started)
+        if not self.settings.signal_pipeline:
+            # Classic (literal draft) timing: the panel shows "Computing..." for
+            # the first 8 seconds and the lock lands at the deadline.
+            await self._hold_until_lock_deadline(started)
+
+        from_wall = window_from or time.time()
+        until_wall = from_wall + self.settings.cycle_period_seconds
+        if bootstrap and self.settings.use_world_clock:
+            # A cold start lands mid-minute: run a short first window and end it
+            # on the UTC boundary, so every later countdown is minute-aligned.
+            until_wall = math.floor(from_wall / 60.0) * 60.0 + 60.0
+            if until_wall - from_wall < 1.0:
+                until_wall += 60.0
+        self.window_valid_from = from_wall
+        self.window_valid_until = until_wall
+        signal = self._stamp_window(signal, self.stats.cycle_number, from_wall)
+        # Computed inline at the boundary (no previous window existed), so the
+        # timestamp is simply now - the UI uses it to prove the pipeline is
+        # real rather than to fake a whole second of pipeline.
+        signal = signal._replace(computed_at=_iso(time.time()))
+        if bootstrap:
+            signal = signal._replace(
+                preview=True,
+                valid_until=_iso(until_wall),
+                window_seconds=round(until_wall - from_wall, 3),
+            )
 
         locked = self.lock.lock(signal)
+        self.published_computed_at = time.time()
+        self.published_compute_ms = formula_result.total_ms
         self.stats.lock_ms = (time.perf_counter() - started) * 1000.0
         self.stats.cycles_completed += 1
         self.stats.signal_counts[locked.signal] = self.stats.signal_counts.get(locked.signal, 0) + 1
@@ -503,7 +802,9 @@ class CycleManager:
     async def _evaluate_outcome(self, signal: FrozenSignal, snapshot: FrozenMarketSnapshot) -> None:
         horizon = self.settings.scaled(self.settings.outcome_horizon_seconds)
         await asyncio.sleep(horizon)
-        entry = snapshot.last_price(signal.asset) or signal.price
+        entry = signal.price or (
+            snapshot.last_price(signal.asset) if snapshot is not None else 0.0
+        )
         try:
             exit_price = await self._price_at(signal.asset, entry)
         except Exception as exc:  # noqa: BLE001
@@ -550,13 +851,44 @@ class CycleManager:
     # Public API surface
     # ==================================================================
     def signal_payload(self, signal: FrozenSignal | None = None) -> dict:
+        """The message the dashboard and the Flutter client both render.
+
+        Every payload carries the window block, so a client can always answer
+        "which second of which window am I looking at, and is the next signal
+        ready?" without making a second request.
+        """
+        window = self.window_status()
         current = signal or self.lock.current_signal
         if current is None:
-            return {"lock_state": LockState.COMPUTING.value, "signal": None}
+            # Cold start: nothing has been locked yet.  A sentinel keeps the
+            # layout intact and tells the user what is happening, instead of a
+            # null payload that leaves the panel blank or half-rendered.
+            return {
+                "lock_state": LockState.COMPUTING.value,
+                "lock_icon": LockState.COMPUTING.icon,
+                "signal": None,
+                "cycle_number": self.stats.cycle_number,
+                "asset": self.asset,
+                "confidence": 0.0,
+                "reasoning": "preparing the first window",
+                "preview": True,
+                "risk": {},
+                "computed_at": "",
+                "valid_from": window["valid_from"],
+                "valid_until": window["valid_until"],
+                "window_seconds": window["window_seconds"],
+                "seconds_remaining": window["seconds_remaining"],
+                "hold_warning": None,
+                "fusion": self.last_fusion,
+                "pending_asset": self.pending_asset,
+                "window": window,
+            }
         payload = current.to_dict()
         payload["hold_warning"] = self.hold_warning if current.signal == "HOLD" else None
         payload["fusion"] = self.last_fusion
         payload["pending_asset"] = self.pending_asset
+        payload["window"] = window
+        payload.setdefault("lock_icon", LockState.LOCKED.icon)
         return payload
 
     def switch_asset(self, asset: str) -> dict:
@@ -591,11 +923,59 @@ class CycleManager:
                 "cycle_period_seconds": self.settings.cycle_period_seconds,
                 "time_scale": self.settings.time_scale,
             },
+            "window": self.window_status(),
+            "pipeline": self.settings.signal_pipeline,
             "infrastructure": {
                 "redis": self.store.backend,
                 "outcomes": len(self.outcomes),
                 "win_rate": round(self.outcomes.win_rate(), 4),
             },
+        }
+
+    def window_status(self) -> dict:
+        """The countdown the UI renders, plus what the engine is doing in it.
+
+        With the pipeline on, the signal governing the window was computed
+        *during the previous window* (``computed_at`` is in the past by
+        definition) and the next one is being prepared right now
+        (``prefetch_ready``).
+        """
+        now = time.time()
+        period = self.settings.cycle_period_seconds
+        started = self.window_valid_from or now
+        ends = self.window_valid_until or (started + period)
+        signal = self.lock.try_get_current()
+        return {
+            "valid_from": _iso(started),
+            "valid_until": _iso(ends),
+            "seconds_remaining": round(max(0.0, ends - now), 1),
+            "window_seconds": period,
+            "computed_at": getattr(signal, "computed_at", "") if signal else "",
+            "computed_seconds_ago": (
+                round(max(0.0, now - self.published_computed_at), 1)
+                if self.published_computed_at
+                else None
+            ),
+            "compute_ms": round(self.published_compute_ms, 1),
+            "prefetch_ready": self.prefetch_ready,
+            "prefetch_ms": round(self.prefetch_ms, 1),
+            "next_window": self.stats.cycle_number + 1 if self.prefetch_ready else None,
+            "pipeline": self.settings.signal_pipeline,
+            "compute_starts_in": (
+                round(max(0.0, ends - now - self.prefetch_lead), 1)
+                if self.settings.signal_pipeline and not self.prefetch_ready
+                else 0.0
+            ),
+            "compute_progress": (
+                1.0 if self.prefetch_ready else
+                round(min(1.0, max(0.0, (self.prefetch_lead - (ends - now)) / self.prefetch_lead)), 3)
+                if self.settings.signal_pipeline and self.prefetch_lead > 0
+                else 0.0
+            ),
+            "phase": (
+                "NEXT_READY" if self.prefetch_ready else
+                "PREPARING_NEXT" if self.settings.signal_pipeline else "LOCKED"
+            ),
         }
 
     def health(self) -> dict:

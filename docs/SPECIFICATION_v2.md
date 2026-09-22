@@ -527,6 +527,61 @@ The lock is published at the **end of the 8-second computation window**
 "⏳ Computing…" state is a real part of the protocol and not an accident of
 latency. Verified by `test_e01`/`test_e02`.
 
+### 10.4 Pipelined publication (the default)
+
+A literal reading of the draft would leave the user staring at "⏳ Computing…"
+for the first eight seconds of every minute. v2.0 therefore publishes
+**pipelined**: the signal a window displays was computed *during the previous
+window*, so the visible countdown is never empty and the engine is continuously
+working on the next one.
+
+```
+window N-1                            window N
+|-------------- 60 s --------------|  |-------------- 60 s --------------|
+                    compute N  ▲    publish N        compute N+1  ▲    publish N+1
+                              8 s                                    8 s
+                        (prefetch, lead = min(scaled lock deadline, 30 s))
+```
+
+* `SIGNAL_PIPELINE=1` (default) — `_pipelined_loop()` alternates
+  *prefetch at `boundary − lead`* and *publish at the boundary*. The prefetch is
+  deliberately late so the frozen snapshot (price, depth, news) is as fresh as it
+  can be while still landing before the lock deadline.
+* `SIGNAL_PIPELINE=0` — the literal draft timeline: compute at `t = 0`, lock at
+  `t = 8 s`, blank panel in between. Kept for the Appendix E tests and for
+  comparison.
+* **Bootstrap** — one immediate window at start-up (flagged `preview: true`) so
+  the dashboard is never blank on a cold start; with the world clock it is
+  shortened to the next UTC minute so every later window is minute-aligned.
+* Every signal payload carries `computed_at`, `valid_from`, `valid_until`,
+  `window_seconds`, `preview`, `age_seconds`, `seconds_remaining`, `risk` and a
+  `window` block (`phase`, `prefetch_ready`, `computed_seconds_ago`,
+  `compute_ms`, `compute_starts_in`, `compute_progress`).
+* `NEXT_WINDOW_READY` is broadcast the moment the next signal is computed and
+  held. It contains **no direction** — only readiness, cycle number, compute
+  time and the lead — so the lock cannot be broken through the side channel.
+* The outcome tracker and the 15-second live formula refresh are unchanged: they
+  never touch the locked signal.
+
+### 10.5 Take-profit / stop-loss geometry
+
+Every locked signal carries an exit plan derived from the market's own
+volatility (never a fixed pip target):
+
+```
+sigma_1m = realised 1-minute volatility, in basis points (candles, tick fallback)
+tp_bps   = clip(tp_sigma_mult * sigma_1m, min_tp_bps, max_tp_bps)
+sl_bps   = clip(sl_sigma_mult * sigma_1m, min_sl_bps, max_sl_bps)
+BUY : tp = entry * (1 + tp_bps/1e4), sl = entry * (1 - sl_bps/1e4)
+SELL: tp = entry * (1 - tp_bps/1e4), sl = entry * (1 + sl_bps/1e4)
+HOLD: no position - the UI says "no position while the signal is HOLD"
+```
+
+`entry` is the price **at the boundary** (the price the user is trading from),
+not the price at prefetch time; `risk.rr` reports the reward:risk ratio. The
+block is served by `backend/core/risk.py` and rendered in the widget panel's
+second row.
+
 ---
 
 ## 11. User interface
@@ -542,21 +597,42 @@ Two presentation layers share one API:
 
 | Panel | Contents |
 |---|---|
-| Header | brand, BTC/PAXG toggle (localStorage-persisted), UTC clock, cycle countdown with the lock icon, degradation badge, WebSocket status |
-| Signal | BUY/SELL/HOLD badge, confidence bar, reasoning, weights used, freeze timestamp, emergency banner when overridden |
-| HOLD box | the verbatim paragraph from Section 10.2 + lean direction and score |
+| Header | brand, BTC/PAXG toggle (localStorage-persisted), key modal, degradation badge, WebSocket status |
+| **Widget panel** (fixed layout, always complete) | **row 1:** prediction (BUY/SELL/HOLD, animated) · countdown 1–60 with a ring and the pipeline progress · glittering HOLD / wait box. **row 2:** take-profit & stop-loss · prediction accuracy |
+| Window strip | cycle, lock state, UTC, the `valid_from–valid_until` span, and a sentence saying which window the displayed signal was computed in |
+| Signal detail | lock icon, confidence bar, reasoning, weights used, freeze/valid timestamps, HOLD warning, emergency chip when overridden |
 | News | latest headline, source tier, poll age, NIV/SMD, coverage |
 | Hedge | HSI/HRDD/SHRP/GCDV with bars, stress label, brain status, CCSv2 + confidence, DRG |
+| **Brain** | the five circuit stages with their *live* numbers, dominant projection-neuron inputs, KC sparsity, MBON/lateral-horn read-outs, dopamine gates, the brain's share of the fused score, the connectome source (status/checksum/gain/steps) and the expandable formula → neuron map |
 | Agents | one row per agent: status, decision, weight |
 | History | last 12 locked signals with lock icon |
 | Outcomes | win rate + last 8 scored outcomes in bps |
 | Formula Explorer | all 22 formulas grouped in the 8 categories, live values, per-formula description toggle, timings |
 
+#### 11.1.1 Two rules that are structural, not cosmetic
+
+1. **Nothing covers the page.** An emergency override is announced by a small
+   glittering chip directly *under the prediction* and by the HOLD box turning
+   red — never by a full-screen overlay. The user can always read the price, the
+   TP/SL and the news while the override is active.
+2. **The countdown shows a signal that already existed.** The countdown renders
+   the locked signal of the *current* window (`computed_at` is 52 s old by
+   design) while the engine computes the next one. The panel therefore has no
+   blank phase: `COMPUTING` only ever appears at a cold start, and then the
+   widget shows a sentinel ("· · ·", "engine starting…", "computing signal #n …")
+   instead of an empty box.
+
+Clients derive the countdown from a single server reading
+(`window.seconds_remaining`) advanced with a monotonic clock, so the number on
+screen always belongs to the published window. `window.compute_progress` tells
+the UI how far the *next* signal is, and `NEXT_WINDOW_READY` flips it to
+"ready — revealed at the boundary" without leaking the direction.
+
 ### 11.2 Lock iconography
 
 | Icon | State | Meaning |
 |---|---|---|
-| ⏳ | `COMPUTING` | first 8 s of the cycle, no signal published yet |
+| ⏳ | `COMPUTING` | cold start only: the first signal has not been published yet |
 | 🔒 | `LOCKED` | **this signal cannot change until the next cycle** |
 | ⚡ | `EMERGENCY_OVERRIDE` | forced HOLD, exits any open position |
 
@@ -595,9 +671,19 @@ Credentials are managed from the browser; the command line is never required.
 
 ### 11.6 Flutter client
 
-`frontend/lib` mirrors this: `SignalPanel`, `NewsCard`, `HedgeDashboard`,
-`FormulaExplorer`, `AgentList` widgets over a `SignalSocket` service, with a
-Flutter-local `CycleTimer` driven from the same `status` payload.
+`frontend/lib` mirrors this: `SignalWidgetPanel` (the same fixed two-row widget
+layout, with a `GlitterBox`, an animated `AnimatedSwitcher` prediction and a
+countdown ring), `SignalPanel`, `NewsCard`, `HedgeDashboard`,
+`FormulaExplorer`, `AgentList` widgets over a `SignalSocket` service, plus a
+dedicated **Brain** tab that renders `/api/brain/wiring` and
+`/api/brain/explain`, and a `CycleTimer` driven from the same `status` payload.
+
+Haptics are part of the protocol on mobile: a direction change fires
+`HapticFeedback.mediumImpact()`, an emergency override fires `heavyImpact()` +
+`vibrate()` (then a second pulse), and the first lock of a session fires
+`selectionClick()` — the user feels a new window without staring at the screen.
+The web dashboard applies the same rule through `navigator.vibrate` where the
+browser supports it.
 
 The client is built for the web with `bash frontend/run_web.sh` and served by the
 engine itself at **`/flutter`** (`frontend/build/web` is mounted on demand), so

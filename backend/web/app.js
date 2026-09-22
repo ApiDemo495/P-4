@@ -23,6 +23,13 @@ const state = {
   holdWarning: null,
   emergency: null,
   emergencyUntil: 0,
+  window: null,
+  winAnchor: null,        // {at, remaining} - one server reading, advanced locally
+  outcomes: [],
+  wiring: null,
+  explain: null,
+  wiringOpen: false,
+  lastPrediction: null,
   config: null,
   ws: null,
   connected: false,
@@ -39,6 +46,20 @@ function pctClass(v) {
   if (v < -0.15) return "neg";
   return "neutral";
 }
+
+/* Haptics: navigator.vibrate where the browser supports it (Android Chrome),
+   the Flutter client uses real HapticFeedback for the same events. */
+function haptic(pattern = 18) {
+  try {
+    if (navigator.vibrate) navigator.vibrate(pattern);
+  } catch (e) { /* unsupported - never break the render for a buzz */ }
+}
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+const fmtMoney = (v) => (v || v === 0)
+  ? `$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+  : "—";
 
 async function getJSON(url, options) {
   try {
@@ -100,6 +121,10 @@ function handle(msg) {
       state.degradation = d.status?.degradation_level;
       renderAssetToggle();
       renderStatus(d.status);
+      anchorWindow(d.window || d.status?.window || d.signal?.window);
+      // The sentinel is a signal payload too - it just carries signal: null
+      // while the first window is being computed.  Rendering it keeps the
+      // widget layout complete instead of half-empty.
       if (d.signal) {
         state.signal = d.signal;
         state.lockState = d.signal.lock_state || "LOCKED";
@@ -111,24 +136,38 @@ function handle(msg) {
       break;
     }
     case "CYCLE_START": {
+      // Kept for the non-pipelined mode (SIGNAL_PIPELINE=0), where the panel
+      // really does go blank for the first seconds of a window.
       state.cycleNumber = msg.data.cycle_number;
       state.asset = msg.data.asset || state.asset;
       state.lockState = "COMPUTING";
-      state.signal = null;
-      state.holdWarning = null;
       state.lastCycleAt = Date.now();
       renderSignal();
-      $("cycle-number").textContent = state.cycleNumber;
       $("degradation").textContent = degradationLabel(msg.data.degradation_level);
       break;
     }
     case "SIGNAL": {
+      const previous = state.lastPrediction;
       state.signal = msg.data;
       state.lockState = msg.data.lock_state || "LOCKED";
       state.holdWarning = msg.data.hold_warning || null;
       state.formulas = msg.data.formulas || {};
+      anchorWindow(msg.data.window);
       renderSignal();
+      // Haptics + a flash when the direction actually changes: the user should
+      // feel the new window arrive without staring at the screen.
+      if (msg.data.signal && msg.data.signal !== previous) {
+        haptic(msg.data.is_emergency_override ? [24, 60, 24] : [18]);
+      }
       refreshHistory();
+      refreshOutcomes();
+      refreshBrainExplain();
+      break;
+    }
+    case "NEXT_WINDOW_READY": {
+      state.nextReady = msg.data;
+      if (state.window) state.window.prefetch_ready = true;
+      renderWidgetPanel();
       break;
     }
     case "FORMULA_UPDATE": {
@@ -163,6 +202,25 @@ function handle(msg) {
 }
 
 /* ------------------------------------------------------------------ clock */
+/* The countdown is driven by one server reading per window ("seconds_remaining"),
+   advanced locally with a monotonic clock, so the number on screen always
+   belongs to the window the backend published. */
+function anchorWindow(window) {
+  if (!window) return;
+  state.window = window;
+  if (typeof window.seconds_remaining === "number") {
+    state.winAnchor = { at: performance.now(), remaining: window.seconds_remaining };
+  }
+  state.cyclePeriod = window.window_seconds || state.cyclePeriod;
+}
+
+function windowRemaining() {
+  if (state.winAnchor) {
+    return Math.max(0, state.winAnchor.remaining - (performance.now() - state.winAnchor.at) / 1000);
+  }
+  return state.cyclePeriod;
+}
+
 async function syncClock() {
   const status = await getJSON("/api/signal/status");
   if (!status) return;
@@ -177,6 +235,7 @@ async function syncClock() {
   }
   if (status.asset) state.asset = status.asset;
   state.pendingAsset = status.pending_asset;
+  anchorWindow(status.window);
   if (!state.signal) {
     const current = await getJSON("/api/signal/current");
     if (current?.signal) {
@@ -190,36 +249,57 @@ async function syncClock() {
 }
 
 function tickClock() {
-  const period = state.cyclePeriod;
-  let elapsed;
-  if (state.lastCycleAt) {
-    elapsed = (Date.now() - state.lastCycleAt) / 1000;
-    if (elapsed > period + 2) {           // missed a CYCLE_START; resync
-      state.lastCycleAt = null;
-      syncClock();
-    }
-  } else {
-    elapsed = state.secondsIntoMinute;
-    state.secondsIntoMinute = (elapsed + 0.1) % period;
-  }
-  const remaining = Math.max(0, period - elapsed);
-  const mm = String(Math.floor(remaining / 60)).padStart(2, "0");
-  const ss = String(Math.floor(remaining % 60)).padStart(2, "0");
-  const icon = state.lockState === "COMPUTING" ? "⏳"
-    : state.lockState === "EMERGENCY_OVERRIDE" ? "⚡" : "🔒";
-  $("timer").innerHTML = `${mm}:${ss} <span id="lock-icon">${icon}</span>`;
-  $("timer").className = "timer" + (state.lockState === "EMERGENCY_OVERRIDE" ? " emergency" : "");
-  $("lock-state").textContent = state.lockState;
+  const period = state.cyclePeriod || 60;
+  const remaining = windowRemaining();
+  const elapsed = Math.max(0, period - remaining);
 
-  const pct = state.lockState === "COMPUTING" ? Math.min(100, (period - remaining) / 8 * 100) : 100;
-  $("progress").style.width = `${Math.max(0, Math.min(100, 100 - (remaining / period) * 100))}%`;
-  $("progress").className = "progress-fill" + (state.lockState === "EMERGENCY_OVERRIDE" ? " emergency" : "");
-  $("utc").textContent = new Date().toISOString().substr(11, 8) + "Z";
-
-  if (state.emergencyUntil > Date.now()) {
-    const left = Math.round((state.emergencyUntil - Date.now()) / 1000);
-    $("em-remaining").textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+  // --- the widget row-1 countdown: 1..60, never blank ------------------
+  const secs = clamp(Math.ceil(remaining), 0, Math.ceil(period));
+  const countEl = $("w-countdown");
+  if (countEl) {
+    countEl.textContent = secs > 0 ? String(secs) : "0";
+    const ring = $("w-ring");
+    ring.style.setProperty("--frac", clamp(remaining / period, 0, 1).toFixed(3));
+    ring.classList.toggle("ready", !!state.window?.prefetch_ready);
+    ring.classList.toggle("urgent", secs <= 5);
   }
+
+  // --- legacy timer card (kept for SIGNAL_PIPELINE=0) ------------------
+  if ($("timer")) {
+    const mm = String(Math.floor(remaining / 60)).padStart(2, "0");
+    const ss = String(Math.floor(remaining % 60)).padStart(2, "0");
+    const icon = state.lockState === "COMPUTING" ? "\u23f3"
+      : state.lockState === "EMERGENCY_OVERRIDE" ? "\u26a1" : "\ud83d\udd12";
+    $("timer").innerHTML = `${mm}:${ss} <span id="lock-icon">${icon}</span>`;
+    $("timer").className = "timer" + (state.lockState === "EMERGENCY_OVERRIDE" ? " emergency" : "");
+    $("lock-state").textContent = state.lockState;
+    $("progress").style.width = `${clamp(100 - (remaining / period) * 100, 0, 100)}%`;
+    $("progress").className = "progress-fill" + (state.lockState === "EMERGENCY_OVERRIDE" ? " emergency" : "");
+    $("utc").textContent = new Date().toISOString().substr(11, 8) + "Z";
+  }
+
+  renderPipelineProgress();
+  renderWindowStrip();
+}
+
+function renderPipelineProgress() {
+  if (!$("w-next")) return;
+  const w = state.window || {};
+  const fill = $("w-pipeline-fill");
+  const ready = !!w.prefetch_ready;
+  const lead = state.config?.lock_deadline_seconds || 8;
+  const period = state.cyclePeriod || 60;
+  // Progress of the *next* window's computation: idle until the prefetch lead
+  // window opens (the engine deliberately computes late so its snapshot is
+  // fresh), then 0 -> 100 %.
+  const remaining = windowRemaining();
+  const progress = ready ? 1 : clamp((lead - remaining) / lead, 0, 1);
+  fill.style.width = `${Math.round(progress * 100)}%`;
+  fill.classList.toggle("ready", ready);
+  const nextCycle = (state.cycleNumber || 0) + 1;
+  $("w-next").innerHTML = ready
+    ? `next signal <b>#${nextCycle}</b> computed and held — it is revealed at the boundary`
+    : `computing signal <b>#${nextCycle}</b> … ${Math.round(progress * 100)}%`;
 }
 
 /* ---------------------------------------------------------------- renders */
@@ -237,7 +317,7 @@ function degradationLabel(level) {
 function renderStatus(status) {
   if (!status) return;
   state.cycleNumber = status.cycle?.cycle_number ?? state.cycleNumber;
-  $("cycle-number").textContent = state.cycleNumber;
+  if ($("cycle-number")) $("cycle-number").textContent = state.cycleNumber;
   const lock = status.lock || {};
   state.lockState = lock.state || state.lockState;
   $("degradation").textContent = degradationLabel(status.degradation_level);
@@ -247,6 +327,23 @@ function renderStatus(status) {
   if (status.clock?.ntp_synced === false) {
     $("foot-status").textContent += " · NTP: system clock";
   }
+  anchorWindow(status.window);
+  renderWidgetPanel();
+  renderWindowStrip();
+}
+
+function renderWindowStrip() {
+  const w = state.window;
+  if (!w || !$("w-window-span")) return;
+  $("w-window-span").textContent =
+    `${(w.valid_from || "").substr(11, 8)}–${(w.valid_until || "").substr(11, 8)}Z`;
+  const bootstrap = !state.signal || state.signal.preview;
+  $("w-clock-note").textContent = !w.pipeline
+    ? "SIGNAL_PIPELINE=0 · literal 8-second computing window"
+    : bootstrap
+        ? "bootstrap window: computed at the boundary, pipelining starts next window"
+        : `pipelined: window ${state.cycleNumber} was computed during window ${state.cycleNumber - 1}`;
+  $("lock-state").textContent = state.lockState;
 }
 
 function renderAssetToggle() {
@@ -265,45 +362,200 @@ function renderAssetToggle() {
 }
 
 function renderSignal() {
-  const computing = state.lockState === "COMPUTING" || !state.signal;
-  $("computing").classList.toggle("hidden", !computing);
-  $("signal-body").classList.toggle("hidden", computing);
-  $("hold-warning").classList.toggle("hidden", true);
-  if (computing) return;
-
   const s = state.signal;
+  const pending = !s || s.signal === null || s.signal === undefined;
+
+  $("signal-body")?.classList.toggle("hidden", false);
+  if (pending) {
+    // Sentinel: the layout stays complete, the cells explain the wait.
+    if ($("signal-note")) $("signal-note").textContent = "computing the first window…";
+    if ($("signal-cycle-badge")) $("signal-cycle-badge").textContent = "cycle —";
+    if ($("signal-frozen")) $("signal-frozen").textContent = "";
+    renderWidgetPanel();
+    renderHoldBox();
+    return;
+  }
+
   const badge = $("signal-badge");
-  badge.textContent = s.signal;
-  badge.className = "signal-badge " + s.signal.toLowerCase();
-  $("signal-icon").textContent = s.lock_icon || "🔒";
-  $("signal-note").textContent = s.is_emergency_override
-    ? "emergency override — forced HOLD"
-    : "this signal is locked for the remainder of the cycle";
-  $("confidence-value").textContent = fmtPct(s.confidence);
+  if (badge) {
+    badge.textContent = s.signal;
+    badge.className = "signal-badge " + String(s.signal).toLowerCase();
+  }
+  if ($("signal-icon")) $("signal-icon").textContent = s.lock_icon || (s.is_emergency_override ? "⚡" : "🔒");
+  if ($("signal-note")) {
+    $("signal-note").textContent = s.is_emergency_override
+      ? "emergency override — forced HOLD"
+      : "locked for this window";
+  }
+  if ($("signal-cycle-badge")) $("signal-cycle-badge").textContent = `cycle ${s.cycle_number}`;
+  if ($("signal-frozen")) {
+    const computed = (s.computed_at || "").substr(11, 8);
+    $("signal-frozen").textContent = computed
+      ? `computed ${computed}Z · valid ${(s.valid_from || "").substr(11, 8)}–${(s.valid_until || "").substr(11, 8)}Z`
+      : "";
+  }
+  if ($("confidence-value")) $("confidence-value").textContent = fmtPct(s.confidence);
   const bar = $("confidence-bar");
-  bar.style.width = `${Math.round(s.confidence * 100)}%`;
-  bar.className = "bar-fill " + (s.signal === "BUY" ? "" : s.signal === "SELL" ? "neg" : "neutral");
-  $("reasoning").textContent = s.reasoning || "";
+  if (bar) {
+    bar.style.width = `${Math.round((s.confidence || 0) * 100)}%`;
+    bar.className = "bar-fill " + (s.signal === "BUY" ? "" : s.signal === "SELL" ? "neg" : "neutral");
+  }
+  if ($("reasoning")) $("reasoning").textContent = s.reasoning || "";
 
-  const w = s.fusion?.weights_used || {};
-  const parts = Object.keys(w).map((k) => `${k} ${fmtPct(w[k])}`);
-  $("weights").textContent = parts.length
-    ? `fusion weights: ${parts.join(" · ")} · cycle ${s.cycle_number} · frozen at ${s.timestamp}`
-    : `cycle ${s.cycle_number} · frozen at ${s.timestamp}`;
+  if ($("weights")) {
+    const w = s.fusion?.weights_used || {};
+    const parts = Object.keys(w).map((k) => `${k} ${fmtPct(w[k])}`);
+    $("weights").textContent = parts.length
+      ? `fusion weights: ${parts.join(" · ")} · window #${s.cycle_number}`
+      : `window #${s.cycle_number}`;
+  }
 
-  if (s.signal === "HOLD" && state.holdWarning) {
-    $("hold-warning").classList.remove("hidden");
-    $("hw-text").textContent = `“${state.holdWarning.text}”`;
-    const lean = state.holdWarning.lean;
-    $("hw-lean").textContent = lean
-      ? `Lean direction: ${lean} (score ${fmtSigned(state.holdWarning.lean_score)}, ` +
-        `confidence ${fmtPct(state.holdWarning.confidence)})`
-      : "No directional lean this cycle.";
+  const hw = $("hold-warning");
+  if (hw) {
+    if (s.signal === "HOLD" && state.holdWarning) {
+      hw.classList.remove("hidden");
+      $("hw-text").textContent = `“${state.holdWarning.text}”`;
+      const lean = state.holdWarning.lean;
+      $("hw-lean").textContent = lean
+        ? `Lean direction: ${lean} (score ${fmtSigned(state.holdWarning.lean_score)}, ` +
+          `confidence ${fmtPct(state.holdWarning.confidence)})`
+        : "No directional lean this window.";
+    } else {
+      hw.classList.add("hidden");
+    }
   }
 
   renderHedge(s);
   renderNews(s);
-  $("price").textContent = s.price ? `$${Number(s.price).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "—";
+  renderWidgetPanel();
+  renderHoldBox();
+  if ($("price")) $("price").textContent = fmtMoney(s.price);
+}
+
+/* ============================ WIDGET PANEL ==============================
+   Row 1: prediction | countdown (1-60) | HOLD / wait box
+   Row 2: take profit & stop loss | prediction accuracy
+   ======================================================================== */
+function renderWidgetPanel() {
+  const s = state.signal;
+  const has = s && s.signal;
+  const prediction = has ? s.signal : "·  ·  ·";
+  const el = $("w-prediction");
+  if (!el) return;
+
+  const changed = state.lastPrediction !== null && state.lastPrediction !== prediction;
+  el.textContent = prediction;
+  el.className = "prediction-value " +
+    (has ? String(s.signal).toLowerCase() : "pending");
+  if (changed && has) {
+    el.classList.remove("pop");
+    void el.offsetWidth;              // restart the animation
+    el.classList.add("pop");
+  }
+  state.lastPrediction = has ? prediction : null;
+
+  const w = state.window || {};
+  $("w-window-label").textContent = has ? `window #${s.cycle_number}` : "starting up";
+  $("w-prediction-sub").textContent = !has
+    ? "the first window is being computed"
+    : (s.preview
+        ? "bootstrap window — computed at the boundary"
+        : `computed ${(s.computed_at || "").substr(11, 8)}Z · confidence ${fmtPct(s.confidence)}`);
+
+  // ---- countdown sub-line: prove the pipeline ---------------------------
+  const computedAgo = w.computed_seconds_ago;
+  $("w-countdown-sub").innerHTML = computedAgo
+    ? `showing signal computed <b>${Math.round(computedAgo)}s</b> before this window started`
+    : (has ? "waiting for the window clock…" : "engine starting…");
+
+  // ---- row 2: risk ------------------------------------------------------
+  const risk = s?.risk || {};
+  $("w-entry").textContent = fmtMoney(risk.entry || s?.price);
+  const tradeable = !!risk.tradeable;
+  $("w-tp").textContent = tradeable ? fmtMoney(risk.take_profit) : "—";
+  $("w-sl").textContent = tradeable ? fmtMoney(risk.stop_loss) : "—";
+  $("w-sl").className = tradeable ? "neg" : "muted";
+  $("w-tp").className = tradeable ? "pos" : "muted";
+  $("w-rr").textContent = tradeable && risk.rr ? `${Number(risk.rr).toFixed(2)} : 1` : "—";
+  $("w-vol").textContent = risk.volatility_bps ? `${Number(risk.volatility_bps).toFixed(1)} bps` : "—";
+  $("w-levels").textContent = tradeable
+    ? `${Math.round(risk.tp_bps)} / ${Math.round(risk.sl_bps)} bps`
+    : "no position";
+  $("w-levels").className = tradeable ? "" : "muted";
+  $("w-risk-note").textContent = risk.note || "—";
+
+  // ---- row 2: accuracy --------------------------------------------------
+  const rows = state.outcomes || [];
+  const wins = rows.filter((r) => r.outcome > 0).length;
+  const winRate = rows.length ? wins / rows.length : null;
+  let streak = 0;
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    if (rows[i].outcome === 0) break;
+    if (streak === 0) { streak = rows[i].outcome > 0 ? 1 : -1; continue; }
+    if ((rows[i].outcome > 0 ? 1 : -1) === streak) streak += streak > 0 ? 1 : -1;
+    else break;
+  }
+  $("w-winrate").textContent = winRate === null ? "—" : fmtPct(winRate);
+  $("w-samples").textContent = rows.length ? String(rows.length) : "0";
+  $("w-streak").textContent = streak === 0 ? "—" : (streak > 0 ? `${streak} win${streak > 1 ? "s" : ""}` : `${-streak} loss${streak < -1 ? "es" : ""}`);
+  $("w-streak").className = streak > 0 ? "pos" : streak < 0 ? "neg" : "muted";
+  const last = rows[rows.length - 1];
+  $("w-last-outcome").textContent = last
+    ? `${last.outcome > 0 ? "WIN" : last.outcome < 0 ? "LOSS" : "FLAT"} ${fmtSigned(last.pnl_bps, 1)} bps`
+    : "waiting for the first window to close";
+  $("w-last-outcome").className = last ? (last.outcome > 0 ? "pos" : last.outcome < 0 ? "neg" : "muted") : "muted";
+
+  const engine = state.config?.simulated
+    ? `simulated market data · ${state.config?.market_source || "simulator"}`
+    : `${state.config?.market_source || "live feed"} · ${state.config?.cycle_period_seconds || 60}s windows`;
+  $("w-engine").textContent = `${engine}${state.window?.pipeline ? " · pipelined" : ""}`;
+}
+
+/* The HOLD / wait box: small, inline, glittering - never an overlay. */
+function renderHoldBox() {
+  const box = $("w-hold");
+  if (!box) return;
+  const s = state.signal;
+  const emergency = (state.emergencyUntil > Date.now()) || (s && s.is_emergency_override);
+  const hold = s && s.signal === "HOLD";
+  const warning = state.holdWarning;
+
+  box.classList.remove("emergency", "neutral");
+  if (emergency) {
+    box.classList.add("emergency");
+    $("w-hold-title").textContent = "⚡ HOLD";
+    const headline = state.emergency?.headline || s?.emergency_headline || s?.reasoning || "";
+    $("w-hold-text").textContent = "Emergency override — the signal is forced to HOLD. Exit any open position.";
+    $("w-hold-meta").textContent = headline ? `“${headline}”` : "";
+  } else if (hold) {
+    $("w-hold-title").textContent = "HOLD";
+    $("w-hold-text").textContent = warning?.text
+      || s?.reasoning
+      || "No directional edge strong enough to trade.";
+    $("w-hold-meta").textContent = warning?.lean
+      ? `lean ${warning.lean} ${fmtSigned(warning.lean_score || 0)} · conf ${fmtPct(warning.confidence || 0)}`
+      : "wait for the next window";
+  } else if (s) {
+    box.classList.add("neutral");
+    $("w-hold-title").textContent = s.signal;
+    $("w-hold-text").textContent = `${s.signal} is live — take profit and stop loss are on the left.`;
+    $("w-hold-meta").textContent = "the hold box lights up when the engine is flat";
+  } else {
+    box.classList.add("neutral");
+    $("w-hold-title").textContent = "…";
+    $("w-hold-text").textContent = "waiting for the first window";
+    $("w-hold-meta").textContent = "";
+  }
+
+  // Inline emergency chip under the prediction (item 2).
+  const chip = $("w-emergency");
+  chip.classList.toggle("hidden", !emergency);
+  if (emergency) {
+    const headline = state.emergency?.headline || s?.emergency_headline || "";
+    $("w-emergency-text").textContent = headline
+      ? `emergency override — forced HOLD: “${headline}”`
+      : "emergency override — forced HOLD";
+  }
 }
 
 function renderHedge(s) {
@@ -401,6 +653,83 @@ async function refreshAgents() {
   }
 }
 
+/* ---------------- brain wiring card (item 6): where the fly is used ---- */
+async function loadWiring() {
+  const data = await getJSON("/api/brain/wiring");
+  if (!data || data.error) return;
+  state.wiring = data;
+  renderBrainPipeline();
+  renderWiringTable();
+}
+
+function renderBrainPipeline() {
+  const host = $("brain-pipeline");
+  if (!host || !state.wiring) return;
+  const stages = state.wiring.stages || [];
+  const e = state.explain && state.explain.available ? state.explain : null;
+  const live = [
+    e ? `${Object.keys(e.all_inputs || {}).length}/20 formulas written onto PNs` : "20 formulas → PNs 0-19",
+    e ? `${e.kenyon_cells?.active ?? 0}/${e.kenyon_cells?.of ?? 50} KC clusters active (top 10%)` : "50 KC clusters, ReLU + top-10 % sparsity",
+    e ? `DRG ${fmtSigned(e.dopamine?.drg ?? 0)} → PAM · HSI ${fmtSigned(e.dopamine?.hsi ?? 0)} → OA` : "DRG → PAM/PPL1 · HSI → OA",
+    e ? `approach ${fmtSigned(e.mbons?.approach ?? 0)} · avoid ${fmtSigned(e.mbons?.avoid ?? 0)} · conf ${fmtPct(e.mbons?.confidence ?? 0)}` : "4 MBONs, 3 conv layers, gain 3.2802",
+    e ? `CCSv2 ${fmtSigned(e.ccs_value)} @ ${fmtPct(e.ccs_confidence)} → 40% of fusion` : "CCSv2 + KCAE → fusion (0.40 weight)",
+  ];
+  host.innerHTML = "";
+  stages.forEach((stage, i) => {
+    const div = document.createElement("div");
+    div.className = "brain-stage";
+    div.innerHTML =
+      `<div class="idx">${i + 1}</div>` +
+      `<div><h4>${escapeHtml(stage.name)}</h4>` +
+      `<p>${escapeHtml(stage.role)}</p>` +
+      `<div class="detail">${escapeHtml(stage.detail)}</div>` +
+      `<div class="detail live">▸ ${escapeHtml(live[i] || "")}</div></div>`;
+    host.appendChild(div);
+  });
+}
+
+function renderWiringTable() {
+  const host = $("brain-wiring");
+  if (!host || !state.wiring) return;
+  const rows = (state.wiring.projection_neurons || []).map((p) =>
+    `<div class="wiring-row"><span><span class="pn">PN ${p.pn}</span> ${escapeHtml(p.formula)}</span>` +
+    `<span class="muted">${escapeHtml(p.brain_node || "")}</span></div>`).join("");
+  host.innerHTML =
+    `<div class="card-head"><h2 style="font-size:13px">Formula → neuron map</h2>` +
+    `<span class="muted">${(state.wiring.projection_neurons || []).length} projection neurons · ` +
+    `fusion weight ${state.wiring.fusion_weight}</span></div>` +
+    `<div class="wiring-table">${rows}</div>` +
+    `<p class="muted" style="margin-bottom:0">Same circuit, once per window: formulas → PNs → KC sparse code ` +
+    `→ MBONs → lateral horn → CCSv2/KCAE → ${Math.round((state.wiring.fusion_weight || 0.4) * 100)}% of the fused decision.</p>`;
+}
+
+async function refreshBrainExplain() {
+  const data = await getJSON("/api/brain/explain");
+  if (!data || data.error) return;
+  state.explain = data;
+  if (!data.available) {
+    $("brain-verdict").textContent = data.detail || "no completed window yet";
+    return;
+  }
+  $("brain-verdict").textContent = data.verdict;
+  $("b-dominant").textContent = (data.dominant_inputs || [])
+    .slice(0, 4).map((d) => `${d.formula} ${fmtSigned(d.value, 3)}`).join(" · ") || "—";
+  $("b-kc").textContent = `${data.kenyon_cells?.active ?? "—"} / ${data.kenyon_cells?.of ?? 50} (KCAE ${fmtSigned(data.kenyon_cells?.kcae ?? 0, 3)})`;
+  $("b-mbon").textContent = `${fmtSigned(data.mbons?.approach ?? 0)} / ${fmtSigned(data.mbons?.avoid ?? 0)}`;
+  $("b-lh").textContent = `appr ${fmtSigned(data.lateral_horn?.approach ?? 0)} · avoid ${fmtSigned(data.lateral_horn?.avoid ?? 0)}`;
+  const dan = data.dopamine || {};
+  $("b-dan").textContent =
+    `DRG ${fmtSigned(dan.drg ?? 0)} → PAM ${fmtSigned(dan.pam ?? 0)} · PPL1 ${fmtSigned(dan.ppl1 ?? 0)}` +
+    ` · OA ${fmtSigned(dan.octopamine ?? 0)}`;
+  $("b-ccs").textContent = `${fmtSigned(data.ccs_value)} → ${data.weights?.in_fusion ?? 0.4} × weight` +
+    (data.weights?.share_of_score !== null && data.weights?.share_of_score !== undefined
+      ? ` (${fmtSigned(data.weights.share_of_score)} of the score)`
+      : "");
+  $("b-source").textContent = `${data.source?.status || "—"} · ${data.source?.message || ""}` +
+    ` · checksum ${data.source?.checksum || "—"} · gain ${data.source?.gain ?? "—"}`;
+  renderBrainPipeline();
+}
+
 async function refreshBrain() {
   const data = await getJSON("/api/brain/status");
   if (!data) return;
@@ -428,7 +757,9 @@ async function refreshHistory() {
 async function refreshOutcomes() {
   const data = await getJSON("/api/signal/outcomes");
   if (!data) return;
-  $("win-rate").textContent = `win rate ${fmtPct(data.win_rate)} (${data.count} outcomes)`;
+  state.outcomes = data.rows || [];
+  if ($("win-rate")) $("win-rate").textContent = `win rate ${fmtPct(data.win_rate)} (${data.count} outcomes)`;
+  renderWidgetPanel();
   const list = $("outcomes");
   list.innerHTML = "";
   (data.rows || []).slice().reverse().slice(0, 8).forEach((row) => {
@@ -531,13 +862,10 @@ function escapeHtml(text) {
 }
 
 /* ------------------------------------------------------------- emergency */
+/* The emergency path no longer takes over the screen: it lights the inline
+   HOLD box and a small chip under the prediction, both inside the page. */
 function renderEmergency() {
-  const active = state.emergencyUntil > Date.now();
-  $("emergency").classList.toggle("hidden", !active);
-  $("shade").classList.toggle("hidden", !active);
-  if (active && state.emergency) {
-    $("em-headline").textContent = `“${state.emergency.headline}”`;
-  }
+  renderHoldBox();
 }
 
 /* ------------------------------------------------------- API keys modal */
@@ -681,19 +1009,17 @@ $("asset-toggle").addEventListener("click", (event) => {
   renderAssetToggle();
 });
 
-$("em-ack").addEventListener("click", () => {
-  state.acknowledged = true;
-  renderEmergency();
-  $("emergency").classList.add("hidden");
-  $("shade").classList.add("hidden");
-});
-
-$("em-dismiss").addEventListener("click", async () => {
+$("w-emergency-clear").addEventListener("click", async () => {
   await fetch("/api/news/emergency/clear", { method: "POST" });
   state.emergencyUntil = 0;
   state.emergency = null;
-  if (state.lockState === "EMERGENCY_OVERRIDE") state.lockState = "LOCKED";
   renderEmergency();
+});
+
+$("brain-toggle").addEventListener("click", () => {
+  state.wiringOpen = !state.wiringOpen;
+  $("brain-wiring").classList.toggle("hidden", !state.wiringOpen);
+  $("brain-toggle").textContent = state.wiringOpen ? "Hide the wiring diagram" : "Show the wiring diagram";
 });
 
 $("toggle-explain").addEventListener("click", () => {
@@ -713,7 +1039,8 @@ function renderAll() {
   renderAssetToggle();
   renderSignal();
   renderFormulas();
-  renderEmergency();
+  renderWidgetPanel();
+  renderHoldBox();
 }
 
 async function boot() {
@@ -733,6 +1060,8 @@ async function boot() {
   await refreshNewsList();
   await refreshAgents();
   await refreshBrain();
+  await loadWiring();
+  await refreshBrainExplain();
   await refreshTimings();
   connect();
   setInterval(tickClock, 100);
@@ -741,7 +1070,8 @@ async function boot() {
   setInterval(refreshNewsList, 15000);
   setInterval(refreshBrain, 20000);
   setInterval(refreshHistory, 30000);
-  setInterval(refreshOutcomes, 20000);
+  setInterval(refreshOutcomes, 15000);
+  setInterval(refreshBrainExplain, 10000);
   setInterval(renderEmergency, 1000);
 }
 

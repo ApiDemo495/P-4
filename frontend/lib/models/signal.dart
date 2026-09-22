@@ -78,6 +78,103 @@ class AgentDecision {
       );
 }
 
+/// Take-profit / stop-loss geometry attached to every locked signal
+/// (Section 10.5). Levels are derived from realised volatility, not from a
+/// fixed pip target, and a HOLD signal deliberately carries no position.
+class SignalRisk {
+  const SignalRisk({
+    this.tradeable = false,
+    this.direction = 'HOLD',
+    this.entry = 0.0,
+    this.takeProfit,
+    this.stopLoss,
+    this.tpBps = 0.0,
+    this.slBps = 0.0,
+    this.rr = 0.0,
+    this.volatilityBps = 0.0,
+    this.horizonSeconds = 60.0,
+    this.note = '',
+  });
+
+  final bool tradeable;
+  final String direction;
+  final double entry;
+  final double? takeProfit;
+  final double? stopLoss;
+  final double tpBps;
+  final double slBps;
+  final double rr;
+  final double volatilityBps;
+  final double horizonSeconds;
+  final String note;
+
+  static const SignalRisk none = SignalRisk();
+
+  factory SignalRisk.fromJson(Map<String, dynamic> json) => SignalRisk(
+        tradeable: json['tradeable'] == true,
+        direction: _s(json['direction'], 'HOLD'),
+        entry: _d(json['entry']),
+        takeProfit:
+            json['take_profit'] == null ? null : _d(json['take_profit']),
+        stopLoss: json['stop_loss'] == null ? null : _d(json['stop_loss']),
+        tpBps: _d(json['tp_bps']),
+        slBps: _d(json['sl_bps']),
+        rr: _d(json['rr']),
+        volatilityBps: _d(json['volatility_bps']),
+        horizonSeconds: _d(json['horizon_seconds'], 60),
+        note: _s(json['note']),
+      );
+}
+
+/// Which window the locked signal governs, and what the engine is doing in it.
+///
+/// The pipeline means `computedAt` is *always* inside the previous countdown:
+/// the countdown the user reads shows a signal that already existed when the
+/// window started, while the engine computes the next one.
+class WindowInfo {
+  const WindowInfo({
+    this.validFrom = '',
+    this.validUntil = '',
+    this.secondsRemaining = 60.0,
+    this.windowSeconds = 60.0,
+    this.computedAt = '',
+    this.computedSecondsAgo,
+    this.computeMs = 0.0,
+    this.prefetchReady = false,
+    this.pipeline = true,
+    this.phase = '',
+    this.computeProgress = 0.0,
+  });
+
+  final String validFrom;
+  final String validUntil;
+  final double secondsRemaining;
+  final double windowSeconds;
+  final String computedAt;
+  final double? computedSecondsAgo;
+  final double computeMs;
+  final bool prefetchReady;
+  final bool pipeline;
+  final String phase;
+  final double computeProgress;
+
+  factory WindowInfo.fromJson(Map<String, dynamic> json) => WindowInfo(
+        validFrom: _s(json['valid_from']),
+        validUntil: _s(json['valid_until']),
+        secondsRemaining: _d(json['seconds_remaining'], 60),
+        windowSeconds: _d(json['window_seconds'], 60),
+        computedAt: _s(json['computed_at']),
+        computedSecondsAgo: json['computed_seconds_ago'] == null
+            ? null
+            : _d(json['computed_seconds_ago']),
+        computeMs: _d(json['compute_ms']),
+        prefetchReady: json['prefetch_ready'] == true,
+        pipeline: json['pipeline'] != false,
+        phase: _s(json['phase']),
+        computeProgress: _d(json['compute_progress']),
+      );
+}
+
 /// The locked signal for one cycle. Immutable by design - the backend cannot
 /// send a different one until the next cycle begins.
 class FrozenSignal {
@@ -108,6 +205,13 @@ class FrozenSignal {
     this.agents = const {},
     this.holdWarning,
     this.weightsUsed = const {},
+    this.risk = SignalRisk.none,
+    this.window,
+    this.preview = false,
+    this.computedAt = '',
+    this.validFrom = '',
+    this.validUntil = '',
+    this.windowSeconds = 60.0,
   });
 
   final int cycleNumber;
@@ -136,6 +240,17 @@ class FrozenSignal {
   final Map<String, AgentDecision> agents;
   final HoldWarning? holdWarning;
   final Map<String, double> weightsUsed;
+
+  /// Take-profit / stop-loss block - empty for a HOLD (no position).
+  final SignalRisk risk;
+
+  /// The window this signal governs (pipeline metadata).
+  final WindowInfo? window;
+  final bool preview;
+  final String computedAt;
+  final String validFrom;
+  final String validUntil;
+  final double windowSeconds;
 
   bool get isBuy => signal == 'BUY';
   bool get isSell => signal == 'SELL';
@@ -191,6 +306,17 @@ class FrozenSignal {
               Map<String, dynamic>.from(json['hold_warning'] as Map)),
       weightsUsed:
           rawWeights.map((k, v) => MapEntry(k.toString(), _d(v))),
+      risk: json['risk'] == null
+          ? SignalRisk.none
+          : SignalRisk.fromJson(Map<String, dynamic>.from(json['risk'] as Map)),
+      window: json['window'] == null
+          ? null
+          : WindowInfo.fromJson(Map<String, dynamic>.from(json['window'] as Map)),
+      preview: json['preview'] == true,
+      computedAt: _s(json['computed_at']),
+      validFrom: _s(json['valid_from']),
+      validUntil: _s(json['valid_until']),
+      windowSeconds: _d(json['window_seconds'], 60),
     );
   }
 }

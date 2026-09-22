@@ -8,6 +8,8 @@ import '../widgets/cycle_timer.dart';
 import '../widgets/hedge_dashboard.dart';
 import '../widgets/news_card.dart';
 import '../widgets/signal_panel.dart';
+import '../widgets/signal_widget_panel.dart';
+import 'brain_screen.dart';
 import 'formula_explorer_screen.dart';
 import 'settings_screen.dart';
 
@@ -50,33 +52,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(width: 8),
         ],
       ),
-      body: Stack(
+      body: Column(
         children: [
-          Column(
-            children: [
-              if (state.pendingAsset != null && state.pendingAsset != state.asset)
-                Container(
-                  width: double.infinity,
-                  color: AppTheme.warning.withAlpha(30),
-                  padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 14),
-                  child: Text(
-                    'Switching to ${state.pendingAsset} at the next cycle boundary…',
-                    style: const TextStyle(color: AppTheme.warning, fontSize: 12),
-                  ),
-                ),
-              Expanded(
-                child: IndexedStack(
-                  index: _tab,
-                  children: [
-                    _signalTab(state),
-                    FormulaExplorerScreen(state: state),
-                    SettingsScreen(state: state),
-                  ],
-                ),
+          if (state.pendingAsset != null && state.pendingAsset != state.asset)
+            Container(
+              width: double.infinity,
+              color: AppTheme.warning.withAlpha(30),
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 14),
+              child: Text(
+                'Switching to ${state.pendingAsset} at the next cycle boundary…',
+                style: const TextStyle(color: AppTheme.warning, fontSize: 12),
               ),
-            ],
+            ),
+          Expanded(
+            child: IndexedStack(
+              index: _tab,
+              children: [
+                _signalTab(state),
+                BrainScreen(state: state),
+                FormulaExplorerScreen(state: state),
+                SettingsScreen(state: state),
+              ],
+            ),
           ),
-          EmergencyOverlay(state: state),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -86,6 +84,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         destinations: const [
           NavigationDestination(
               icon: Icon(Icons.show_chart), label: 'Signal'),
+          NavigationDestination(icon: Icon(Icons.memory), label: 'Brain'),
           NavigationDestination(icon: Icon(Icons.functions), label: 'Formulas'),
           NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
         ],
@@ -136,6 +135,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: ListView(
         padding: const EdgeInsets.all(14),
         children: [
+          SignalWidgetPanel(state: state),
+          const SizedBox(height: 12),
           SignalPanel(state: state),
           const SizedBox(height: 12),
           LayoutBuilder(

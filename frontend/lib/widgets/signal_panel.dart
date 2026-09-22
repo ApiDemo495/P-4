@@ -31,10 +31,13 @@ class SignalPanel extends StatelessWidget {
                   child: CircularProgressIndicator(strokeWidth: 2.4),
                 ),
                 SizedBox(height: 14),
-                Text('\u{23F3} Computing signal…',
+                Text('\u{23F3} Preparing the first window…',
                     style: TextStyle(color: AppTheme.textMuted)),
                 SizedBox(height: 6),
-                Text('the signal locks at t = 8 s and is immutable afterwards',
+                Text(
+                    'the engine computes each signal during the previous countdown, '
+                    'so once it locks the panel never blanks',
+                    textAlign: TextAlign.center,
                     style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
               ],
             ),
@@ -122,7 +125,7 @@ class SignalPanel extends StatelessWidget {
               style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12.5)),
           const SizedBox(height: 12),
           Text(
-            'BRAIN',
+            'BRAIN (full wiring: Brain tab · /api/brain/wiring)',
             style: const TextStyle(
               fontSize: 10.5,
               letterSpacing: 1.2,

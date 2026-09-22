@@ -247,6 +247,54 @@ buyer, so a modest push travels further: **ask cliff deeper ⇒ bullish.**
 
 ---
 
+## 10-B — The countdown is pipelined (supersedes the "blank 8 seconds" reading)
+
+**Symptom.** With the draft timeline the dashboard spends the first eight seconds
+of every minute on "⏳ Computing…": there is nothing to show, and the user is
+asked to wait for a signal that will not change again after t = 8 s anyway.
+
+**Decision.** The default engine (`SIGNAL_PIPELINE=1`) publishes the signal for
+window *N* from a computation performed during window *N−1*, in the last
+`lead = min(scaled lock deadline, 30 s)` seconds of that window — late enough
+that the frozen snapshot is still fresh, early enough to beat the lock deadline.
+Consequences that are now part of the interface:
+
+* `COMPUTING` is only reachable at a cold start; the client renders a labelled
+  sentinel instead of an empty panel;
+* every payload carries `computed_at`, `valid_from`, `valid_until`, `preview`,
+  `age_seconds`, `seconds_remaining`, `risk` and a `window` block, so a client
+  can *prove* the pipeline rather than trust a claim;
+* the bootstrap window is flagged `preview: true` and, with the world clock, runs
+  only to the next UTC minute so every later window is minute-aligned;
+* `NEXT_WINDOW_READY` announces readiness **without the direction**, so the lock
+  cannot be read through the side channel.
+
+**Escape hatch.** `SIGNAL_PIPELINE=0` restores the literal draft timeline, and
+the Appendix E tests exercise that path.
+
+---
+
+## 10-C — Take-profit / stop-loss are volatility-scaled
+
+**Why.** The draft requires a TP/SL with every signal but does not define one.
+Fixed pip targets are wrong across a 2 bps and a 90 bps tape, so the levels are
+derived from the realised 1-minute volatility and clamped
+(`tp = clip(1.6·σ, 4, 150) bps`, `sl = clip(1.0·σ, 3, 120) bps`; PAXG uses
+1.4/1.0). A HOLD carries **no** levels and the UI says "no position while the
+signal is HOLD" rather than inventing a trade the engine did not recommend.
+
+---
+
+## 11-A — The emergency notice is inline, not an overlay
+
+**Correction from use.** A full-screen red overlay hides the price, the levels
+and the news at exactly the moment a trader needs them. The override is therefore
+announced by (a) a small glittering chip immediately under the prediction and
+(b) the HOLD box turning red and glittering harder, both inside the page. The
+Flutter client follows the same rule and adds haptics.
+
+---
+
 ## What was *not* changed
 
 For the avoidance of doubt, the following spec behaviour is implemented exactly
