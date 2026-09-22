@@ -12,6 +12,7 @@
     "storage": "16gb"
   },
   "postCreateCommand": "bash .devcontainer/setup.sh",
+  "postAttachCommand": "echo '\n  Drosophila Trader is ready.\n  Start it with:  bash run.sh --bg\n  Then open the PORTS tab -> port 8000 (globe icon).\n  Add API keys in the browser: click the API keys link in the header.\n'",
   "forwardPorts": [8000, 6379],
   "portsAttributes": {
     "8000": {

@@ -35,12 +35,56 @@
     <a href="/" class="active">Dashboard</a>
     <a href="/matrix">Brain Matrix</a>
     <a href="/settings">⚙ Settings</a>
+    <a href="#" id="open-keys">🔑 API keys</a>
+    <a href="/flutter" id="flutter-link" class="hidden" target="_blank">📱 Flutter app</a>
     <a href="/docs" target="_blank">API</a>
   </nav>
   <div class="conn"><span id="ws-dot" class="dot"></span><span id="ws-label">connecting…</span></div>
 </header>
 
 <main class="wrap">
+
+<!-- ===================== FIRST-RUN / KEY SETUP ===================== -->
+<section class="card hidden" id="setup-banner">
+  <div class="card-head">
+    <h2>🔑 Add your API keys — takes 30 seconds</h2>
+    <span class="muted">optional, the engine runs without them</span>
+  </div>
+  <p class="muted" style="margin-top:0">
+    Nothing here is required to start. Adding keys upgrades the engine: a Gemini key
+    turns on the AI agent, a CryptoPanic key switches the news engine to the 30-second
+    live feed, and a neuPrint token replaces the fallback connectome with the real
+    hemibrain.
+  </p>
+  <div class="keys-grid">
+    <div class="key-row">
+      <div class="key-label"><b>Gemini</b><span class="muted">AI agent · 25% of the fusion</span></div>
+      <span class="key-state" id="state-gemini">not set</span>
+    </div>
+    <div class="key-row">
+      <div class="key-label"><b>CryptoPanic</b><span class="muted">live news every 30 s</span></div>
+      <span class="key-state" id="state-cryptopanic">not set</span>
+    </div>
+    <div class="key-row">
+      <div class="key-label"><b>NewsAPI</b><span class="muted">news backup</span></div>
+      <span class="key-state" id="state-newsapi">not set</span>
+    </div>
+    <div class="key-row">
+      <div class="key-label"><b>GitHub PAT</b><span class="muted">GitHub Models agent · 15%</span></div>
+      <span class="key-state" id="state-github">not set</span>
+    </div>
+    <div class="key-row">
+      <div class="key-label"><b>neuPrint</b><span class="muted">live hemibrain connectome</span></div>
+      <span class="key-state" id="state-neuprint">not set</span>
+    </div>
+  </div>
+  <div class="row" style="margin-top:14px">
+    <button class="btn" id="setup-open">Enter keys</button>
+    <a class="btn ghost" href="/settings" style="text-decoration:none">Full settings</a>
+    <span style="flex:1"></span>
+    <button class="btn ghost" id="setup-dismiss">Don't show again</button>
+  </div>
+</section>
 
   <!-- ========================= ASSET TOGGLE ========================= -->
   <section class="card asset-card">
@@ -166,6 +210,80 @@
     <span>Educational tool. Not financial advice.</span>
   </footer>
 </main>
+
+<!-- ===================== API KEY MODAL ===================== -->
+<div id="keys-modal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2>🔑 API keys</h2>
+      <button class="btn tiny ghost" id="keys-close">✕</button>
+    </div>
+    <p class="muted" style="margin-top:0;font-size:12px">
+      Keys are tested before they are accepted, applied to the running engine immediately,
+      and never leave your machine. Tick “remember” to also write them to the git-ignored
+      <code>.env</code> so they survive a restart.
+    </p>
+
+    <div class="key-field">
+      <label for="k-gemini">Gemini API key <span class="muted">— aistudio.google.com/apikey</span></label>
+      <div class="row">
+        <input type="text" id="k-gemini" class="key-input" placeholder="AIza…" autocomplete="off" spellcheck="false" />
+        <button class="btn tiny ghost" data-reveal="k-gemini">👁</button>
+        <button class="btn" data-test="gemini" data-input="k-gemini">Test</button>
+      </div>
+      <div class="key-result" id="r-gemini"></div>
+    </div>
+
+    <div class="key-field">
+      <label for="k-cryptopanic">CryptoPanic token <span class="muted">— cryptopanic.com/developers/api/</span></label>
+      <div class="row">
+        <input type="text" id="k-cryptopanic" class="key-input" placeholder="token" autocomplete="off" spellcheck="false" />
+        <button class="btn tiny ghost" data-reveal="k-cryptopanic">👁</button>
+        <button class="btn" data-test="cryptopanic" data-input="k-cryptopanic">Test</button>
+      </div>
+      <div class="key-result" id="r-cryptopanic"></div>
+    </div>
+
+    <div class="key-field">
+      <label for="k-newsapi">NewsAPI key <span class="muted">— newsapi.org/register</span></label>
+      <div class="row">
+        <input type="text" id="k-newsapi" class="key-input" placeholder="key" autocomplete="off" spellcheck="false" />
+        <button class="btn tiny ghost" data-reveal="k-newsapi">👁</button>
+        <button class="btn" data-test="newsapi" data-input="k-newsapi">Test</button>
+      </div>
+      <div class="key-result" id="r-newsapi"></div>
+    </div>
+
+    <div class="key-field">
+      <label for="k-github">GitHub PAT <span class="muted">— optional, GitHub Models agent</span></label>
+      <div class="row">
+        <input type="text" id="k-github" class="key-input" placeholder="github_pat_…" autocomplete="off" spellcheck="false" />
+        <button class="btn tiny ghost" data-reveal="k-github">👁</button>
+        <button class="btn" data-test="github" data-input="k-github">Test</button>
+      </div>
+      <div class="key-result" id="r-github"></div>
+    </div>
+
+    <div class="key-field">
+      <label for="k-neuprint">neuPrint token <span class="muted">— optional, live Drosophila connectome</span></label>
+      <div class="row">
+        <input type="text" id="k-neuprint" class="key-input" placeholder="eyJ…" autocomplete="off" spellcheck="false" />
+        <button class="btn tiny ghost" data-reveal="k-neuprint">👁</button>
+        <button class="btn" data-test="neuprint" data-input="k-neuprint">Test</button>
+      </div>
+      <div class="key-result" id="r-neuprint"></div>
+    </div>
+
+    <div class="row" style="margin-top:16px">
+      <label class="checkbox" style="flex:1">
+        <input type="checkbox" id="k-persist" /> remember these (write to <code>.env</code>)
+      </label>
+      <button class="btn ghost" id="keys-cancel">Cancel</button>
+      <button class="btn" id="keys-save">Save keys</button>
+    </div>
+    <div class="key-result" id="r-save"></div>
+  </div>
+</div>
 
 <script src="/static/app.js"></script>
 </body>

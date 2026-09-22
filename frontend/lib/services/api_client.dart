@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 
 import '../models/signal.dart';
@@ -10,13 +11,26 @@ import '../models/signal.dart';
 /// snapshot, the Formula Explorer metadata and the Settings screen.
 class ApiClient {
   ApiClient({String? baseUrl})
-      : baseUrl = (baseUrl ?? defaultBaseUrl).replaceAll(RegExp(r'/+$'), '');
+      : baseUrl = (baseUrl ?? resolvedBase).replaceAll(RegExp(r'/+$'), '');
 
-  /// `--dart-define=API_BASE=http://localhost:8000` overrides the default.
-  static const String defaultBaseUrl = String.fromEnvironment(
-    'API_BASE',
-    defaultValue: 'http://localhost:8000',
-  );
+  /// Optional compile-time override:
+  ///
+  ///     flutter run --dart-define=API_BASE=http://192.168.1.20:8000
+  ///
+  /// When it is not supplied the client talks to **the origin it was served
+  /// from**, which is what makes `frontend/build/web` served by the backend at
+  /// `/flutter` work with no configuration at all (and no CORS).
+  static const String configuredBase =
+      String.fromEnvironment('API_BASE', defaultValue: '');
+
+  static String get resolvedBase {
+    if (configuredBase.isNotEmpty) return configuredBase;
+    if (kIsWeb) return Uri.base.origin; // e.g. https://<name>-8000.app.github.dev
+    return 'http://localhost:8000';
+  }
+
+  /// Kept for compatibility with earlier call sites.
+  static String get defaultBaseUrl => resolvedBase;
 
   final String baseUrl;
 

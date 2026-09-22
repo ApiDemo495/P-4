@@ -59,6 +59,8 @@ flutter_export_environment.sh
 .idea/
 .vscode/*
 !.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
 *.iml
 .DS_Store
 Thumbs.db

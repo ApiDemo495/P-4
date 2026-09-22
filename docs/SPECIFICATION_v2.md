@@ -573,17 +573,37 @@ stays locked. Latency is shown per formula (`/api/formulas/timings`).
 40 strongest edges, the PN ordering, and the last activation trace (KCAE, active
 KCs, LH read-outs, CCSv2, both confidence variants).
 
-### 11.5 Settings (`/settings`)
+### 11.5 Settings (`/settings`) and the in-browser key modal
 
-Key entry with **test buttons** for all four credentials, local-model upload /
-unload / stub switch, brain reconnect + health check, news poll and RSS test, and
-a system panel showing the effective configuration.
+Credentials are managed from the browser; the command line is never required.
+
+* **Dashboard modal (`🔑 API keys` in the header)** — the four agent/news
+  credentials plus the neuPrint token. Each field has a **Test** button that
+  performs a real authenticated request before the key is accepted
+  (`POST /api/agents/{name}/test`), an optional **"remember"** checkbox that
+  writes the value to the git-ignored `.env`
+  (`POST /api/settings/keys/{name}` with `persist: true`), and immediate effect:
+  saving a CryptoPanic/NewsAPI key triggers a news poll, saving a neuPrint token
+  offers to rebuild the connectome.
+* **First-run banner** — shown on the dashboard while no key is configured,
+  listing what each key unlocks; dismissible (remembered in `localStorage`).
+* **`/settings`** — the same operations plus local-model upload/unload/stub, the
+  brain's five verification steps with reconnect, the news-source status with
+  poll/RSS test, and the effective system configuration.
+* No credential is ever logged, echoed back to the client, or written anywhere
+  except process memory and (opt-in) `.env`.
 
 ### 11.6 Flutter client
 
 `frontend/lib` mirrors this: `SignalPanel`, `NewsCard`, `HedgeDashboard`,
 `FormulaExplorer`, `AgentList` widgets over a `SignalSocket` service, with a
 Flutter-local `CycleTimer` driven from the same `status` payload.
+
+The client is built for the web with `bash frontend/run_web.sh` and served by the
+engine itself at **`/flutter`** (`frontend/build/web` is mounted on demand), so
+the mobile client and the API share one origin and one forwarded port. When no
+`--dart-define=API_BASE` is supplied the client talks to the origin it was served
+from (`Uri.base.origin`); native builds default to `http://localhost:8000`.
 
 ---
 

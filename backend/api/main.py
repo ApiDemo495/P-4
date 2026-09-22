@@ -142,6 +142,13 @@ async def system_config() -> dict:
             "neuprint": bool(settings.neuprint_token),
             "cave": bool(settings.cave_token),
         },
+        "news_enabled": settings.news_enabled,
+        "market_data_mode": settings.market_data_mode,
+        "simulator_allowed": settings.market_allow_simulator,
+        # Lets the dashboard show/hide the "Flutter app" link and the first-run
+        # key banner without guessing.
+        "flutter_web": (cfg.REPO_ROOT / "frontend" / "build" / "web").exists(),
+        "env_file": (cfg.REPO_ROOT / ".env").exists(),
     }
 
 
@@ -170,10 +177,53 @@ if _web_dir.exists():
     @app.get("/settings")
     async def settings_page() -> FileResponse:
         return FileResponse(str(_web_dir / "settings.html"))
+
 else:  # pragma: no cover - only if the web assets were stripped
     @app.get("/")
     async def dashboard_missing() -> dict:
         return {"detail": "Dashboard assets not found", "api": "/docs"}
+
+
+# ---------------------------------------------------------------------------
+# Flutter client (served from the same origin as the API, so there is one port,
+# one forwarded URL and no CORS).  Resolved per request, which means
+# ``bash frontend/run_web.sh`` takes effect without restarting the server.
+# ---------------------------------------------------------------------------
+
+FLUTTER_BUILD_DIR = cfg.REPO_ROOT / "frontend" / "build" / "web"
+
+
+@app.get("/flutter")
+@app.get("/flutter/")
+async def flutter_index():
+    if not FLUTTER_BUILD_DIR.exists():
+        return _flutter_missing()
+    return FileResponse(str(FLUTTER_BUILD_DIR / "index.html"))
+
+
+@app.get("/flutter/{path:path}")
+async def flutter_asset(path: str):
+    if not FLUTTER_BUILD_DIR.exists():
+        return _flutter_missing()
+    candidate = (FLUTTER_BUILD_DIR / path).resolve()
+    root = FLUTTER_BUILD_DIR.resolve()
+    if not str(candidate).startswith(str(root)) or not candidate.is_file():
+        # Flutter's asset manifest and canvaskit paths are absolute under the
+        # /flutter/ base href, so anything unknown falls back to index.html.
+        return FileResponse(str(root / "index.html"))
+    return FileResponse(str(candidate))
+
+
+def _flutter_missing() -> JSONResponse:
+    return JSONResponse(
+        status_code=404,
+        content={
+            "detail": "The Flutter web build has not been created yet.",
+            "build": "bash frontend/run_web.sh",
+            "web_dashboard": "/",
+            "install_flutter": "INSTALL_FLUTTER=1 bash .devcontainer/setup.sh",
+        },
+    )
 
 
 def main() -> None:

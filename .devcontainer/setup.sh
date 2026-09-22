@@ -139,9 +139,14 @@ echo
 ok "setup complete"
 cat <<EOF
 
-  Start the engine + dashboard:
-      PYTHONPATH=$REPO_ROOT .venv/bin/python -m backend.api.main
-      open http://localhost:8000/
+  Start the engine + dashboard (one command, handles everything):
+      bash run.sh
+
+  Diagnose the environment without starting anything:
+      bash run.sh --check
+
+  Build the Flutter client as a web app (served at /flutter):
+      bash frontend/run_web.sh
 
   Run the end-to-end test suite (Appendix E, 13 scenarios):
       PYTHONPATH=$REPO_ROOT .venv/bin/python -m pytest -q
@@ -149,7 +154,8 @@ cat <<EOF
   Quick end-to-end cycle dump without the UI:
       PYTHONPATH=$REPO_ROOT .venv/bin/python -m backend.tests.smoke --seconds 90
 
-  Flutter front end (after INSTALL_FLUTTER=1):
-      cd frontend && flutter run -d chrome --dart-define=API_BASE=http://localhost:8000
+  Add API keys without touching a terminal: open the dashboard and click
+      "🔑 API keys"   (or the Settings page) - keys are tested before they are
+      accepted and can be written to .env from there.
 
 EOF

@@ -84,6 +84,22 @@ async def test_agent(name: str, payload: TestPayload | None = None) -> dict:
         feeds = await rss_source.check_feeds(manager.settings.rss_feeds)
         ok = sum(1 for f in feeds if f["ok"])
         return {"valid": ok > 0, "detail": f"{ok}/{len(feeds)} feeds reachable", "feeds": feeds}
+    if name == "neuprint":
+        from backend.brain import health_check
+
+        settings = manager.settings
+        result = await health_check.neuprint_test_token(
+            key or settings.neuprint_token,
+            server=settings.neuprint_server,
+            dataset=settings.neuprint_dataset,
+        )
+        # A working token is only useful once the connectome has been rebuilt.
+        if result.get("valid"):
+            result["detail"] = (
+                f"{result.get('detail', 'token accepted')} — press Rebuild connectome "
+                "to use it now"
+            )
+        return result
     raise HTTPException(status_code=404, detail=f"unknown agent {name!r}")
 
 
@@ -100,6 +116,10 @@ async def set_key(name: str, payload: KeyPayload) -> dict:
         manager.settings.cryptopanic_key = key
     elif name == "newsapi":
         manager.settings.newsapi_key = key
+    elif name == "neuprint":
+        manager.settings.neuprint_token = key
+    elif name == "cave":
+        manager.settings.cave_token = key
     else:
         raise HTTPException(status_code=404, detail=f"unknown key slot {name!r}")
 
@@ -114,6 +134,8 @@ _ENV_NAMES = {
     "github": "GITHUB_MODELS_TOKEN",
     "cryptopanic": "CRYPTOPANIC_API_KEY",
     "newsapi": "NEWSAPI_API_KEY",
+    "neuprint": "NEUPRINT_APPLICATION_CREDENTIALS",
+    "cave": "CAVE_TOKEN",
 }
 
 

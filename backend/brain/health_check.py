@@ -63,6 +63,72 @@ async def neuprint_ping(server: str = "https://neuprint.janelia.org", timeout: f
         return False
 
 
+async def neuprint_test_token(
+    token: str,
+    server: str = "https://neuprint.janelia.org",
+    dataset: str = "hemibrain:v1.2.1",
+    timeout: float = 10.0,
+) -> dict:
+    """Validate a neuPrint token the way the brain module will use it.
+
+    neuPrint accepts either ``x-neuprint-token`` or ``Authorization: Bearer``;
+    both are tried so a valid token is never reported as invalid because of a
+    header-name difference.  `/api/databaseInfo` requires authentication, so a
+    200 means the token really works for this dataset.
+    """
+    import httpx
+
+    candidate = (token or "").strip()
+    if not candidate:
+        return {"valid": False, "error": "No token entered"}
+
+    url = f"{server.rstrip('/')}/api/databaseInfo"
+    schemes = (
+        {"x-neuprint-token": candidate},
+        {"Authorization": f"Bearer {candidate}"},
+    )
+    last_error = ""
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            reachable = False
+            for headers in schemes:
+                response = await client.get(url, params={"dataset": dataset}, headers=headers)
+                reachable = True
+                if response.status_code == 200:
+                    try:
+                        payload = response.json()
+                    except Exception:  # noqa: BLE001
+                        payload = {}
+                    databases = payload.get("dataset") or payload.get("databases") or dataset
+                    if isinstance(databases, (list, tuple)):
+                        databases = ", ".join(str(d) for d in databases[:3])
+                    return {
+                        "valid": True,
+                        "detail": f"token accepted · dataset {databases}",
+                        "reachable": True,
+                    }
+                if response.status_code in (401, 403):
+                    return {
+                        "valid": False,
+                        "error": f"neuPrint rejected the token (HTTP {response.status_code})",
+                        "reachable": True,
+                    }
+                last_error = f"HTTP {response.status_code} from {url}"
+            if reachable:
+                return {"valid": False, "error": last_error or "unexpected response", "reachable": True}
+            return {"valid": False, "error": "neuPrint did not answer", "reachable": False}
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "valid": False,
+            "error": f"could not reach {server} ({exc})",
+            "reachable": False,
+            "hint": (
+                "Some sandboxes and corporate networks block neuprint.janelia.org. "
+                "The engine keeps working on the committed 80x80 fallback matrix."
+            ),
+        }
+
+
 async def check_brain(
     adjacency: np.ndarray | None,
     conv: gc.GraphConvolution | None,

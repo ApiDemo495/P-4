@@ -40,13 +40,22 @@ function pctClass(v) {
   return "neutral";
 }
 
-async function getJSON(url) {
+async function getJSON(url, options) {
   try {
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) return null;
+    const res = await fetch(url, { cache: "no-store", ...(options || {}) });
+    if (!res.ok) {
+      // Surface the backend's error message instead of swallowing it: the key
+      // modal needs to tell "wrong key" apart from "server unreachable".
+      try {
+        const payload = await res.json();
+        return { error: payload.detail || `HTTP ${res.status}`, valid: false };
+      } catch (e) {
+        return { error: `HTTP ${res.status}`, valid: false };
+      }
+    }
     return await res.json();
   } catch (e) {
-    return null;
+    return { error: String(e && e.message ? e.message : e), valid: false, offline: true };
   }
 }
 
@@ -531,6 +540,135 @@ function renderEmergency() {
   }
 }
 
+/* ------------------------------------------------------- API keys modal */
+/* Adding keys without a terminal: the same endpoints the Settings page uses,
+   reachable from the dashboard header.  Every key is tested before it is
+   accepted, applied to the running engine immediately, and can optionally be
+   written to the git-ignored .env. */
+
+const KEY_SLOTS = ["gemini", "cryptopanic", "newsapi", "github", "neuprint"];
+
+function openKeys() {
+  $("keys-modal").classList.remove("hidden");
+  renderKeyStates();
+}
+function closeKeys() {
+  $("keys-modal").classList.add("hidden");
+}
+
+function setResult(slot, text, cls = "") {
+  const el = $(`r-${slot}`);
+  if (!el) return;
+  el.className = "key-result " + cls;
+  el.textContent = text;
+}
+
+async function testKey(slot, inputId, button) {
+  const key = $(inputId).value.trim();
+  if (!key) return setResult(slot, "enter a key first", "warn");
+  button.disabled = true;
+  setResult(slot, "testing…", "warn");
+  const res = await getJSON(`/api/agents/${slot}/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key }),
+  }) || { valid: false, error: "no response (is the backend still running?)" };
+  button.disabled = false;
+  if (res.valid) {
+    setResult(slot, `✅ ${res.detail || "valid"}`, "ok");
+  } else {
+    setResult(slot, `❌ ${res.error || "invalid"}${res.hint ? " — " + res.hint : ""}`, "err");
+  }
+}
+
+async function saveKeys() {
+  const persist = $("k-persist").checked;
+  const saved = [];
+  const failed = [];
+  for (const slot of KEY_SLOTS) {
+    const input = $(`k-${slot}`);
+    if (!input || !input.value.trim()) continue;
+    const res = await getJSON(`/api/settings/keys/${slot}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: input.value.trim(), persist }),
+    });
+    if (res && !res.error) saved.push(slot);
+    else failed.push(slot);
+  }
+  if (!saved.length) {
+    setResult("save", failed.length ? `❌ could not save: ${failed.join(", ")}` : "nothing entered yet",
+      failed.length ? "err" : "warn");
+    return;
+  }
+  setResult("save", `✅ saved ${saved.join(", ")}${persist ? " (written to .env)" : ""}`, "ok");
+  for (const slot of saved) $(`k-${slot}`).value = "";
+
+  // apply immediately: agents re-read their keys, news re-polls with the new token
+  await refreshAgents();
+  await refreshNewsList();
+  if (saved.includes("cryptopanic") || saved.includes("newsapi")) {
+    await fetch("/api/news/poll", { method: "POST" });
+    await refreshNewsList();
+  }
+  if (saved.includes("neuprint")) {
+    setResult("save", "✅ token saved — rebuilding the connectome (up to 60 s)…", "warn");
+    const brain = await getJSON("/api/brain/reconnect", { method: "POST" });
+    setResult("save", brain && brain.status
+      ? `✅ connectome: ${brain.status} — ${brain.detail}`
+      : "✅ token saved; the fallback matrix stays in use until the next reconnect",
+      brain && brain.status === "LIVE" ? "ok" : "warn");
+    await refreshBrain();
+  }
+  renderKeyStates();
+}
+
+function renderKeyStates() {
+  const configured = (state.config && state.config.configured) || {};
+  KEY_SLOTS.forEach((slot) => {
+    const el = $(`state-${slot}`);
+    if (!el) return;
+    const isSet = !!configured[slot];
+    el.className = "key-state" + (isSet ? " set" : "");
+    el.textContent = isSet ? "configured ✓" : "not set";
+  });
+}
+
+function maybeShowSetupBanner() {
+  const configured = (state.config && state.config.configured) || {};
+  const dismissed = localStorage.getItem("drosophila.setup.dismissed") === "1";
+  const nothingSet = !configured.gemini && !configured.cryptopanic && !configured.newsapi && !configured.github;
+  $("setup-banner").classList.toggle("hidden", dismissed || !nothingSet);
+  $("flutter-link").classList.toggle("hidden", !(state.config && state.config.flutter_web));
+}
+
+document.querySelectorAll("[data-reveal]").forEach((btn) => {
+  btn.onclick = () => {
+    const input = $(btn.dataset.reveal);
+    input.type = input.type === "password" ? "text" : "password";
+  };
+});
+
+document.querySelectorAll("[data-test]").forEach((btn) => {
+  btn.onclick = () => testKey(btn.dataset.test, btn.dataset.input, btn);
+});
+
+$("open-keys").addEventListener("click", (event) => { event.preventDefault(); openKeys(); });
+$("setup-open").addEventListener("click", openKeys);
+$("keys-close").onclick = closeKeys;
+$("keys-cancel").onclick = closeKeys;
+$("keys-save").onclick = saveKeys;
+$("setup-dismiss").onclick = () => {
+  localStorage.setItem("drosophila.setup.dismissed", "1");
+  maybeShowSetupBanner();
+};
+$("keys-modal").addEventListener("click", (event) => {
+  if (event.target.id === "keys-modal") closeKeys();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeKeys();
+});
+
 /* ---------------------------------------------------------------- events */
 $("asset-toggle").addEventListener("click", (event) => {
   const btn = event.target.closest(".asset");
@@ -580,10 +718,14 @@ function renderAll() {
 
 async function boot() {
   state.config = await getJSON("/api/system/config");
-  if (state.config) {
+  if (state.config && !state.config.error) {
     state.cyclePeriod = state.config.cycle_period_seconds || 60;
     state.asset = (state.config.assets || ["BTC"])[0];
+  } else {
+    state.config = {};
   }
+  renderKeyStates();
+  maybeShowSetupBanner();
   await loadFormulaMeta();
   await syncClock();
   await refreshHistory();

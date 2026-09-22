@@ -16,22 +16,75 @@ exchange or your API keys do not.
 
 ## Quick start
 
-```bash
-python -m pip install -r requirements.txt      # or: bash .devcontainer/setup.sh
+One command. It creates the virtualenv, installs what is missing, starts Redis if
+you have it, and prints the exact URL to open:
 
-PYTHONPATH=. python -m backend.api.main        # engine + dashboard
-open http://localhost:8000/                    # dashboard
-open http://localhost:8000/matrix              # 80×80 connectome viewer
-open http://localhost:8000/settings            # keys, models, brain, news
+```bash
+bash run.sh
 ```
 
-No API keys are required to start: the engine detects what is missing and
-degrades gracefully (Section 12 of the specification).
+```bash
+bash run.sh --bg        # background, survives closing the terminal
+bash run.sh --check     # diagnose the environment without starting anything
+bash run.sh --port 8020 # if 8000 is taken
+```
+
+Then open the URL it prints:
+
+| Page | What it is |
+|---|---|
+| `/` | dashboard — locked signal, hedge, agents, news, history, formulas |
+| `/settings` | keys, local model, brain, news |
+| `/matrix` | the 80×80 connectome with the last activation trace |
+| `/flutter` | the Flutter client, once `bash frontend/run_web.sh` has built it |
+
+**API keys are optional and are entered in the browser** — click **🔑 API keys**
+in the dashboard header. Each key is validated with a live request before it is
+accepted, applied to the running engine immediately, and can be written to the
+git-ignored `.env` with one checkbox. No terminal, no `nano .env`.
 
 * demo speed — `TIME_SCALE=10` gives 6-second cycles
 * offline mode — `MARKET_ALLOW_SIMULATOR=1` (default) keeps everything alive
 * brain offline — the committed 80×80 matrix is used automatically
 * local model — drop a `.gguf`/`.onnx` in Settings, or `LOCAL_AGENT_STUB=1`
+
+### Running in a GitHub Codespace
+
+1. **Code ▾ → Codespaces → +** on this repository (branch `arena/01a0c844-p-4`).
+2. Wait for `postCreateCommand` to finish (`bash .devcontainer/setup.sh`).
+3. In the terminal:
+
+```bash
+bash run.sh --bg
+```
+
+4. Open the **PORTS** tab → port **8000** → globe icon. That is the dashboard.
+   The **Run and Debug** panel (`F5`) and the **Terminal → Run Task** menu have
+   the same thing wired up as tasks.
+
+Flutter, if you want the mobile client in the browser:
+
+```bash
+bash frontend/run_web.sh      # installs the SDK if needed, then builds
+```
+
+The build lands in `frontend/build/web` and the engine serves it at `/flutter` —
+same origin, same port, no CORS, no second forwarded URL.
+
+### Troubleshooting
+
+| What you see | What it means | Fix |
+|---|---|---|
+| Browser error page with a sad page icon on port 8000 | **Nothing is listening on 8000** — the server is not running (this is the most common one) | `bash run.sh --bg`, wait for `✔ running in the background`, then reload the tab |
+| Same, after a Codespace restart | The container stopped and the process is gone with it | `bash run.sh --bg` again |
+| `bash: .venv/bin/python: No such file` | The venv was never created (setup did not finish) | `bash run.sh` creates it |
+| `ModuleNotFoundError: No module named 'backend'` | Started without the repo root on `PYTHONPATH` | use `bash run.sh`, or prefix `PYTHONPATH=$PWD` |
+| `bash run.sh --check` says modules are missing | Dependencies are not installed for the interpreter in use | `bash run.sh` (it installs them) |
+| Port 8000 answers only after signing in to GitHub | Forwarded ports are private by default | `bash run.sh --public`, or use it signed in |
+| `flutter run` prints nothing / exits immediately | No Chrome/GPU in the container, `flutter` not on `PATH`, and the dev port is not forwarded | `bash frontend/run_web.sh` (release build + `/flutter`) instead |
+| `/flutter` returns `{"detail": "The Flutter web build has not been created yet."}` | The build does not exist | `bash frontend/run_web.sh` |
+| Dashboard shows `L4 Fallback brain matrix` and a STUB agent chip | neuPrint is unreachable and `LOCAL_AGENT_STUB=1` is set — both are supported modes, clearly labelled | add a neuPrint token in the UI, and load a real `.gguf` in Settings |
+| `market_data → simulator` in the log | Binance/CoinGecko unreachable from the network you are on | set `MARKET_DATA_MODE=coingecko`, or keep the simulator (it is always flagged) |
 
 ## Verify it
 

@@ -15,7 +15,7 @@ import '../services/signal_socket.dart';
 class AppState extends ChangeNotifier {
   AppState({ApiClient? api, SignalSocket? socket})
       : api = api ?? ApiClient(),
-        socket = socket ?? SignalSocket(ApiClient.defaultBaseUrl);
+        socket = socket ?? SignalSocket(ApiClient.resolvedBase);
 
   final ApiClient api;
   final SignalSocket socket;
