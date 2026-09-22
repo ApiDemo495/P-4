@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Drosophila Trader v2.0</title>
+<link rel="stylesheet" href="/static/styles.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪰</text></svg>" />
+</head>
+<body>
+
+<!-- ===================== EMERGENCY OVERLAY ===================== -->
+<div id="emergency" class="emergency hidden">
+  <div class="emergency-card">
+    <div class="emergency-title">⚡⚡⚡ EMERGENCY OVERRIDE ⚡⚡⚡</div>
+    <div class="emergency-headline" id="em-headline">—</div>
+    <div class="emergency-body">
+      Signal overridden to <strong>HOLD</strong>.<br />
+      Exit any open positions immediately.
+    </div>
+    <div class="emergency-countdown">Normal operation resumes in: <span id="em-remaining">3:00</span></div>
+    <div class="emergency-actions">
+      <button class="btn danger" id="em-ack">Acknowledge</button>
+      <button class="btn ghost" id="em-dismiss">Dismiss Override</button>
+    </div>
+  </div>
+</div>
+
+<div id="shade" class="shade hidden"></div>
+
+<!-- ============================ HEADER ============================ -->
+<header class="topbar">
+  <div class="brand"><span class="fly">🪰</span> DROSOPHILA TRADER <span class="ver">v2.0</span></div>
+  <nav>
+    <a href="/" class="active">Dashboard</a>
+    <a href="/matrix">Brain Matrix</a>
+    <a href="/settings">⚙ Settings</a>
+    <a href="/docs" target="_blank">API</a>
+  </nav>
+  <div class="conn"><span id="ws-dot" class="dot"></span><span id="ws-label">connecting…</span></div>
+</header>
+
+<main class="wrap">
+
+  <!-- ========================= ASSET TOGGLE ========================= -->
+  <section class="card asset-card">
+    <div class="asset-toggle" id="asset-toggle">
+      <button class="asset active" data-asset="BTC"><span class="radio">●</span> BTC</button>
+      <button class="asset" data-asset="PAXG"><span class="radio">○</span> PAXG</button>
+    </div>
+    <div class="asset-meta">
+      <span id="price">—</span>
+      <span id="pending-switch" class="pending hidden"></span>
+      <span id="degradation" class="badge">—</span>
+    </div>
+  </section>
+
+  <!-- =========================== TIMER =========================== -->
+  <section class="card timer-card">
+    <div class="timer-row">
+      <div class="timer" id="timer">00:00 <span id="lock-icon">⏳</span></div>
+      <div class="timer-side">
+        <div class="kv"><span>cycle</span><b id="cycle-number">—</b></div>
+        <div class="kv"><span>utc</span><b id="utc">—</b></div>
+        <div class="kv"><span>state</span><b id="lock-state">COMPUTING</b></div>
+      </div>
+    </div>
+    <div class="progress"><div class="progress-fill" id="progress"></div></div>
+  </section>
+
+  <!-- ========================= SIGNAL PANEL ========================= -->
+  <section class="card signal-card">
+    <div id="computing" class="computing">
+      <div class="spinner"></div>
+      <div class="computing-text">⏳ Computing…</div>
+      <div class="computing-sub">Formulas, agents and the connectome are running.<br />
+        No signal is available for the first <b>8 seconds</b> of each minute.</div>
+    </div>
+
+    <div id="signal-body" class="hidden">
+      <div class="signal-badge" id="signal-badge">HOLD</div>
+      <div class="signal-meta">
+        <span id="signal-icon">🔒</span>
+        <span id="signal-note">locked for this cycle</span>
+      </div>
+      <div class="confidence-row">
+        <span>Confidence</span>
+        <b id="confidence-value">0%</b>
+      </div>
+      <div class="bar"><div class="bar-fill" id="confidence-bar"></div></div>
+      <div class="reasoning" id="reasoning">—</div>
+      <div class="weights" id="weights"></div>
+    </div>
+
+    <div id="hold-warning" class="hold-warning hidden">
+      <div class="hw-title">⚠️ HOLD Warning</div>
+      <div class="hw-text" id="hw-text"></div>
+      <div class="hw-lean" id="hw-lean"></div>
+    </div>
+  </section>
+
+  <!-- ============================ NEWS ============================ -->
+  <section class="card news-card">
+    <div class="card-head">
+      <h2>📰 Latest News Sentiment</h2>
+      <span class="muted" id="news-age">—</span>
+    </div>
+    <div class="news-headline" id="news-headline">Waiting for the news engine…</div>
+    <div class="news-meta">
+      <span id="news-source" class="muted">—</span>
+      <span class="pill" id="news-sentiment">—</span>
+      <span class="pill" id="news-niv">NIV —</span>
+      <span class="pill" id="news-smd">SMD —</span>
+      <span class="pill" id="news-coverage">coverage —</span>
+    </div>
+    <div class="news-list" id="news-list"></div>
+  </section>
+
+  <!-- ======================= AGENTS + HEDGE ======================= -->
+  <section class="grid-2">
+    <div class="card">
+      <div class="card-head"><h2>Agent Dashboard</h2><span class="muted">fusion weights</span></div>
+      <ul class="agent-list" id="agent-list"></ul>
+      <div class="divider"></div>
+      <div class="card-head"><h2>📊 Hedge Status</h2><span class="muted" id="hedge-stress">—</span></div>
+      <div class="hedge-grid">
+        <div class="hedge-item"><span>HSI</span><b id="h-hsi">—</b><div class="bar tiny"><div class="bar-fill" id="h-hsi-bar"></div></div></div>
+        <div class="hedge-item"><span>HRDD</span><b id="h-hrdd">—</b><div class="bar tiny"><div class="bar-fill" id="h-hrdd-bar"></div></div></div>
+        <div class="hedge-item"><span>SHRP</span><b id="h-shrp">—</b><div class="bar tiny"><div class="bar-fill" id="h-shrp-bar"></div></div></div>
+        <div class="hedge-item"><span>GCDV</span><b id="h-gcdv">—</b><div class="bar tiny"><div class="bar-fill" id="h-gcdv-bar"></div></div></div>
+      </div>
+      <div class="brain-status">
+        <span>🧠 Brain</span><b id="brain-status">—</b>
+        <span class="muted" id="brain-detail"></span>
+      </div>
+      <div class="brain-status">
+        <span>DRG reward</span><b id="drg-value">—</b>
+        <span class="muted" id="win-rate">—</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Signal History</h2><span class="muted">most recent first</span></div>
+      <ul class="history" id="history"></ul>
+      <div class="card-head" style="margin-top:14px"><h2>Recent Outcomes</h2><span class="muted">for the DRG learner</span></div>
+      <ul class="history" id="outcomes"></ul>
+    </div>
+  </section>
+
+  <!-- ======================= FORMULA EXPLORER ======================= -->
+  <section class="card">
+    <div class="card-head">
+      <h2>▼ Formula Explorer <span class="muted">(22 formulas + DRG)</span></h2>
+      <div class="explorer-tools">
+        <span class="pill" id="live-note">values refresh every 15s · signal stays locked</span>
+        <button class="btn tiny" id="toggle-explain">Show descriptions</button>
+        <button class="btn tiny ghost" id="collapse-all">Collapse all</button>
+      </div>
+    </div>
+    <div id="formula-explorer"></div>
+    <div class="timings" id="timings"></div>
+  </section>
+
+  <footer class="foot">
+    <span id="foot-status">—</span>
+    <span>Educational tool. Not financial advice.</span>
+  </footer>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

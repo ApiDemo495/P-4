@@ -1,0 +1,64 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.so
+*.c
+*.pyd
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+venv311/
+
+# ---- Cython build artifacts (erc.c is generated) ----
+backend/formulas/category_d_regime/erc.c
+
+# ---- Secrets ----
+.env
+.env.local
+*.pem
+*.key
+secrets/
+
+# ---- Uploaded local AI models (never commit model weights) ----
+backend/models/
+*.gguf
+*.onnx
+*.bin
+*.safetensors
+
+# ---- Runtime state ----
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+backend/data_state/
+
+# ---- Flutter / Dart ----
+frontend/.dart_tool/
+frontend/.packages
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/build/
+frontend/ios/Pods/
+frontend/android/.gradle/
+frontend/android/local.properties
+frontend/**/GeneratedPluginRegistrant.*
+.pub-cache/
+.pub/
+flutter_export_environment.sh
+
+# ---- Editors / OS ----
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.iml
+.DS_Store
+Thumbs.db

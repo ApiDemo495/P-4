@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Settings · Drosophila Trader v2.0</title>
+<link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="fly">🪰</span> DROSOPHILA TRADER <span class="ver">v2.0</span></div>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/matrix">Brain Matrix</a>
+    <a href="/settings" class="active">⚙ Settings</a>
+  </nav>
+  <div class="conn"><span id="ws-dot" class="dot"></span><span id="ws-label">—</span></div>
+</header>
+
+<main class="wrap" style="max-width:820px">
+  <h2 style="font-size:15px;letter-spacing:.05em">API KEYS</h2>
+
+  <section class="card">
+    <div class="field">
+      <label>Gemini API Key</label>
+      <div class="row">
+        <input type="password" id="key-gemini" placeholder="AIza…" />
+        <button class="btn tiny ghost" data-reveal="key-gemini">👁</button>
+        <button class="btn" data-test="gemini" data-input="key-gemini">Test</button>
+      </div>
+      <div class="status-line" id="status-gemini">—</div>
+    </div>
+
+    <div class="field">
+      <label>GitHub PAT (optional)</label>
+      <div class="row">
+        <input type="password" id="key-github" placeholder="github_pat_…" />
+        <button class="btn tiny ghost" data-reveal="key-github">👁</button>
+        <button class="btn" data-test="github" data-input="key-github">Test</button>
+      </div>
+      <div class="status-line" id="status-github">—</div>
+    </div>
+
+    <div class="field">
+      <label>CryptoPanic API Key (optional)</label>
+      <div class="row">
+        <input type="password" id="key-cryptopanic" placeholder="token" />
+        <button class="btn tiny ghost" data-reveal="key-cryptopanic">👁</button>
+        <button class="btn" data-test="cryptopanic" data-input="key-cryptopanic">Test</button>
+      </div>
+      <div class="status-line" id="status-cryptopanic">—</div>
+    </div>
+
+    <div class="field">
+      <label>NewsAPI Key (optional)</label>
+      <div class="row">
+        <input type="password" id="key-newsapi" placeholder="key" />
+        <button class="btn tiny ghost" data-reveal="key-newsapi">👁</button>
+        <button class="btn" data-test="newsapi" data-input="key-newsapi">Test</button>
+      </div>
+      <div class="status-line" id="status-newsapi">—</div>
+    </div>
+
+    <div class="row" style="justify-content:flex-end">
+      <button class="btn" id="save-keys">Save &amp; Return</button>
+    </div>
+    <div class="status-line" id="keys-note">
+      Keys are held in memory for this session. Tick “persist” to also write them to your local
+      <code>.env</code> (git-ignored).
+      <label style="display:inline;margin-left:8px">
+        <input type="checkbox" id="persist" style="width:auto" /> persist to .env
+      </label>
+    </div>
+  </section>
+
+  <h2 style="font-size:15px;letter-spacing:.05em">LOCAL AI MODEL</h2>
+  <section class="card">
+    <div id="local-status" class="status-line">—</div>
+    <div class="field" style="margin-top:12px">
+      <label>Upload a .gguf or .onnx model (validated, loaded, then test-inferred)</label>
+      <input type="file" id="model-file" accept=".gguf,.onnx" />
+    </div>
+    <div class="row">
+      <button class="btn" id="upload-model">Change Model</button>
+      <button class="btn ghost" id="unload-model">Unload</button>
+      <button class="btn ghost" id="stub-model">Load dev stub</button>
+      <span style="flex:1"></span>
+      <label style="display:inline"><input type="radio" name="lmode" value="ensemble" checked style="width:auto" /> Ensemble</label>
+      <label style="display:inline"><input type="radio" name="lmode" value="replace" style="width:auto" /> Replace</label>
+      <label style="display:inline"><input type="radio" name="lmode" value="off" style="width:auto" /> Off</label>
+    </div>
+    <div class="status-line" id="upload-status"></div>
+  </section>
+
+  <h2 style="font-size:15px;letter-spacing:.05em">BRAIN CONNECTION</h2>
+  <section class="card">
+    <div id="brain-status" class="status-line">—</div>
+    <div style="margin-top:12px">
+      <table>
+        <tbody id="brain-steps"></tbody>
+      </table>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="brain-reconnect">Force Reconnect</button>
+      <a class="btn ghost" href="/matrix" style="text-decoration:none">Show Matrix</a>
+      <button class="btn ghost" id="brain-health">Run Health Check</button>
+    </div>
+    <div class="status-line" id="brain-note"></div>
+  </section>
+
+  <h2 style="font-size:15px;letter-spacing:.05em">NEWS SOURCES</h2>
+  <section class="card">
+    <div id="news-status" class="status-line">—</div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn ghost" id="news-poll">Poll Now</button>
+      <button class="btn ghost" id="test-rss">Check RSS feeds</button>
+      <span style="flex:1"></span>
+      <button class="btn danger" id="test-emergency">Trigger emergency (test)</button>
+    </div>
+    <div class="status-line" id="news-note"></div>
+  </section>
+
+  <h2 style="font-size:15px;letter-spacing:.05em">SYSTEM</h2>
+  <section class="card"><div class="status-line" id="system-info">—</div></section>
+
+  <div class="row" style="justify-content:center;margin:20px 0 60px">
+    <a class="btn" href="/" style="text-decoration:none">← Back to dashboard</a>
+  </div>
+</main>
+
+<script src="/static/settings.js"></script>
+</body>
+</html>

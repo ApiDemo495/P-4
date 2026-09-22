@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Brain Matrix · Drosophila Trader v2.0</title>
+<link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="fly">🪰</span> DROSOPHILA TRADER <span class="ver">v2.0</span></div>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/matrix" class="active">Brain Matrix</a>
+    <a href="/settings">⚙ Settings</a>
+  </nav>
+  <div class="conn"><span class="dot" id="src-dot"></span><span id="src-label">—</span></div>
+</header>
+
+<main class="wrap">
+  <section class="card">
+    <div class="card-head">
+      <h2>The 80 × 80 mushroom-body adjacency matrix</h2>
+      <span class="muted" id="matrix-source">—</span>
+    </div>
+    <p class="muted" style="margin-top:0">
+      20 projection neurons (one per formula) · 50 Kenyon Cell clusters (spectrally clustered from ~2000) ·
+      3 dopamine/octopamine neurons · 4 MBON outputs · 3 lateral horn neurons.
+      Green = excitatory, red = inhibitory. Propagation is 3 graph-convolution layers.
+    </p>
+    <div class="legend">
+      <span><i class="swatch" style="background:#22c55e"></i> excitatory</span>
+      <span><i class="swatch" style="background:#ef4444"></i> inhibitory</span>
+      <span><i class="swatch" style="background:#0f1826"></i> no connection</span>
+      <span class="muted" id="matrix-stats"></span>
+    </div>
+    <div class="matrix-wrap"><div class="matrix-grid" id="matrix-grid"></div></div>
+    <div class="row" style="margin-top:12px;flex-wrap:wrap;gap:14px">
+      <span class="muted">PN order:</span><span class="muted mono" id="pn-order"></span>
+    </div>
+  </section>
+
+  <section class="grid-2">
+    <div class="card">
+      <div class="card-head"><h2>Last activation trace</h2></div>
+      <table><tbody id="trace-body"></tbody></table>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Strongest edges</h2><span class="muted">by |weight|</span></div>
+      <div style="max-height:320px;overflow:auto">
+        <table><thead><tr><th>from</th><th>to</th><th>weight</th></tr></thead><tbody id="edge-body"></tbody></table>
+      </div>
+    </div>
+  </section>
+
+  <div class="row" style="justify-content:center;margin:20px 0 60px">
+    <a class="btn" href="/" style="text-decoration:none">← Back to dashboard</a>
+  </div>
+</main>
+
+<script src="/static/matrix.js"></script>
+</body>
+</html>
