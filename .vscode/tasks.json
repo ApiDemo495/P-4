@@ -2,19 +2,20 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "▶ Start engine + dashboard",
+      "label": "\u25b6 Start engine + dashboard",
       "detail": "Sets up Python if needed, starts the API, the 60-second cycle and the dashboard on port 8000",
       "type": "shell",
-      "command": "bash run.sh --bg && sleep 1 && echo 'Open the PORTS tab -> port 8000 (globe icon)'",
+      "command": "bash run.sh --bg && sleep 1 && bash run.sh --urls",
       "problemMatcher": [],
-      "group": { "kind": "build", "isDefault": true },
-      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
-    },
-    {
-      "label": "Stop engine",
-      "type": "shell",
-      "command": "pkill -f 'backend.api.main' && echo stopped || echo 'nothing was running'",
-      "problemMatcher": []
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
     },
     {
       "label": "Show server log",
@@ -22,14 +23,31 @@
       "command": "tail -f server.log",
       "problemMatcher": [],
       "isBackground": true,
-      "presentation": { "panel": "dedicated" }
+      "presentation": {
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Stop everything (free the ports)",
+      "detail": "Stops the engine and any stray Flutter/Dart dev servers, then reports what still listens",
+      "type": "shell",
+      "command": "bash run.sh --clean",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
     },
     {
       "label": "Environment check (run.sh --check)",
       "type": "shell",
       "command": "bash run.sh --check",
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
     },
     {
       "label": "Run tests (Appendix E)",
@@ -37,15 +55,21 @@
       "command": "PYTHONPATH=$PWD .venv/bin/python -m pytest -q || PYTHONPATH=$PWD python3 -m pytest -q",
       "problemMatcher": [],
       "group": "test",
-      "presentation": { "reveal": "always", "panel": "dedicated" }
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
     },
     {
       "label": "Build Flutter web app",
-      "detail": "Builds frontend/build/web, which the engine then serves at /flutter",
+      "detail": "Builds frontend/build/web, served by the engine at /flutter on the same port 8000 (no second port)",
       "type": "shell",
       "command": "bash frontend/run_web.sh",
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "dedicated" }
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
     }
   ]
 }

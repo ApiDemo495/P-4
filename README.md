@@ -26,17 +26,28 @@ bash run.sh
 ```bash
 bash run.sh --bg        # background, survives closing the terminal
 bash run.sh --check     # diagnose the environment without starting anything
+bash run.sh --urls      # print every feature URL (all on ONE port)
+bash run.sh --stop      # stop the engine
+bash run.sh --clean     # stop the engine + any stray Flutter/Dart dev servers
 bash run.sh --port 8020 # if 8000 is taken
 ```
 
-Then open the URL it prints:
+Then open the URL it prints. **There is exactly one port** — everything the app
+offers is served from it, so there is never a second forwarded URL to hunt for:
 
-| Page | What it is |
+| Page (same port) | What it is |
 |---|---|
-| `/` | dashboard — locked signal, hedge, agents, news, history, formulas |
-| `/settings` | keys, local model, brain, news |
+| `/` | dashboard — widget panel, brain wiring, hedge, agents, news, history, formulas |
+| `/settings` | keys, local model, brain reconnect, news poll |
 | `/matrix` | the 80×80 connectome with the last activation trace |
 | `/flutter` | the Flutter client, once `bash frontend/run_web.sh` has built it |
+| `/docs` | the OpenAPI explorer |
+| `/ws/signals` | the WebSocket stream both clients use |
+
+The only command that opens a **second** port is `bash frontend/run_web.sh --dev`
+(hot reload), and it is fixed at **8081** — never a random one. Anything else you
+see in the PORTS tab belongs to another tool you started; `bash run.sh --clean`
+gets rid of them and tells you what is left.
 
 **API keys are optional and are entered in the browser** — click **🔑 API keys**
 in the dashboard header. Each key is validated with a live request before it is
@@ -76,6 +87,10 @@ same origin, same port, no CORS, no second forwarded URL.
 | What you see | What it means | Fix |
 |---|---|---|
 | Browser error page with a sad page icon on port 8000 | **Nothing is listening on 8000** — the server is not running (this is the most common one) | `bash run.sh --bg`, wait for `✔ running in the background`, then reload the tab |
+| Several ports listed, each one "not working" | Codespaces keeps a port in the PORTS tab until its **process** dies. The random 6xxx port is a `flutter run` dev server somebody started by hand; 8081 is only used by `run_web.sh --dev`; 6379 was Redis | `bash run.sh --clean` (stops the engine and any stray Flutter/Dart servers, then reports what still listens). Forward **only 8000**. A window reload clears dead entries |
+| Everything must be on one port | By design it already is | `bash run.sh` → use `/`, `/settings`, `/matrix`, `/flutter` on that single port. Build the Flutter client with `bash frontend/run_web.sh` (no extra port); only `--dev` adds 8081 |
+| `pip install` fails / "downloading requirements" stops | Either `python3-venv` is missing, or PEP 668 blocks the system interpreter, or the network needs a proxy | `bash run.sh` already retries the official index and tries `--user --break-system-packages`; if it still fails: `sudo apt-get update && sudo apt-get install -y python3-venv python3-pip && rm -rf .venv && bash run.sh` |
+| Flutter SDK download fails (`~700 MB`) | That download is the only heavy one, and it is optional | Use the dashboard on port 8000 (same engine, same panel). Retry later: `rm -rf ~/flutter && INSTALL_FLUTTER=1 bash frontend/run_web.sh`; check first with `bash frontend/run_web.sh --check` |
 | Same, after a Codespace restart | The container stopped and the process is gone with it | `bash run.sh --bg` again |
 | `bash: .venv/bin/python: No such file` | The venv was never created (setup did not finish) | `bash run.sh` creates it |
 | `ModuleNotFoundError: No module named 'backend'` | Started without the repo root on `PYTHONPATH` | use `bash run.sh`, or prefix `PYTHONPATH=$PWD` |

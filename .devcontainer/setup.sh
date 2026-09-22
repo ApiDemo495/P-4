@@ -44,18 +44,45 @@ fi
 # -----------------------------------------------------------------------------
 # 2. Python environment
 # -----------------------------------------------------------------------------
-if [ ! -d "$REPO_ROOT/.venv" ]; then
+if [ ! -d "$REPO_ROOT/.venv" ] || [ ! -x "$REPO_ROOT/.venv/bin/python" ]; then
   log "creating virtualenv at .venv"
-  python3 -m venv "$REPO_ROOT/.venv"
+  rm -rf "$REPO_ROOT/.venv" 2>/dev/null || true
+  if ! python3 -m venv "$REPO_ROOT/.venv" 2>/tmp/venv-error.log; then
+    warn "python3 -m venv failed:"
+    sed 's/^/      /' /tmp/venv-error.log | tail -5
+    warn "install it and re-run:  sudo apt-get install -y python3-venv   (then: bash run.sh)"
+    warn "without .venv, 'bash run.sh' still works by installing into the user site"
+  fi
 fi
 PY="$REPO_ROOT/.venv/bin/python"
-log "upgrading pip"
-"$PY" -m pip install --quiet --upgrade pip wheel setuptools
+[ -x "$PY" ] || PY="$(command -v python3)"
 
-log "installing requirements.txt"
-"$PY" -m pip install --quiet -r "$REPO_ROOT/requirements.txt" \
-  && ok "core dependencies installed" \
-  || warn "dependency install reported errors - check the output above"
+PIP_LOG=/tmp/pip-install.log
+log "upgrading pip"
+"$PY" -m pip install --quiet --retries 5 --timeout 60 --upgrade pip wheel setuptools >"$PIP_LOG" 2>&1 \
+  || warn "pip self-upgrade had errors (continuing)"
+
+log "installing requirements.txt (the output goes to $PIP_LOG)"
+install_requirements() {
+  "$PY" -m pip install --quiet --progress-bar off --retries 5 --timeout 60 "$@" \
+      -r "$REPO_ROOT/requirements.txt" >>"$PIP_LOG" 2>&1
+}
+if install_requirements; then
+  ok "core dependencies installed"
+elif install_requirements --index-url https://pypi.org/simple --no-cache-dir; then
+  ok "core dependencies installed (second attempt, official index)"
+else
+  # PEP 668 ("externally managed environment") is the usual blocker when the
+  # venv could not be created and pip is running against the system python.
+  if install_requirements --user --break-system-packages --index-url https://pypi.org/simple; then
+    ok "core dependencies installed into the user site (PEP 668 override)"
+  else
+    warn "dependency install FAILED - last 15 lines of $PIP_LOG:"
+    tail -n 15 "$PIP_LOG" | sed 's/^/      /'
+    warn "usual causes: no python3-venv, a proxy/VPN, or a company index that blocks pypi.org"
+    warn "fix:  sudo apt-get update && sudo apt-get install -y python3-venv python3-pip && rm -rf .venv && bash run.sh"
+  fi
+fi
 
 if [ "$INSTALL_LLAMA_CPP" = "1" ]; then
   log "building llama-cpp-python (this takes several minutes)"
@@ -103,7 +130,7 @@ if [ "$INSTALL_FLUTTER" = "1" ]; then
     ok "flutter already on PATH ($(flutter --version 2>/dev/null | head -1))"
   else
     log "cloning the Flutter SDK into ~/flutter (stable)"
-    git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter" \
+    git clone --depth 1 --single-branch -b stable https://github.com/flutter/flutter.git "$HOME/flutter" \
       && export PATH="$HOME/flutter/bin:$PATH" \
       && flutter --version \
       && (cd "$REPO_ROOT/frontend" && flutter pub get) \
@@ -139,8 +166,13 @@ echo
 ok "setup complete"
 cat <<EOF
 
-  Start the engine + dashboard (one command, handles everything):
-      bash run.sh
+  Start the engine + dashboard (one command, handles everything).
+  EVERYTHING is served from ONE port - dashboard, /settings, /matrix, /flutter,
+  the WebSocket stream and the API:
+      bash run.sh              # -> http://localhost:8000/
+      bash run.sh --bg         # background
+      bash run.sh --urls       # list every feature URL on that one port
+      bash run.sh --clean      # stop the engine + any stray dev servers
 
   Diagnose the environment without starting anything:
       bash run.sh --check

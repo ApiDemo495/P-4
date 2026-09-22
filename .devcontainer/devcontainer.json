@@ -4,23 +4,28 @@
   "features": {
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
-  // Codespaces: the app listens on 8000 (dashboard + API + /ws/signals) and
-  // 8081 (optional Flutter web build). Both are auto-forwarded.
+  // Codespaces: everything lives on ONE port - 8000 serves the dashboard, the
+  // API, the WebSocket stream, /matrix, /settings, /docs and the Flutter build
+  // at /flutter.  Nothing else needs forwarding, and ports you start by hand
+  // (a Flutter dev server, a scratch tool) stay silent instead of popping a
+  // broken preview.
   "hostRequirements": {
     "cpus": 2,
     "memory": "4gb",
     "storage": "16gb"
   },
   "postCreateCommand": "bash .devcontainer/setup.sh",
-  "postAttachCommand": "echo '\n  Drosophila Trader is ready.\n  Start it with:  bash run.sh --bg\n  Then open the PORTS tab -> port 8000 (globe icon).\n  Add API keys in the browser: click the API keys link in the header.\n'",
-  "forwardPorts": [8000, 6379],
+  "postAttachCommand": "echo '\n  Drosophila Trader is ready.\n  Start it with:  bash run.sh --bg\n  ONE port: 8000 -> dashboard, /settings, /matrix, /flutter, WebSocket.\n  PORTS tab -> 8000 -> globe icon for a public URL.\n  Broken/stale ports: bash run.sh --clean\n'",
+  "forwardPorts": [8000],
   "portsAttributes": {
     "8000": {
-      "label": "Drosophila Trader (API + dashboard)",
+      "label": "Drosophila Trader - everything (dashboard, API, WS, /flutter)",
       "onAutoForward": "openPreview"
-    },
-    "6379": { "label": "Redis", "onAutoForward": "silent" }
+    }
   },
+  // Any other port you start by hand (flutter run, a scratch tool) is left
+  // alone instead of auto-opening a preview that cannot work.
+  "otherPortsAttributes": { "onAutoForward": "silent" },
   "customizations": {
     "vscode": {
       "extensions": [

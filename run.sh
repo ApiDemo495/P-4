@@ -8,6 +8,15 @@
 #   bash run.sh --public        make the forwarded Codespaces port public
 #   bash run.sh --setup-only    install everything, start nothing
 #   bash run.sh --port 8080     use a different port
+#   bash run.sh --urls          print every feature URL (all on ONE port)
+#   bash run.sh --stop          stop the engine
+#   bash run.sh --clean         stop the engine AND any stray Flutter dev
+#                               servers, then report what still holds the ports
+#
+# EVERYTHING the app offers - dashboard, API, WebSocket stream, matrix viewer,
+# settings page and the Flutter build - is served from ONE port (8000).  There
+# is no second port to forward, and any other listening port is somebody else's
+# process (usually a `flutter run` dev server started by hand).
 #
 # Works in a GitHub Codespace, a devcontainer, WSL, macOS and Linux.  Every step
 # that can fail is checked, and each failure prints the exact command to fix it.
@@ -41,8 +50,11 @@ while [ $# -gt 0 ]; do
     --setup-only)      MODE="setup" ;;
     --bg|--background) BG=1 ;;
     --public)          PUBLIC=1 ;;
+    --urls|--links)    MODE="urls" ;;
+    --stop|--down)     MODE="stop" ;;
+    --clean|--reset)   MODE="clean" ;;
     --port)            PORT="${2:-8000}"; shift ;;
-    -h|--help)         sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)         sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) warn "ignoring unknown argument: $1" ;;
   esac
   shift
@@ -104,6 +116,96 @@ base_python() {
   return 1
 }
 
+# ------------------------------------------------------- ports / lifecycle ---
+codespace_url() {
+  if [ -n "${CODESPACE_NAME:-}" ]; then
+    echo "https://${CODESPACE_NAME}-${PORT}.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-app.github.dev}"
+  else
+    echo "http://localhost:${PORT}"
+  fi
+}
+
+listeners() {  # print "<port> <process>" for our ports
+  command -v ss >/dev/null 2>&1 || return 0
+  ss -ltnp 2>/dev/null | grep -E ":(8000|8081|6379) " || true
+}
+
+print_urls() {
+  local base; base="$(codespace_url)"
+  say ""
+  say "${B}Everything is on ONE port:${R} ${base}/"
+  say ""
+  say "   /            dashboard (widget panel, brain, history, news)"
+  say "   /matrix      the 80x80 connectome heat-map"
+  say "   /settings    keys, local model, brain reconnect, news poll"
+  say "   /flutter     the Flutter client - $([ -d "$REPO_ROOT/frontend/build/web" ] && echo 'built and served' || echo 'not built yet: bash frontend/run_web.sh')"
+  say "   /docs        the OpenAPI explorer"
+  say "   /ws/signals  the WebSocket stream (used by both clients)"
+  say ""
+  if [ -n "${CODESPACE_NAME:-}" ]; then
+    say "   Codespaces: PORTS tab -> port ${PORT} -> globe icon (or: bash run.sh --public)"
+  fi
+}
+
+stop_server() {
+  if pgrep -f "[b]ackend.api.main" >/dev/null 2>&1; then
+    pkill -f "[b]ackend.api.main" 2>/dev/null
+    sleep 1
+    if pgrep -f "[b]ackend.api.main" >/dev/null 2>&1; then
+      pkill -9 -f "[b]ackend.api.main" 2>/dev/null || true
+      sleep 0.5
+    fi
+    ok "engine stopped (the dashboard is now down)"
+    return 0
+  fi
+  say "the engine was not running"
+  return 1
+}
+
+stop_stray_dev_servers() {
+  local found=0 pattern
+  for pattern in "[f]lutter_tools" "[f]rontend_server" "[d]art.*web-server" "[d]art.*webserver"; do
+    if pgrep -f "$pattern" >/dev/null 2>&1; then
+      pkill -f "$pattern" 2>/dev/null || true
+      found=1
+    fi
+  done
+  [ "$found" = 1 ] && ok "stopped stray Flutter/Dart dev servers (they open random ports)" || true
+}
+
+report_open_ports() {
+  say ""
+  say "${B}Ports currently listening:${R}"
+  local rows; rows="$(listeners)"
+  if [ -z "$rows" ]; then
+    say "   none of 8000 / 8081 / 6379 are in use"
+  else
+    printf '%s\n' "$rows" | sed 's/^/   /'
+    say ""
+    say "   8000 -> ours (everything).  Anything else is another tool you started."
+  fi
+  if [ -n "${CODESPACE_NAME:-}" ]; then
+    say ""
+    say "   ${DIM}Codespaces keeps a port in the PORTS tab until its process dies;${R}"
+    say "   ${DIM}a stale entry showing 'not working' is a dead process - forward only ${PORT}.${R}"
+  fi
+}
+
+if [ "$MODE" = "stop" ]; then
+  stop_server
+  exit 0
+fi
+
+if [ "$MODE" = "clean" ]; then
+  step "Stopping everything this repo can start"
+  stop_server || true
+  stop_stray_dev_servers
+  report_open_ports
+  say ""
+  ok "done - start again with: bash run.sh"
+  exit 0
+fi
+
 # ------------------------------------------------------------------ check ---
 if [ "$MODE" = "check" ]; then
   step "Environment diagnosis"
@@ -136,12 +238,31 @@ if [ "$MODE" = "check" ]; then
   say ""
   say "codespace name   : ${CODESPACE_NAME:-<not a codespace>}"
   if command -v ss >/dev/null 2>&1; then
-    say "port $PORT         : $(ss -ltn 2>/dev/null | grep -q ":${PORT} " && echo 'IN USE - pkill -f backend.api.main' || echo free)"
+    if ss -ltn 2>/dev/null | grep -q ":${PORT} "; then
+      say "port $PORT         : IN USE (bash run.sh --stop, or --clean for everything)"
+    else
+      say "port $PORT         : free"
+    fi
+    say ""
+    say "listening ports  :"
+    local_rows="$(listeners)"
+    if [ -z "$local_rows" ]; then
+      say "                     none of 8000 / 8081 / 6379"
+    else
+      printf '%s\n' "$local_rows" | sed 's/^/                     /'
+    fi
+    say "                     ${DIM}(8000 is ours; other ports belong to flutter run or other tools)${R}"
   fi
   say "flutter          : $(command -v flutter >/dev/null && flutter --version 2>/dev/null | head -1 || echo 'not on PATH - bash frontend/run_web.sh installs it')"
   say "flutter web build: $([ -d "$REPO_ROOT/frontend/build/web" ] && echo 'frontend/build/web exists -> served at /flutter' || echo 'not built -> bash frontend/run_web.sh')"
   say ""
+  say ""
   say "Start the app with:  bash run.sh"
+  exit 0
+fi
+
+if [ "$MODE" = "urls" ]; then
+  print_urls
   exit 0
 fi
 
@@ -168,20 +289,78 @@ ok "using $PY ($("$PY" -V 2>&1))"
 
 # ------------------------------------------------------------------- deps ---
 step "2/4  Dependencies"
+
+is_externally_managed() {
+  "$1" - <<'PYEOF' >/dev/null 2>&1
+import os, sysconfig
+std = sysconfig.get_path("stdlib") or ""
+sys.exit(0 if std and os.path.exists(os.path.join(std, "EXTERNALLY-MANAGED")) else 1)
+PYEOF
+}
+
+ensure_venv_module() {
+  # Codespaces and slim images often ship python3 without venv/ensurepip.  That
+  # is the usual reason "downloading the requirements" fails, so try to fix it
+  # instead of just reporting it.
+  if ! command -v apt-get >/dev/null 2>&1; then return 1; fi
+  say "${DIM}   python3-venv is missing - trying to install it (needs sudo)${R}"
+  if sudo -n true 2>/dev/null; then
+    sudo -n apt-get update -qq >/dev/null 2>&1 || true
+    sudo -n apt-get install -y -qq python3-venv python3-pip >/dev/null 2>&1 && return 0
+  fi
+  return 1
+}
+
+pip_install() {  # $1 = interpreter, rest = extra pip flags
+  local py="$1"; shift
+  say "${DIM}   pip install -r requirements.txt $*${R}"
+  "$py" -m pip install --quiet --progress-bar off --retries 5 --timeout 60 "$@" \
+      -r "$REPO_ROOT/requirements.txt"
+}
+
 if has_deps "$PY"; then
   ok "fastapi, uvicorn, numpy, scipy, httpx, feedparser, websockets already present"
 else
   say "${DIM}installing requirements.txt (first run only, ~1 minute)${R}"
   "$PY" -m pip install --quiet --upgrade pip wheel >/dev/null 2>&1 || true
+
   PIP_FLAGS=""
   [ "${SYSTEM_PIP:-0}" = "1" ] && PIP_FLAGS="--user"
-  if ! "$PY" -m pip install --quiet $PIP_FLAGS -r "$REPO_ROOT/requirements.txt"; then
-    bad "pip install failed."
-    say "    retry with an explicit index:"
-    say "      $PY -m pip install --user --index-url https://pypi.org/simple -r requirements.txt"
+
+  if ! pip_install "$PY" $PIP_FLAGS; then
+    warn "pip failed - retrying with an explicit index and no cache"
+    pip_install "$PY" $PIP_FLAGS --index-url https://pypi.org/simple --no-cache-dir || true
+  fi
+
+  # PEP 668 ("externally managed environment") is the second classic failure.
+  if ! has_deps "$PY" && is_externally_managed "$PY"; then
+    warn "this interpreter is marked externally managed (PEP 668)"
+    say "${DIM}   retrying with --user --break-system-packages (nothing outside your user dir is touched)${R}"
+    pip_install "$PY" --user --break-system-packages --index-url https://pypi.org/simple || true
+  fi
+
+  # Last resort: make a venv now that the module may have been installed.
+  if ! has_deps "$PY" && [ "${SYSTEM_PIP:-0}" = "1" ]; then
+    if ensure_venv_module && "$BASE" -m venv "$VENV" >/dev/null 2>&1; then
+      PY="$VENV/bin/python"
+      ok "created $VENV after installing python3-venv"
+      "$PY" -m pip install --quiet --upgrade pip wheel >/dev/null 2>&1 || true
+      pip_install "$PY" --index-url https://pypi.org/simple || true
+    fi
+  fi
+
+  if ! has_deps "$PY"; then
+    bad "dependencies are still missing."
+    say ""
+    say "   Try these, in order:"
+    say "     1)  sudo apt-get update && sudo apt-get install -y python3-venv python3-pip"
+    say "         rm -rf .venv && bash run.sh"
+    say "     2)  $PY -m pip install --user --index-url https://pypi.org/simple -r requirements.txt"
+    say "     3)  corporate proxy/VPN? pip needs HTTPS to pypi.org:"
+    say "         export HTTPS_PROXY=http://user:pass@host:port"
+    say "     4)  full diagnosis:  bash run.sh --check"
     exit 1
   fi
-  has_deps "$PY" || { bad "dependencies still missing after install"; exit 1; }
   ok "dependencies installed"
 fi
 
@@ -230,31 +409,35 @@ fi
 
 if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ":${PORT} "; then
   warn "port $PORT is already in use - the server may already be running."
-  say "    stop it:   pkill -f 'backend.api.main'"
+  say "    stop it:   bash run.sh --stop"
+  say "    or free everything:  bash run.sh --clean"
   say "    or move:   bash run.sh --port 8020"
   exit 1
 fi
 
 print_banner() {
+  local base; base="$(codespace_url)"
   say ""
   say "${B}${GRN}  ================================================================${R}"
-  say "${B}   DROSOPHILA TRADER v2.0${R}"
-  say "   dashboard : ${B}${PORTS_URL:-http://localhost:${PORT}/}${R}"
-  if [ -n "$PORTS_URL" ]; then
-    say "   settings  : ${PORTS_URL}settings      ${DIM}<- put your API keys here${R}"
-    say "   matrix    : ${PORTS_URL}matrix"
-    if [ -d "$REPO_ROOT/frontend/build/web" ]; then
-      say "   flutter   : ${PORTS_URL}flutter"
-    else
-      say "   flutter   : ${DIM}not built - run  bash frontend/run_web.sh${R}"
-    fi
-    say ""
-    say "   ${DIM}A 'site can't be reached' page means the server is not up yet:${R}"
-    say "   ${DIM}wait for the 'starting' lines below, then press reload.${R}"
+  say "${B}   DROSOPHILA TRADER v2.0 - everything on ONE port${R}"
+  say "   ${B}${base}/${R}"
+  say ""
+  say "   /            dashboard   ${DIM}(widget panel, brain, news, history)${R}"
+  say "   /settings    ${DIM}keys, local model, brain reconnect${R}"
+  say "   /matrix      ${DIM}80x80 connectome${R}"
+  if [ -d "$REPO_ROOT/frontend/build/web" ]; then
+    say "   /flutter     Flutter client"
   else
-    say "   settings  : http://localhost:${PORT}/settings"
-    say ""
-    say "   ${DIM}Codespaces: PORTS tab -> globe icon next to port ${PORT}.${R}"
+    say "   /flutter     ${DIM}not built - bash frontend/run_web.sh${R}"
+  fi
+  say "   /docs        ${DIM}API explorer${R}"
+  say ""
+  say "   ${DIM}The URL answers once 'Uvicorn running on http://0.0.0.0:${PORT}' appears below -${R}"
+  say "   ${DIM}if the tab says 'this page isn't working', wait for that line and reload.${R}"
+  if [ -n "${CODESPACE_NAME:-}" ]; then
+    say "   ${DIM}PORTS tab -> port ${PORT} -> globe icon (or: bash run.sh --public)${R}"
+    say "   ${DIM}If another port shows 'not working', it is a dead process of some${R}"
+    say "   ${DIM}other tool: bash run.sh --clean removes them.${R}"
   fi
   say "${B}${GRN}  ================================================================${R}"
   say ""
