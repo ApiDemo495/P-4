@@ -136,6 +136,17 @@ class CycleManager:
         self._stop = asyncio.Event()
         self._running = False
         self._cycle_started = False
+        self._started_ts = time.time()
+
+        # --- warm-up bookkeeping ------------------------------------------
+        # The HTTP port opens *before* the subsystems are up (brain
+        # verification and the market connect can take seconds, and a
+        # forwarded Codespaces port that nobody answers returns 502).  The UI
+        # reads these fields to say "warming up" instead of showing an error.
+        self.warming: bool = False
+        self.ready: bool = False
+        self.ready_at: float = 0.0
+        self.start_error: str | None = None
 
     # ==================================================================
     # Lifecycle
@@ -162,6 +173,28 @@ class CycleManager:
             self.settings.use_world_clock,
         )
 
+    async def warm_up(self) -> None:
+        """Bring the subsystems up **after** the port is already serving.
+
+        ``lifespan`` schedules this instead of awaiting it, so a request that
+        arrives during startup gets a page that says "warming up" instead of a
+        502 from the port forwarder.  Any failure is recorded in
+        ``start_error`` and surfaced by ``/api/health`` and the dashboard.
+        """
+        self.warming = True
+        try:
+            await self.start()
+        except asyncio.CancelledError:  # shutdown while warming up
+            raise
+        except Exception as exc:  # noqa: BLE001 - must never take the port down
+            self.start_error = f"{type(exc).__name__}: {exc}"
+            log.exception("warm-up failed: %s", exc)
+        else:
+            self.ready = True
+            self.ready_at = time.time()
+        finally:
+            self.warming = False
+
     async def stop(self) -> None:
         self._stop.set()
         self._running = False
@@ -170,10 +203,18 @@ class CycleManager:
         await asyncio.gather(*(self._tasks + list(self._outcome_tasks)), return_exceptions=True)
         self._tasks.clear()
         self._outcome_tasks.clear()
-        await self._persist_state()
-        await self.news.stop()
-        await self.brain.stop()
-        await self.market.stop()
+        # Shutdown must work even if warm-up never completed, so every step is
+        # individually guarded.
+        for name, step in (
+            ("persist", self._persist_state),
+            ("news", self.news.stop),
+            ("brain", self.brain.stop),
+            ("market", self.market.stop),
+        ):
+            try:
+                await step()
+            except Exception as exc:  # noqa: BLE001
+                log.debug("stop(%s) failed: %s", name, exc)
         log.info("Cycle manager stopped")
 
     # ==================================================================
@@ -909,6 +950,11 @@ class CycleManager:
 
     def status(self) -> dict:
         return {
+            "ready": self.ready,
+            "warming_up": self.warming,
+            "start_error": self.start_error,
+            "uptime_seconds": round(time.time() - self._started_ts, 1),
+            "ready_seconds": round(time.time() - self.ready_at, 1) if self.ready_at else None,
             "asset": self.asset,
             "pending_asset": self.pending_asset,
             "cycle": self.stats.to_dict(),
@@ -980,7 +1026,13 @@ class CycleManager:
 
     def health(self) -> dict:
         brain_health = self.brain.last_health
-        agent_status = self.agents.status_payload()
+        try:
+            agent_status = self.agents.status_payload()
+        except Exception:  # pragma: no cover - only during warm-up
+            agent_status = {
+                name: {"status": "STARTING", "detail": "warming up"}
+                for name in ("gemini", "local", "github")
+            }
         components = {
             "market_data": self.market.status(),
             "news": self.news.status_payload(),
@@ -1009,6 +1061,10 @@ class CycleManager:
         required = ("market_data", "news", "brain")
         overall = all(components[key].healthy for key in required)
         return {
+            "ready": self.ready,
+            "warming_up": self.warming,
+            "start_error": self.start_error,
+            "cycle_manager": "RUNNING" if self._running else ("WARMING_UP" if self.warming else "IDLE"),
             "healthy": overall,
             "degradation_level": int(self.degradation),
             "degradation_label": self.degradation.label,

@@ -25,6 +25,24 @@
 
 <main class="wrap">
 
+<!-- ===================== WARM-UP / STARTUP BANNER ===================== -->
+<!-- Served during the seconds between "the port is open" and "the engine is
+     ready".  It exists so a slow start can never look like a broken app
+     (a forwarded port that nobody answers returns HTTP 502). -->
+<section class="card hidden" id="warming-banner">
+  <div class="card-head">
+    <h2 id="warming-title">🪰 Engine warming up…</h2>
+    <span class="muted" id="warming-elapsed">—</span>
+  </div>
+  <p class="muted" style="margin-top:0" id="warming-text">
+    The port is live and this page is served by the real app. The brain
+    verification, the market connect and the first formula pass run in the
+    background; the panel below fills itself in as soon as the first window
+    locks.
+  </p>
+  <div class="progress"><div class="progress-fill" id="warming-progress"></div></div>
+</section>
+
 <!-- ===================== FIRST-RUN / KEY SETUP ===================== -->
 <section class="card hidden" id="setup-banner">
   <div class="card-head">

@@ -31,6 +31,9 @@ const state = {
   wiringOpen: false,
   lastPrediction: null,
   config: null,
+  ready: false,
+  warmingSince: null,
+  startError: null,
   ws: null,
   connected: false,
   explain: false,
@@ -121,6 +124,7 @@ function handle(msg) {
       state.degradation = d.status?.degradation_level;
       renderAssetToggle();
       renderStatus(d.status);
+      renderWarming(d.status);
       anchorWindow(d.window || d.status?.window || d.signal?.window);
       // The sentinel is a signal payload too - it just carries signal: null
       // while the first window is being computed.  Rendering it keeps the
@@ -330,6 +334,35 @@ function renderStatus(status) {
   anchorWindow(status.window);
   renderWidgetPanel();
   renderWindowStrip();
+  renderWarming(status);
+}
+
+/* The port answers before the engine is ready; say so instead of looking dead. */
+function renderWarming(status) {
+  const banner = $("warming-banner");
+  if (!banner || !status) return;
+  const ready = status.ready !== false;
+  const error = status.start_error || null;
+  state.ready = ready;
+  state.startError = error;
+  if (ready && !error) {
+    banner.classList.add("hidden");
+    return;
+  }
+  banner.classList.remove("hidden");
+  if (error) {
+    $("warming-title").textContent = "⚠️ Warm-up hit a problem — the app is still serving";
+    $("warming-text").innerHTML =
+      `The engine reported: <code>${escapeHtml(error)}</code>. The dashboard, the API and ` +
+      `the WebSocket stay up; market/news panels run in their degraded modes. ` +
+      `Check <a href="/api/health">/api/health</a>, then restart with ` +
+      `<code>bash run.sh --stop &amp;&amp; bash run.sh --bg</code>.`;
+    $("warming-progress").style.width = "100%";
+    return;
+  }
+  const uptime = status.uptime_seconds || 0;
+  $("warming-elapsed").textContent = `up ${Math.round(uptime)}s`;
+  $("warming-progress").style.width = `${Math.min(96, uptime * 6)}%`;
 }
 
 function renderWindowStrip() {
@@ -1043,6 +1076,17 @@ function renderAll() {
   renderHoldBox();
 }
 
+async function pollReadiness() {
+  const health = await getJSON("/api/health");
+  if (!health || health.error) return;
+  renderWarming({
+    ready: health.ready !== false,
+    warming_up: health.warming_up,
+    start_error: health.start_error,
+    uptime_seconds: health.uptime_seconds,
+  });
+}
+
 async function boot() {
   state.config = await getJSON("/api/system/config");
   if (state.config && !state.config.error) {
@@ -1069,6 +1113,7 @@ async function boot() {
   setInterval(refreshAgents, 5000);
   setInterval(refreshNewsList, 15000);
   setInterval(refreshBrain, 20000);
+  setInterval(pollReadiness, 2000);
   setInterval(refreshHistory, 30000);
   setInterval(refreshOutcomes, 15000);
   setInterval(refreshBrainExplain, 10000);

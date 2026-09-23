@@ -15,7 +15,11 @@
     "storage": "16gb"
   },
   "postCreateCommand": "bash .devcontainer/setup.sh",
-  "postAttachCommand": "echo '\n  Drosophila Trader is ready.\n  Start it with:  bash run.sh --bg\n  ONE port: 8000 -> dashboard, /settings, /matrix, /flutter, WebSocket.\n  PORTS tab -> 8000 -> globe icon for a public URL.\n  Broken/stale ports: bash run.sh --clean\n'",
+  // Auto-start on attach: `--bg` is idempotent, so this both starts the app the
+  // first time and simply prints the URL on every later attach.  The result is
+  // that the forwarded port always has something answering it (a port with no
+  // listener is what the browser reports as HTTP 502).
+  "postAttachCommand": "bash -lc 'bash run.sh --bg >/dev/null 2>&1; bash run.sh --urls'",
   "forwardPorts": [8000],
   "portsAttributes": {
     "8000": {

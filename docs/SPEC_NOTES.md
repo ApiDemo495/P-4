@@ -295,6 +295,38 @@ Flutter client follows the same rule and adds haptics.
 
 ---
 
+## 9-A — The port opens before the engine is warm (and a supervisor keeps it open)
+
+**Symptom.** GitHub Codespaces (and any port forwarder) answers **HTTP 502** when
+nothing is listening on the forwarded port. A crash, a container that was asleep,
+or a warm-up that takes ten seconds all look identical to the user: "this page
+isn't working".
+
+**Decision.** Three structural changes:
+
+1. `lifespan` no longer awaits the engine. It creates the `CycleManager`, starts
+   warm-up as a background task, and yields immediately, so uvicorn binds the
+   socket at once. `manager.ready`, `manager.warming` and `manager.start_error`
+   are reported by `/api/health`, and the dashboard shows a "warming up" banner
+   (with the error text, if there was one) instead of an error page.
+2. `bash run.sh --bg` starts the engine under a supervisor
+   (`run.sh --supervise`) that restarts it ~2 s after an unexpected exit, records
+   its own pid in `.run/supervisor.pid` (so `--stop` is exact), and is idempotent:
+   starting twice never creates a second server. The start is verified with a real
+   HTTP request against `/api/health` before a URL is printed.
+3. A forwarded port must be bound to `0.0.0.0`. If `HOST` is left as a loopback
+   address while `CODESPACE_NAME` is set, the app overrides it and logs why —
+   loopback binding is a 502 that curl inside the container cannot reproduce.
+
+**Escape hatches.** `bash run.sh --status` reports the three layers separately
+(supervisor, listener, HTTP). `bash run.sh --clean` removes stray
+Flutter/Dart dev servers that open random ports, and
+`bash frontend/run_web.sh --dev` is pinned to 8081 instead of letting Flutter
+choose one. The Flutter client is optional: the dashboard on the same port
+carries every feature.
+
+---
+
 ## What was *not* changed
 
 For the avoidance of doubt, the following spec behaviour is implemented exactly

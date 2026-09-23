@@ -9,7 +9,8 @@
 #   bash run.sh --setup-only    install everything, start nothing
 #   bash run.sh --port 8080     use a different port
 #   bash run.sh --urls          print every feature URL (all on ONE port)
-#   bash run.sh --stop          stop the engine
+#   bash run.sh --status        is it running, and does the port really answer?
+#   bash run.sh --stop          stop the engine (and its supervisor)
 #   bash run.sh --clean         stop the engine AND any stray Flutter dev
 #                               servers, then report what still holds the ports
 #
@@ -17,6 +18,11 @@
 # settings page and the Flutter build - is served from ONE port (8000).  There
 # is no second port to forward, and any other listening port is somebody else's
 # process (usually a `flutter run` dev server started by hand).
+#
+# ``--bg`` is idempotent (running it twice does not start a second server) and
+# the engine runs under a supervisor that restarts it if it ever dies.  The
+# start is verified with a real HTTP request, so "this page isn't working /
+# HTTP 502" cannot happen silently again.
 #
 # Works in a GitHub Codespace, a devcontainer, WSL, macOS and Linux.  Every step
 # that can fail is checked, and each failure prints the exact command to fix it.
@@ -51,6 +57,8 @@ while [ $# -gt 0 ]; do
     --bg|--background) BG=1 ;;
     --public)          PUBLIC=1 ;;
     --urls|--links)    MODE="urls" ;;
+    --status|--ps)      MODE="status" ;;
+    --supervise)        MODE="supervise" ;;
     --stop|--down)     MODE="stop" ;;
     --clean|--reset)   MODE="clean" ;;
     --port)            PORT="${2:-8000}"; shift ;;
@@ -65,6 +73,9 @@ export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONUNBUFFERED=1
 
 VENV="$REPO_ROOT/.venv"
+RUN_DIR="$REPO_ROOT/.run"
+PIDFILE="$RUN_DIR/supervisor.pid"
+SERVER_LOG="$REPO_ROOT/server.log"
 REQUIRED_MODULES="fastapi uvicorn numpy scipy httpx feedparser websockets"
 PY=""
 
@@ -130,6 +141,72 @@ listeners() {  # print "<port> <process>" for our ports
   ss -ltnp 2>/dev/null | grep -E ":(8000|8081|6379) " || true
 }
 
+port_is_open() {  # local TCP check - no HTTP involved
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn 2>/dev/null | grep -q ":${PORT} "
+  else
+    (exec 3<>"/dev/tcp/127.0.0.1/${PORT}") 2>/dev/null
+  fi
+}
+
+http_ready() {  # 0 when the API answers - the only proof the port really works
+  command -v curl >/dev/null 2>&1 || return 0
+  curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1
+}
+
+supervisor_pid() {
+  [ -f "$PIDFILE" ] || return 1
+  local pid; pid="$(cat "$PIDFILE" 2>/dev/null)"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  # A pid file can outlive its process and be recycled by something unrelated,
+  # so only trust it when the process really is our supervisor.  (Killing the
+  # process group of a recycled pid would take down an innocent shell.)
+  local args=""
+  if [ -r "/proc/$pid/cmdline" ]; then
+    args="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null)"
+  else
+    args="$(ps -p "$pid" -o args= 2>/dev/null)"
+  fi
+  case "$args" in
+    *run.sh*supervise*) echo "$pid" ;;
+    *) return 1 ;;
+  esac
+}
+
+diagnose_502() {
+  # Runs when the engine did not answer: say exactly why a browser got a 502.
+  say ""
+  say "${B}Why the browser says \"this page isn't working\" (HTTP 502):${R}"
+  say "   Codespaces forwards port ${PORT} to a process *inside* this container."
+  say "   If nothing is listening there - or the process died - the forwarder"
+  say "   itself answers 502. It is not a DNS, firewall or CORS problem."
+  say ""
+  if pgrep -f "[b]ackend.api.main" >/dev/null 2>&1; then
+    say "   engine process : alive"
+  else
+    say "   engine process : NOT RUNNING   <- this is the cause"
+  fi
+  say "   port ${PORT}      : $(port_is_open && echo listening || echo 'not listening')"
+  say ""
+  if [ -f "$SERVER_LOG" ]; then
+    say "${B}Last 20 lines of server.log:${R}"
+    tail -n 20 "$SERVER_LOG" | sed 's/^/   /'
+    say ""
+    grep -q "No module named" "$SERVER_LOG" 2>/dev/null \
+      && say "   ${YEL}Missing dependency${R}   fix:  bash run.sh"
+    grep -q "address already in use" "$SERVER_LOG" 2>/dev/null \
+      && say "   ${YEL}Port busy${R}              fix:  bash run.sh --clean && bash run.sh --bg"
+    grep -q "Traceback" "$SERVER_LOG" 2>/dev/null \
+      && say "   ${YEL}Python traceback${R}      fix:  bash run.sh --check"
+  fi
+  say ""
+  say "   ${B}Next steps, in order:${R}"
+  say "     1)  bash run.sh            (foreground, so you see the error live)"
+  say "     2)  bash run.sh --clean && bash run.sh --bg"
+  say "     3)  bash run.sh --check"
+}
+
 print_urls() {
   local base; base="$(codespace_url)"
   say ""
@@ -148,17 +225,36 @@ print_urls() {
 }
 
 stop_server() {
+  local pid stopped=0
+  pid="$(supervisor_pid || true)"
+  if [ -n "$pid" ]; then
+    stopped=1
+    # Verified pid: terminate the engine child first, then the supervisor.
+    pkill -TERM -P "$pid" 2>/dev/null || true
+    kill -TERM "$pid" 2>/dev/null || true
+    sleep 0.5
+  fi
+  # Backstop: a supervisor that lost its pid file would otherwise keep
+  # restarting the engine behind our back.
+  if pgrep -f "[r]un.sh --supervise" >/dev/null 2>&1; then
+    stopped=1
+    pkill -f "[r]un.sh --supervise" 2>/dev/null || true
+  fi
   if pgrep -f "[b]ackend.api.main" >/dev/null 2>&1; then
-    pkill -f "[b]ackend.api.main" 2>/dev/null
+    stopped=1
+    pkill -f "[b]ackend.api.main" 2>/dev/null || true
     sleep 1
     if pgrep -f "[b]ackend.api.main" >/dev/null 2>&1; then
       pkill -9 -f "[b]ackend.api.main" 2>/dev/null || true
       sleep 0.5
     fi
-    ok "engine stopped (the dashboard is now down)"
+  fi
+  rm -f "$PIDFILE"
+  if [ "$stopped" = 1 ]; then
+    ok "engine stopped (the dashboard stays down until you start it again)"
     return 0
   fi
-  say "the engine was not running"
+  say "nothing was running"
   return 1
 }
 
@@ -191,8 +287,66 @@ report_open_ports() {
   fi
 }
 
+if [ "$MODE" = "status" ]; then
+  step "Status"
+  pid="$(supervisor_pid || true)"
+  [ -n "$pid" ] && ok "supervisor running (pid $pid)" || warn "supervisor not running"
+  local count
+  count="$(pgrep -f "[r]un.sh --supervise" 2>/dev/null | wc -l | tr -d ' ')"
+  if [ "${count:-0}" -gt 1 ]; then
+    warn "$count supervisors are running - bash run.sh --clean makes it one"
+  fi
+  pgrep -f "[b]ackend.api.main" >/dev/null 2>&1 \
+    && ok "engine process alive" || warn "engine process not found"
+  port_is_open && ok "port ${PORT} is listening" || bad "port ${PORT} is NOT listening"
+  if http_ready; then
+    ok "the port answers HTTP - the app is serving"
+    command -v curl >/dev/null 2>&1 && \
+      curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/api/health" \
+      | tr ',' '\n' | grep -E '"ready"|"warming_up"|"start_error"|"healthy"' | sed 's/^/   /'
+    say ""
+    print_urls
+  else
+    bad "the port does not answer HTTP (this is what the browser shows as 502)"
+    diagnose_502
+  fi
+  exit 0
+fi
+
 if [ "$MODE" = "stop" ]; then
   stop_server
+  exit 0
+fi
+
+if [ "$MODE" = "supervise" ]; then
+  # Internal: started by --bg, ended by --stop.  Keeps the engine alive so a
+  # crash (or an OOM kill) turns into a 2-second restart instead of a 502.
+  # --bg passes the resolved interpreter in DROSOPHILA_PY (this branch runs
+  # before the environment steps, so $PY may be empty here).
+  PY="${DROSOPHILA_PY:-}"
+  [ -n "$PY" ] || PY="$(resolve_python || true)"
+  [ -n "$PY" ] || PY="$(command -v python3 || true)"
+  if [ -z "$PY" ]; then
+    echo "[supervisor] no usable python interpreter - refusing to start"
+    exit 1
+  fi
+  # The supervisor owns the pid file: no setsid/fork guesswork in the parent,
+  # and --stop always knows exactly what to kill.
+  mkdir -p "$RUN_DIR"
+  echo $$ >"$PIDFILE"
+  trap 'echo "[supervisor] stopping $(date -u +%FT%TZ)"; rm -f "$PIDFILE"; exit 0' TERM INT
+  echo "[supervisor] started $(date -u +%FT%TZ) with $PY"
+  while true; do
+    echo "[supervisor] launching engine $(date -u +%FT%TZ)"
+    "$PY" -m backend.api.main
+    code=$?
+    if [ "$code" = 0 ]; then
+      echo "[supervisor] engine exited cleanly - not restarting"
+      break
+    fi
+    echo "[supervisor] engine exited with code $code - restarting in 2s $(date -u +%FT%TZ)"
+    sleep 2
+  done
   exit 0
 fi
 
@@ -407,10 +561,18 @@ if [ "$PUBLIC" = 1 ] && [ -n "${CODESPACE_NAME:-}" ] && command -v gh >/dev/null
     || warn "could not change port visibility (org policy?) - it still works for you when signed in"
 fi
 
-if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ":${PORT} "; then
-  warn "port $PORT is already in use - the server may already be running."
-  say "    stop it:   bash run.sh --stop"
-  say "    or free everything:  bash run.sh --clean"
+if port_is_open; then
+  # Already ours and answering?  `--bg` twice is a no-op, never an error.
+  if [ "$BG" = 1 ] && http_ready && pgrep -f "[r]un.sh --supervise" >/dev/null 2>&1; then
+    ok "already running and answering on port ${PORT} - nothing to start"
+    print_banner
+    print_urls
+    exit 0
+  fi
+  warn "port $PORT is already in use - either this app or another program."
+  say "    status:    bash run.sh --status"
+  say "    stop ours: bash run.sh --stop"
+  say "    free all:  bash run.sh --clean"
   say "    or move:   bash run.sh --port 8020"
   exit 1
 fi
@@ -444,30 +606,64 @@ print_banner() {
 }
 
 if [ "$BG" = 1 ]; then
-  LOG="$REPO_ROOT/server.log"
-  : > "$LOG"
-  nohup "$PY" -m backend.api.main >>"$LOG" 2>&1 &
-  PID=$!
-  printf '   waiting for startup'
-  for _ in $(seq 1 30); do
-    sleep 1; printf '.'
-    if ! kill -0 "$PID" 2>/dev/null; then break; fi
-    if grep -q "running on http" "$LOG" 2>/dev/null; then break; fi
-  done
-  printf '\n'
-  if kill -0 "$PID" 2>/dev/null && grep -q "running on http" "$LOG"; then
-    ok "running in the background (pid $PID)"
+  mkdir -p "$RUN_DIR"
+
+  # Idempotent: never start a second copy of an app that is already answering.
+  if http_ready && pgrep -f "[r]un.sh --supervise" >/dev/null 2>&1; then
+    ok "already running - not starting a second copy (pid $(supervisor_pid || echo '?'))"
     print_banner
-    say "   logs : tail -f $LOG"
-    say "   stop : kill $PID    (or: pkill -f 'backend.api.main')"
+    print_urls
+    exit 0
+  fi
+  if [ -n "$(supervisor_pid || true)" ] || pgrep -f "[b]ackend.api.main" >/dev/null 2>&1; then
+    warn "a previous instance is still around - restarting it cleanly"
+    stop_server || true
+  fi
+  if port_is_open; then
+    bad "port ${PORT} is held by another program, not by this app."
+    report_open_ports
     say ""
-    grep -E "ready|brain |market data|news |cycle |dashboard" "$LOG" | tail -n 8
-  else
-    bad "the server exited during startup - full log:"
-    say ""
-    cat "$LOG"
+    say "   Free it:  bash run.sh --clean"
+    say "   Or move:  bash run.sh --port 8020"
     exit 1
   fi
+
+  LOG="$SERVER_LOG"
+  : >"$LOG"
+  export DROSOPHILA_PY="$PY"
+  SUPERVISOR="$REPO_ROOT/$(basename "$0")"
+  [ -f "$SUPERVISOR" ] || SUPERVISOR="$0"
+  # Only ever one supervisor: a stale one would fight us for the port.
+  if pgrep -f "[r]un.sh --supervise" >/dev/null 2>&1; then
+    say "${DIM}   stopping a leftover supervisor first${R}"
+    pkill -f "[r]un.sh --supervise" 2>/dev/null || true
+    pkill -f "[b]ackend.api.main" 2>/dev/null || true
+    sleep 1
+  fi
+  nohup bash "$SUPERVISOR" --supervise >>"$LOG" 2>&1 &
+  printf '   starting'
+  READY=0
+  for _ in $(seq 1 60); do
+    sleep 1; printf '.'
+    if http_ready; then READY=1; break; fi
+    if ! kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
+      printf '\n'
+      warn "the supervisor exited immediately - reading the log"
+      break
+    fi
+  done
+  printf '\n'
+
+  if [ "$READY" = 1 ]; then
+    ok "running in the background (supervisor pid $(supervisor_pid || echo '?'), log: server.log)"
+    say "${DIM}   the supervisor restarts the engine automatically if it exits${R}"
+    print_banner
+    print_urls
+    exit 0
+  fi
+  bad "the engine did not answer on port ${PORT} within 60 seconds."
+  diagnose_502
+  exit 1
 else
   print_banner
   exec "$PY" -m backend.api.main

@@ -45,13 +45,16 @@ def _local_stub_setting() -> bool | None:
     return None
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    manager = CycleManager(cfg.SETTINGS, local_stub=_local_stub_setting())
-    state.set_manager(manager)
-    app.state.manager = manager
-    manager.mark_started()
-    await manager.start()
+async def _warm_up(manager: CycleManager) -> None:
+    """Bring the engine up and log the ready block (runs *after* the port opens)."""
+    await manager.warm_up()
+    if manager.start_error:
+        log.error("=" * 78)
+        log.error(" WARM-UP FAILED - the API and the dashboard are still serving")
+        log.error("   reason: %s", manager.start_error)
+        log.error("   the market/news panels fall back to degraded modes; see /api/health")
+        log.error("=" * 78)
+        return
     log.info("=" * 78)
     log.info(" DROSOPHILA TRADER v2.0 ready")
     log.info("   brain      : %s", manager.brain.status.value)
@@ -60,9 +63,36 @@ async def lifespan(app: FastAPI):
     log.info("   cycle      : %.1fs (world clock: %s)", cfg.SETTINGS.cycle_period_seconds, cfg.SETTINGS.use_world_clock)
     log.info("   dashboard  : http://0.0.0.0:%d/", cfg.SETTINGS.port)
     log.info("=" * 78)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Open the port FIRST, warm the engine up in the background.
+
+    Why: uvicorn only accepts connections after the lifespan startup hook
+    returns.  Brain verification and the market connect can take seconds (or
+    hang on an unreachable host) - and a forwarded Codespaces port that nobody
+    answers returns **502**, which looks like a broken app.  Warming up in a
+    task means the first request always gets a page that says what is going on.
+    """
+    manager = CycleManager(cfg.SETTINGS, local_stub=_local_stub_setting())
+    state.set_manager(manager)
+    app.state.manager = manager
+    manager.mark_started()
+
+    warm_task = asyncio.create_task(_warm_up(manager), name="warm-up")
+    log.info("=" * 78)
+    log.info(" DROSOPHILA TRADER v2.0 - port is live, engine warming up in the background")
+    log.info("   dashboard  : http://0.0.0.0:%d/   (reload if it says 'warming up')", cfg.SETTINGS.port)
+    log.info("   health     : /api/health  ->  ready / warming_up / start_error")
+    log.info("=" * 78)
     try:
         yield
     finally:
+        if not warm_task.done():
+            warm_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await warm_task
         await manager.stop()
 
 
@@ -235,9 +265,18 @@ def main() -> None:
     """``python -m backend.api.main``"""
     import uvicorn
 
+    host = cfg.SETTINGS.host
+    # A forwarded Codespaces port only reaches a socket bound to 0.0.0.0.  If
+    # HOST was left as a loopback address in .env, every browser request would
+    # get a 502 while curl inside the container kept working - so override it
+    # loudly instead of failing mysteriously.
+    if os.environ.get("CODESPACE_NAME") and host in ("127.0.0.1", "localhost", "::1"):
+        log.warning("HOST=%s inside a Codespace cannot be reached from the browser - using 0.0.0.0", host)
+        host = "0.0.0.0"
+
     uvicorn.run(
         "backend.api.main:app",
-        host=cfg.SETTINGS.host,
+        host=host,
         port=cfg.SETTINGS.port,
         log_level=cfg.SETTINGS.log_level,
     )

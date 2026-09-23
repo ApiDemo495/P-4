@@ -488,3 +488,11 @@ th { color: var(--muted); font-weight: 600; }
 }
 .widget-strip .kv { display: flex; gap: 6px; align-items: baseline; font-size: 11px; color: var(--muted); }
 .widget-strip .kv b { color: var(--text); font-family: var(--mono); font-size: 12px; }
+
+/* warm-up banner: shown between "port open" and "engine ready" */
+#warming-banner { border-left: 3px solid var(--violet); }
+#warming-banner .progress { margin-top: 10px; }
+#warming-banner code {
+  font-family: var(--mono); font-size: 11.5px;
+  background: #0d1420; padding: 1px 5px; border-radius: 4px;
+}
