@@ -12,7 +12,7 @@ is working or failing:
     HSI = tanh(2 * (1 - HE))   in [0, 1]
 
 HSI is a **regime indicator**, not a direction.  It never says BUY or SELL; it
-modulates the brain (high HSI biases the whole system toward HOLD) and dampens
+modulates the brain (high HSI dampens conviction and cuts position size) and dampens
 confidence in the fusion layer (Section 8.2).
 
 Brain mapping: octopaminergic neuron OA-VUMa2 - the fly's "stress hormone",
@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from backend.formulas._util import EPS, finite, tanh
+from backend.formulas._util import EPS, finite, tanh, trace
 
 NAME = "HSI"
 CATEGORY = "C"
@@ -100,6 +100,9 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     # We therefore measure stress against that neutral baseline, using the same
     # tanh(...) shape so the mapping stays monotone and saturates identically at
     # "hedge working" (0) and "hedge fully broken" (1).
+    trace(ctx, "sigma BTC", sigma_b, "per-second return sd")
+    trace(ctx, "sigma PAXG", sigma_g, "per-second return sd")
+    trace(ctx, "sigma hedge", sigma_h, "per-second return sd of the 50/50 blend")
     if state.use_raw_calibration:
         hsi = raw
     else:
@@ -110,8 +113,20 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
         else:
             base_ratio = sigma_neutral / (sigma_avg + EPS)
             ratio = sigma_h / (sigma_avg + EPS)
-            span = max(1.0 - base_ratio, EPS)
-            hsi = (ratio - base_ratio) / span
+            trace(ctx, "ratio sigma_hedge / sigma_avg", ratio, "1.0 = no diversification at all")
+            trace(ctx, "uncorrelated baseline", base_ratio, "the ratio two independent legs would give")
+            # 0.5 = the pair behaves exactly like two independent assets.
+            # Above 0.5 the hedge is worse than useless; below it, it is working.
+            # 0.8 (the dampening threshold) is therefore a real breakdown, not
+            # the everyday state of an uncorrelated pair.
+            if ratio >= base_ratio:
+                worse = (ratio - base_ratio) / max(1.0 - base_ratio, EPS)
+                hsi = 0.5 + 0.5 * min(1.0, max(0.0, worse))
+            else:
+                better = (base_ratio - ratio) / max(base_ratio, EPS)
+                hsi = 0.5 - 0.5 * min(1.0, max(0.0, better))
 
     # HSI is defined on [0, 1]: a hedge can only be "stressed", never negative.
-    return finite(max(0.0, min(1.0, hsi)))
+    hsi = max(0.0, min(1.0, hsi))
+    trace(ctx, "HSI", hsi, "0.5 = independent legs, 1.0 = hedge broken")
+    return finite(hsi)

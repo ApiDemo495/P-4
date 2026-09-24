@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from backend.formulas._util import EPS, finite, tanh
+from backend.formulas._util import EPS, finite, tanh, trace
 
 NAME = "VSS"
 CATEGORY = "D"
@@ -28,6 +28,11 @@ DESCRIPTION = "Realised 1-minute volatility vs. the 5-minute baseline, signed by
 
 SHORT_WINDOW = 60
 LONG_WINDOW = 300
+#: The direction is only reported when the drift inside the baseline window is
+#: statistically visible (|t| >= 1.5).  The 1-tick volatility is ~5x the 1-tick
+#: drift, so a 60-tick mean return flips sign at random - that is where v2.0.0's
+#: "volatility surprise" got its random +/- readings from.
+MIN_T_STAT = 1.5
 
 
 class State:
@@ -75,8 +80,17 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
         return 0.0
 
     surprise = (sigma_real - sigma_exp) / (sigma_exp + EPS)
-    drift_sign = float(np.sign(np.mean(short)))
-    if drift_sign == 0.0:
-        return 0.0
+    drift = float(np.mean(long))
+    t_stat = abs(drift) * float(np.sqrt(long.size)) / (sigma_exp + EPS)
+    direction = float(np.sign(drift)) if t_stat >= MIN_T_STAT else 0.0
 
-    return finite(tanh(surprise) * drift_sign)
+    trace(ctx, "realised vol (1 min)", sigma_real, "per tick")
+    trace(ctx, "baseline vol (5 min)", sigma_exp, "per tick")
+    trace(ctx, "vol surprise", surprise, "sigma_short / sigma_long - 1")
+    trace(ctx, "drift (baseline window)", drift, "mean log return per tick")
+    trace(ctx, "drift t-statistic", t_stat, "|mean| / (sigma / sqrt(n))")
+    trace(ctx, "direction used", direction, "+1 / 0 / -1")
+
+    if direction == 0.0:
+        return 0.0
+    return finite(tanh(surprise) * direction)

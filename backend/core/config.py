@@ -80,7 +80,7 @@ ASSET_PARAMS: dict[str, dict[str, float]] = {
         "dskd_q_fast": 1.0,
         "ccsv2_confidence_threshold": 0.55,
         "hedge_weight": 0.5,
-        "forced_hold_ticks": 15,
+        "forced_flat_ticks": 15,
     },
     "PAXG": {
         "tai_ticks": 20,
@@ -91,7 +91,7 @@ ASSET_PARAMS: dict[str, dict[str, float]] = {
         "dskd_q_fast": 2.0,
         "ccsv2_confidence_threshold": 0.65,
         "hedge_weight": 0.5,
-        "forced_hold_ticks": 10,
+        "forced_flat_ticks": 10,
     },
 }
 
@@ -191,7 +191,7 @@ class Settings:
 
     # Decision thresholds (Section 10.1)
     signal_threshold: float = 0.25
-    max_failed_formulas: int = 10  # >= 11 zeros => forced HOLD
+    max_failed_formulas: int = 10  # >= 11 zeros => degraded evidence (weak side)
 
     # News
     cryptopanic_key: str = field(default_factory=lambda: _env("CRYPTOPANIC_API_KEY"))

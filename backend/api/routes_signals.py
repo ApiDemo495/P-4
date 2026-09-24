@@ -6,7 +6,8 @@
     CYCLE_START       t=0: signal cleared, "Computing..."
     SIGNAL            t~8 s: the LOCKED signal (sent once per cycle)
     FORMULA_UPDATE    every 15 s: live formula values, signal stays locked
-    EMERGENCY_OVERRIDE  critical news event -> forced HOLD
+    EMERGENCY_OVERRIDE  critical news event -> the exit side (flip of the open
+                        direction); the protocol is binary, so there is no HOLD
     OUTCOME           60 s later: win/loss for the DRG learner
 """
 
@@ -52,7 +53,7 @@ async def signals_socket(websocket: WebSocket) -> None:
                         "signal": manager.signal_payload(),
                         "window": manager.window_status(),
                         "formulas": manager.last_live_formulas,
-                        "hold_warning": manager.hold_warning,
+                        "conviction_note": manager.conviction_note,
                         "assets": list(cfg.ASSETS),
                     },
                 }
@@ -118,7 +119,7 @@ async def current_signal() -> dict:
         # Never ``null``: while the lock is COMPUTING this is the sentinel, so
         # clients can render the layout (and the countdown) immediately.
         "signal": signal.to_dict() if signal else manager.signal_payload(),
-        "hold_warning": manager.hold_warning if signal and signal.signal == "HOLD" else None,
+        "conviction_note": manager.conviction_note,
         "window": manager.window_status(),
         "asset": manager.asset,
         "pending_asset": manager.pending_asset,

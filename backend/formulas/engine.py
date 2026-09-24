@@ -119,6 +119,16 @@ BRAIN_FORMULAS: tuple[FormulaSpec, ...] = (
 ALL_FORMULAS: tuple[FormulaSpec, ...] = INPUT_FORMULAS + BRAIN_FORMULAS
 
 
+def _readings(values: dict) -> dict:
+    """Readings lookup that never raises - the UI must always get a payload."""
+    try:
+        from backend.formulas import logic as _logic
+
+        return _logic.readings(values)
+    except Exception:  # pragma: no cover - defensive
+        return {}
+
+
 @dataclass
 class FormulaResult:
     """The output of one full formula pass."""
@@ -126,6 +136,10 @@ class FormulaResult:
     values: dict[str, float] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
     timings_ms: dict[str, float] = field(default_factory=dict)
+    #: ``{formula: [{"label", "value", "unit"}, ...]}`` - the intermediate
+    #: numbers each formula recorded while it ran.  This is what turns the
+    #: Formula Explorer from a list of numbers into an audit trail.
+    traces: dict[str, list] = field(default_factory=dict)
     ccs_confidence: float = 0.0
     kcae: float = 0.0
     brain_trace: dict = field(default_factory=dict)
@@ -160,7 +174,12 @@ class FormulaResult:
             "timestamp": self.timestamp,
             "formulas": {k: round(v, 6) for k, v in self.values.items()},
             "errors": self.errors,
+            # The one-line interpretation of every value above, straight from
+            # the logic registry: the UI prints this instead of making the user
+            # read the raw number.
+            "readings": _readings(self.values),
             "timings_ms": {k: round(v, 4) for k, v in self.timings_ms.items()},
+            "traces": {k: v for k, v in self.traces.items()},
             "zero_count": self.zero_count,
             "failed_count": self.failed_count,
             "ccs_confidence": round(self.ccs_confidence, 6),
@@ -207,15 +226,18 @@ class FormulaEngine:
         ctx: dict = {"_brain": self.brain, "asset": asset}
 
         # --- Reward meta-parameter first: DRG gates the dopamine nodes -----
+        ctx["_trace"] = []
         try:
             drg_state = self.drg_state(asset)
-            value = drg_module.compute(snapshot, drg_state, params)
+            value = drg_module.compute(snapshot, drg_state, params, ctx=ctx)
             result.values["DRG"] = float(value)
             ctx["_drg"] = float(value)
         except Exception as exc:  # noqa: BLE001
             result.errors["DRG"] = str(exc)
             result.values["DRG"] = 0.0
             ctx["_drg"] = 0.0
+        finally:
+            result.traces["DRG"] = ctx.pop("_trace", [])
 
         # --- Formulas 1-20 ------------------------------------------------
         for spec in INPUT_FORMULAS:
@@ -257,6 +279,7 @@ class FormulaEngine:
         result: FormulaResult,
     ) -> None:
         t0 = time.perf_counter()
+        ctx["_trace"] = []
         try:
             state = self.state_for(spec, asset)
             value = spec.module.compute(snapshot, asset, state, params, ctx)
@@ -272,15 +295,43 @@ class FormulaEngine:
             log.warning("formula %s failed for %s: %s", spec.name, asset, exc)
         finally:
             result.timings_ms[spec.name] = (time.perf_counter() - t0) * 1000.0
+            result.traces[spec.name] = ctx.pop("_trace", [])
+
+            # Every formula records how many ticks it actually saw: the first
+        # question when a value looks wrong is "did it have data?".
+        result.traces[spec.name].insert(
+            0,
+            {
+                "label": "ticks seen",
+                "value": f"{int(snapshot.tick_count(asset))}",
+                "unit": f"asset {asset}, window {int(snapshot.timestamp)}",
+            },
+        )
+        try:
+            from backend.formulas import logic as logic_module
+
+            entry = logic_module.get(spec.name)
+            if entry is not None:
+                result.traces[spec.name].append(
+                    {"label": "reading", "value": entry.reading(float(result.values[spec.name])), "unit": ""}
+                )
+        except Exception:  # noqa: BLE001
+            pass
 
     # ------------------------------------------------------------------
     # Metadata / persistence
     # ------------------------------------------------------------------
     @staticmethod
     def metadata() -> dict:
+        from backend.formulas import logic as logic_module
+
         by_category: dict[str, list[dict]] = {}
         for spec in ALL_FORMULAS:
-            by_category.setdefault(spec.category, []).append(spec.to_dict())
+            entry = spec.to_dict()
+            logic = logic_module.get(spec.name)
+            if logic is not None:
+                entry["logic"] = logic.to_dict()
+            by_category.setdefault(spec.category, []).append(entry)
         return {
             "categories": [
                 {"key": key, "name": CATEGORY_NAMES.get(key, key), "formulas": formulas}
@@ -294,6 +345,7 @@ class FormulaEngine:
                 "brain_node": drg_module.BRAIN_NODE,
                 "latency_ms": drg_module.LATENCY_MS,
                 "directional": False,
+                "logic": logic_module.get("DRG").to_dict() if logic_module.get("DRG") else None,
             },
         }
 

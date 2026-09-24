@@ -23,7 +23,7 @@ class AgentResult:
     """One agent's answer for one cycle."""
 
     agent: str
-    decision: str | None = None  # "BUY" | "SELL" | "HOLD" | None
+    decision: str | None = None  # "BUY" | "SELL" | None (HOLD is not a vote)
     confidence: float | None = None
     reasoning: str = ""
     status: AgentStatus = AgentStatus.INACTIVE
@@ -87,10 +87,13 @@ SYSTEM_PROMPT = (
     "biological neural network consensus from the Drosophila melanogaster brain connectome.\n"
     "\n"
     "RULES:\n"
-    "1. Respond with ONLY JSON: {\"decision\": \"BUY\"|\"SELL\"|\"HOLD\", "
+    "1. Respond with ONLY JSON: {\"decision\": \"BUY\"|\"SELL\", "
     "\"confidence\": 0.0-1.0, \"reasoning\": \"<one sentence>\"}\n"
-    "2. If HSI > 0.7 (hedge stress high), strongly bias toward HOLD.\n"
-    "3. If ERC > 0.5 (choppy regime), increase HOLD probability.\n"
+    "1b. HOLD is not an option. You must always name a side; if the evidence is "
+    "mixed, pick the side the evidence leans to and say so in the reasoning, with "
+    "a LOW confidence.\n"
+    "2. If HSI > 0.7 (hedge stress high), keep the direction but cut confidence.\n"
+    "3. If ERC > 0.5 (choppy regime), cut confidence and note the chop.\n"
     "4. If DRG < -0.3 (recent losses), reduce confidence by 20%.\n"
     "5. If NIV and TAI agree in direction, increase confidence.\n"
     "6. If NIV and TAI disagree (SMD far from 0), note the divergence.\n"
@@ -103,7 +106,7 @@ SYSTEM_PROMPT = (
 RESPONSE_SCHEMA = {
     "type": "OBJECT",
     "properties": {
-        "decision": {"type": "STRING", "enum": ["BUY", "SELL", "HOLD"]},
+        "decision": {"type": "STRING", "enum": ["BUY", "SELL"]},
         "confidence": {"type": "NUMBER"},
         "reasoning": {"type": "STRING"},
     },
@@ -162,7 +165,14 @@ def parse_agent_json(text: str) -> tuple[str | None, float | None, str]:
             return None, None, ""
 
     decision = str(payload.get("decision", "")).upper().strip()
-    if decision not in ("BUY", "SELL", "HOLD"):
+    if decision == "HOLD":
+        # HOLD was removed from the protocol.  A model that still answers HOLD is
+        # abstaining, not voting for "zero": returning None makes the fusion
+        # layer renormalise its weight away instead of dragging the score toward
+        # the middle.  The reasoning is kept so the UI can show what it said.
+        reasoning = str(payload.get("reasoning", ""))
+        return None, None, f"[abstained: answered HOLD, which is not a signal] {reasoning}"[:400]
+    if decision not in ("BUY", "SELL"):
         return None, None, str(payload.get("reasoning", ""))
     try:
         confidence = float(payload.get("confidence", 0.5))

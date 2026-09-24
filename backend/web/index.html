@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>Drosophila Trader v2.0</title>
-<link rel="stylesheet" href="/static/styles.css?v=2.0.1" />
+<link rel="stylesheet" href="/static/styles.css?v=2.0.2" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪰</text></svg>" />
 </head>
 <body>
@@ -99,7 +99,7 @@
   </section>
 
   <!-- ============ WIDGET PANEL (fixed layout, rows 1 and 2) ============ -->
-  <!-- Row 1: prediction | countdown 1-60 | HOLD box                          -->
+  <!-- Row 1: prediction | countdown 1-60 | signal + conviction box       -->
   <!-- Row 2: take profit / stop loss | prediction accuracy                  -->
   <section class="card widget-panel">
     <div class="widget-row row-top">
@@ -111,7 +111,7 @@
         <!-- Small inline override notice - never a full-screen overlay. -->
         <div class="emergency-chip hidden" id="w-emergency">
           <span class="bolt">⚡</span>
-          <span id="w-emergency-text">emergency override — forced HOLD</span>
+          <span id="w-emergency-text">emergency override — exit the position</span>
           <button class="btn tiny ghost" id="w-emergency-clear">dismiss</button>
         </div>
       </div>
@@ -132,9 +132,9 @@
       </div>
 
       <div class="widget-cell cell-holdbox">
-        <div class="cell-label">HOLD / WAIT</div>
+        <div class="cell-label">SIGNAL &amp; CONVICTION</div>
         <div class="hold-box" id="w-hold">
-          <div class="hold-title" id="w-hold-title">HOLD</div>
+          <div class="hold-title" id="w-hold-title">…</div>
           <div class="hold-text" id="w-hold-text">—</div>
           <div class="hold-meta" id="w-hold-meta"></div>
         </div>
@@ -196,8 +196,8 @@
       <div class="reasoning" id="reasoning">—</div>
       <div class="weights" id="weights"></div>
     </div>
-    <div id="hold-warning" class="hold-warning hidden">
-      <div class="hw-title">⚠️ HOLD warning</div>
+    <div id="conviction-note" class="hold-warning hidden">
+      <div class="hw-title">⚠️ Conviction note</div>
       <div class="hw-text" id="hw-text"></div>
       <div class="hw-lean" id="hw-lean"></div>
     </div>
@@ -373,6 +373,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=2.0.1"></script>
+<script src="/static/app.js?v=2.0.2"></script>
 </body>
 </html>

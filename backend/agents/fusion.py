@@ -10,8 +10,10 @@ Two v2.0 additions:
 * **HSI override** - when the Hedge Stress Index exceeds 0.80 the final
   confidence is multiplied by ``max(0.2, 1 - HSI)``.  During extreme hedge
   stress even a strong signal is dampened; the 0.2 floor stops it being zeroed.
-* **Hard gates** - emergency override, insufficient data and the "11 of 20
-  formulas are zero" rule all force HOLD regardless of what the agents say.
+* **Binary direction** - the third state (HOLD) was removed at the user's
+  request.  Every gate that used to return HOLD now returns a side plus the
+  reason it won; see :mod:`backend.core.direction` for the ladder.  The gates
+  therefore degrade *conviction* and *size*, never the existence of a signal.
 """
 
 from __future__ import annotations
@@ -23,6 +25,14 @@ import numpy as np
 
 from backend.agents.base import AgentResult
 from backend.core import config as cfg
+from backend.core.direction import (
+    BUY,
+    SELL,
+    DirectionDecision,
+    describe as describe_direction,
+    opposite,
+    resolve as resolve_direction,
+)
 
 log = logging.getLogger("drosophila.fusion")
 
@@ -33,26 +43,48 @@ class FusionResult:
     confidence: float
     raw_confidence: float
     score: float
-    lean: str | None = None
     reasoning: str = ""
     contributions: dict = field(default_factory=dict)
     forced_reason: str = ""
     hsi_adjustment: float = 1.0
     weights_used: dict = field(default_factory=dict)
+    direction: DirectionDecision | None = None
+
+    # -- binary direction fields (HOLD was removed) ----------------------
+    @property
+    def edge(self) -> float:
+        return self.direction.edge if self.direction else 0.0
+
+    @property
+    def conviction(self) -> str:
+        return self.direction.conviction if self.direction else "LOW"
+
+    @property
+    def weak(self) -> bool:
+        return bool(self.direction.weak) if self.direction else True
+
+    @property
+    def direction_source(self) -> str:
+        return self.direction.source if self.direction else ""
 
     def to_dict(self) -> dict:
-        return {
+        payload = {
             "decision": self.decision,
             "confidence": round(self.confidence, 4),
             "raw_confidence": round(self.raw_confidence, 4),
             "score": round(self.score, 4),
-            "lean": self.lean,
             "reasoning": self.reasoning,
             "contributions": self.contributions,
             "forced_reason": self.forced_reason,
             "hsi_adjustment": round(self.hsi_adjustment, 4),
             "weights_used": {k: round(v, 4) for k, v in self.weights_used.items()},
         }
+        # Kept for the two clients: "lean" now always equals the decision,
+        # because there is no third state to lean away from.
+        payload["lean"] = self.decision
+        if self.direction is not None:
+            payload.update(self.direction.to_dict())
+        return payload
 
 
 def _direction_value(decision: str | None) -> float:
@@ -68,35 +100,14 @@ def fuse(
     warnings: list[str] | None = None,
     insufficient_evidence: bool = False,
     emergency: bool = False,
+    previous_signal: str | None = None,
 ) -> FusionResult:
-    """Combine the Drosophila brain with the available AI agents."""
+    """Combine the Drosophila brain with the available AI agents.
+
+    Always returns BUY or SELL: see :mod:`backend.core.direction`.
+    """
     settings = settings or cfg.SETTINGS
     warnings = warnings or []
-
-    # ------------------------------------------------------------------
-    # Hard gates first (Section 10.1)
-    # ------------------------------------------------------------------
-    if emergency:
-        return FusionResult(
-            decision="HOLD",
-            confidence=1.0,
-            raw_confidence=1.0,
-            score=0.0,
-            forced_reason="Emergency override active",
-            reasoning="Critical news event: the only safe action is to stop.",
-        )
-    if insufficient_evidence:
-        return FusionResult(
-            decision="HOLD",
-            confidence=0.5,
-            raw_confidence=0.5,
-            score=0.0,
-            forced_reason="Insufficient formula evidence",
-            reasoning=(
-                "11 or more of the 20 input formulas returned zero, which means the data "
-                "feed is degraded. Forcing HOLD."
-            ),
-        )
 
     # ------------------------------------------------------------------
     # Weighted score
@@ -114,7 +125,7 @@ def fuse(
     # The Drosophila brain is always available: it is computed synchronously.
     active["drosophila"] = default_weights["drosophila"]
     contributions["drosophila"] = {
-        "decision": "BUY" if ccs_value > 0.25 else "SELL" if ccs_value < -0.25 else "HOLD",
+        "decision": BUY if ccs_value >= 0 else SELL,
         "confidence": round(ccs_confidence, 4),
         "value": round(ccs_value, 4),
         "weight": default_weights["drosophila"],
@@ -192,46 +203,55 @@ def fuse(
     confidence = max(0.0, min(0.95, confidence))
 
     # ------------------------------------------------------------------
-    # Decision (Section 10.1)
+    # Decision: always a side (Section 10.1, amended to binary)
     # ------------------------------------------------------------------
-    threshold = settings.signal_threshold
-    if abs(ccs_value) <= threshold or confidence <= settings.min_fusion_confidence:
-        decision = "HOLD"
-    elif score > 0:
-        decision = "BUY"
-    elif score < 0:
-        decision = "SELL"
-    else:
-        decision = "HOLD"
+    degraded = insufficient_evidence or any(
+        "Insufficient" in w for w in warnings
+    )
+    direction = resolve_direction(
+        score=score,
+        ccs_value=ccs_value,
+        confidence=confidence,
+        previous=previous_signal,
+        settings=settings,
+        emergency=emergency,
+        degraded=degraded,
+    )
 
-    lean = None
-    if decision == "HOLD":
-        lean = "BUY" if score > 0.05 else "SELL" if score < -0.05 else None
-
-    if any(w.startswith("Insufficient") for w in warnings) or warnings:
-        if any("Insufficient" in w for w in warnings):
-            decision = "HOLD"
-            lean = "BUY" if score > 0 else "SELL" if score < 0 else None
+    forced_reason = ""
+    if emergency:
+        forced_reason = "Emergency override active"
+    elif degraded:
+        forced_reason = "Insufficient formula evidence"
 
     reasoning = _explain(
-        decision, score, contributions, ccs_value, ccs_confidence, hsi, hsi_adjustment, settings
+        direction,
+        score,
+        contributions,
+        ccs_value,
+        ccs_confidence,
+        hsi,
+        hsi_adjustment,
+        settings,
+        confidence,
     )
 
     return FusionResult(
-        decision=decision,
+        decision=direction.decision,
         confidence=confidence,
         raw_confidence=raw_confidence,
         score=score,
-        lean=lean,
         reasoning=reasoning,
         contributions=contributions,
+        forced_reason=forced_reason,
         hsi_adjustment=hsi_adjustment,
         weights_used=weights_used,
+        direction=direction,
     )
 
 
 def _explain(
-    decision: str,
+    direction: DirectionDecision,
     score: float,
     contributions: dict,
     ccs_value: float,
@@ -239,6 +259,7 @@ def _explain(
     hsi: float,
     hsi_adjustment: float,
     settings,
+    confidence: float,
 ) -> str:
     parts: list[str] = []
 
@@ -260,22 +281,48 @@ def _explain(
         parts.append(f"Hedge stress low (HSI={hsi:.2f})")
 
     parts.append(f"brain CCSv2={ccs_value:+.2f} at {ccs_confidence:.0%} confidence")
-
-    if decision == "HOLD":
-        parts.append("No trade: score or confidence did not clear the entry threshold")
+    parts.append(describe_direction(direction, confidence))
+    if direction.tie_break and direction.tie_break not in ("emergency", "fused score"):
+        parts.append(f"tie-break: {direction.tie_break}")
     return ". ".join(parts) + "."
 
 
-def hold_warning(score: float, lean: str | None, confidence: float) -> dict:
-    """The verbatim HOLD warning box from Section 10.2."""
+def conviction_note(direction: DirectionDecision, confidence: float) -> dict | None:
+    """Replaces the Section 10.2 HOLD box.
+
+    The box existed because a HOLD leaves the user with no instruction.  Now
+    every window carries a direction, so the equivalent message is about *size*
+    rather than about the absence of a signal: it appears when the side came
+    from the tie-break ladder (``weak``) or when the engine's own conviction is
+    below HIGH - which is exactly the case the 0.80 HSI dampening produces.
+    Ordinary high-conviction windows stay quiet.
+    """
+    if not direction.weak and direction.conviction == "HIGH":
+        return None
+
+    if direction.emergency_exit:
+        text = (
+            f"Emergency exit: {direction.decision} closes the open "
+            f"{direction.closed_signal}. Get flat first, decide after."
+        )
+    elif direction.weak:
+        text = (
+            f"Thin edge on this window: the ensemble is inside the neutral band, so the "
+            f"{direction.decision} side was chosen by {direction.tie_break} rather than by a "
+            f"strong score. Take it at reduced size - half or less - and keep the stop tight."
+        )
+    else:
+        text = (
+            f"{direction.decision} at {direction.conviction.lower()} conviction "
+            f"(confidence {confidence:.0%}): the side is clear but the evidence behind it is "
+            f"thin. Take it at reduced size."
+        )
     return {
         "visible": True,
-        "text": (
-            "This prediction is not as powerful as it should be because we are receiving HOLD "
-            "signals. However, if you urgently need to take a trade, you may follow the BUY or "
-            "SELL prediction shown - but proceed with caution."
-        ),
-        "lean": lean,
-        "lean_score": round(score, 4),
+        "conviction": direction.conviction,
+        "text": text,
+        "direction": direction.decision,
+        "source": direction.source,
+        "edge": round(direction.edge, 4),
         "confidence": round(confidence, 4),
     }

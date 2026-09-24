@@ -32,6 +32,9 @@ LATENCY_MS = 0.1
 DESCRIPTION = "Drift of the instantaneous BTC/PAXG hedge ratio vs. its 60-minute baseline."
 
 BETA_HISTORY = 240  # ~4 hours of 1-minute betas: enough samples for a stable std()
+#: How many standard errors of the instantaneous beta estimate a change has
+#: to clear before it counts as a drift at all.
+NOISE_SIGMA = 3.0
 
 
 class State:
@@ -84,10 +87,26 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     # not shrink its own z-score.
     history = np.asarray(state.beta_history[-BETA_HISTORY:], dtype=np.float64)
     hist_std = float(np.std(history, ddof=1)) if history.size > 2 else 0.0
-    scale = max(hist_std, abs(beta_w) * 0.25, 1e-6)
 
-    d_beta = (beta_w - baseline) / (scale + EPS)
-    score = tanh(d_beta)
+    # The instantaneous OLS slope has a standard error of its own, and on a tape
+    # where the legs are unrelated that error *is* the whole wiggle: dividing by
+    # the historical dispersion (v2.0.0) turned pure estimation noise into
+    # +/-0.73 readings on the balanced tape.  A change is only a drift when it
+    # clears the 3-sigma band of the estimator; the excess is then scored
+    # against the pair's own typical beta move.
+    n_eff = float(max(2, n))
+    sigma_b = float(np.sqrt(float(np.dot(b_centered, b_centered)) / n_eff))
+    sigma_g = float(np.sqrt(float(np.dot(g_centered, g_centered)) / n_eff))
+    if sigma_b <= EPS:
+        return 0.0
+    se_beta = sigma_g / (sigma_b * float(np.sqrt(n_eff)) + EPS)
+
+    d_beta = beta_w - baseline
+    noise_band = NOISE_SIGMA * se_beta
+    if abs(d_beta) <= noise_band:
+        return 0.0
+    scale = max(hist_std, noise_band, 1e-6)
+    score = tanh(np.sign(d_beta) * (abs(d_beta) - noise_band) / (scale + EPS))
 
     state.beta_baseline.update(beta_w)
     state.beta_history.append(beta_w)

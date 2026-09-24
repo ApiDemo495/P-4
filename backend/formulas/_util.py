@@ -197,3 +197,80 @@ def hurst_rs(series: np.ndarray, min_chunk: int = 2) -> float:
     # H = ln(R/S) / ln(chunk); clamp to a sane band - tiny windows are noisy.
     h = float(np.log(rs) / np.log(chunk))
     return float(np.clip(h, 0.0, 1.0))
+
+
+# ---------------------------------------------------------------------------
+# Logic tracing - what the numbers actually were during this pass
+# ---------------------------------------------------------------------------
+def trace(ctx: dict | None, label: str, value, unit: str = "") -> None:
+    """Record one intermediate value so the Formula Explorer can show the work.
+
+    The engine injects a fresh list under ``ctx["_trace"]`` before every formula
+    call, so a module only has to say *what* it computed; formatting, ordering and
+    transport are the engine's business.
+    """
+    if ctx is None:
+        return
+    items = ctx.get("_trace")
+    if items is None:
+        items = ctx["_trace"] = []
+    try:
+        if isinstance(value, np.ndarray):
+            flat = value.reshape(-1)
+            rendered = (
+                f"mean {float(np.mean(flat)):.6g} over {flat.size} points"
+                if flat.size > 4
+                else ", ".join(f"{float(x):.6g}" for x in flat)
+            )
+        elif isinstance(value, (int, np.integer)):
+            rendered = f"{int(value):d}"
+        elif isinstance(value, (float, np.floating)):
+            number = float(value)
+            rendered = f"{number:.6g}" if number == number else "nan"
+        else:
+            rendered = str(value)
+    except Exception:  # noqa: BLE001 - tracing must never break a formula
+        rendered = "?"
+    items.append({"label": str(label), "value": rendered, "unit": str(unit)})
+
+
+class SelfScale:
+    """EMA of |x| - a self-calibrating normaliser with a floor.
+
+    Formulas that normalise by a fixed constant either saturate in quiet markets
+    (the constant is too small) or report noise as signal (too large).  This
+    estimator follows the market's own scale, while ``floor`` keeps a genuinely
+    meaningless move meaningless: the denominator is the *larger* of the floor
+    and the adaptive scale.
+    """
+
+    __slots__ = ("decay", "floor", "value", "count")
+
+    def __init__(self, decay: float = 0.98, floor: float = 0.0) -> None:
+        self.decay = float(decay)
+        self.floor = float(floor)
+        self.value = 0.0
+        self.count = 0
+
+    def update(self, x: float) -> float:
+        magnitude = abs(float(x))
+        self.count += 1
+        if self.count == 1:
+            self.value = magnitude
+        else:
+            self.value = self.decay * self.value + (1.0 - self.decay) * magnitude
+        return self.value
+
+    def denominator(self, factor: float = 1.0) -> float:
+        """The divisor to use: ``max(floor, factor * scale)``."""
+        return max(self.floor, factor * self.value)
+
+    def to_dict(self) -> dict:
+        return {"decay": self.decay, "floor": self.floor, "value": self.value, "count": self.count}
+
+    @classmethod
+    def from_dict(cls, payload: dict) -> "SelfScale":
+        obj = cls(payload.get("decay", 0.98), payload.get("floor", 0.0))
+        obj.value = float(payload.get("value", 0.0))
+        obj.count = int(payload.get("count", 0))
+        return obj

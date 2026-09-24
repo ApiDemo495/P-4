@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from backend.formulas._util import EPS, finite, tanh
+from backend.formulas._util import EPS, SelfScale, finite, tanh, trace
 
 NAME = "GCDV"
 CATEGORY = "C"
@@ -30,24 +30,35 @@ LATENCY_MS = 0.1
 DESCRIPTION = "Speed of divergence between normalised BTC and PAXG price paths."
 
 VELOCITY_POINTS = 10
-GAIN = 100.0
+GAIN = 1.0
+#: A divergence speed of 1e-4 per second is 6 bps per minute of separation
+#: between BTC and PAXG: that is a rotation worth trading.  The floor has to sit
+#: above the noise floor of *two independent* legs - measured at ~3e-5 per
+#: second on the balanced tape - or a dead pair reads as a strong divergence.
+MEANINGFUL_VELOCITY = 2e-4
 
 
 class State:
-    __slots__ = ("last_divergence", "last_velocity")
+    __slots__ = ("last_divergence", "last_velocity", "velocity_scale")
 
     def __init__(self) -> None:
         self.last_divergence = 0.0
         self.last_velocity = 0.0
+        self.velocity_scale = SelfScale(decay=0.95, floor=MEANINGFUL_VELOCITY)
 
     def to_dict(self) -> dict:
-        return {"last_divergence": self.last_divergence, "last_velocity": self.last_velocity}
+        return {
+            "last_divergence": self.last_divergence,
+            "last_velocity": self.last_velocity,
+            "velocity_scale": self.velocity_scale.to_dict(),
+        }
 
     @classmethod
     def from_dict(cls, payload: dict) -> "State":
         obj = cls()
         obj.last_divergence = float(payload.get("last_divergence", 0.0))
         obj.last_velocity = float(payload.get("last_velocity", 0.0))
+        obj.velocity_scale = SelfScale.from_dict(payload.get("velocity_scale", {}))
         return obj
 
 
@@ -68,9 +79,28 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     k = min(VELOCITY_POINTS, d.size - 1)
     if k <= 0:
         return 0.0
-    velocity = float(np.mean(np.diff(d)[-k:]))
+    diffs = np.diff(d)
+    # Two estimates of the same quantity: the instantaneous speed over the last
+    # 10 grid points, and the average speed across the whole grid.  Ten diffs of
+    # a 60-point grid carry a whole basis point of standard error, which is why
+    # a dead pair read +/-0.4 in v2.0.0.  Blending them keeps a real separation
+    # while cancelling the endpoint noise.
+    velocity = float(np.mean(diffs[-k:]))
+    grid_drift = float((d[-1] - d[0]) / max(1.0, float(d.size - 1)))
+    combined = 0.5 * (velocity + grid_drift)
+    denom = max(MEANINGFUL_VELOCITY, 0.5 * state.velocity_scale.denominator(GAIN))
+    state.velocity_scale.update(abs(combined))
     state.last_divergence = float(d[-1])
-    state.last_velocity = velocity
+    state.last_velocity = combined
 
-    score = tanh(GAIN * velocity)
+    trace(ctx, "normalised BTC path", float(p_b[-1] / base_b), "relative to the first grid value")
+    trace(ctx, "normalised PAXG path", float(p_g[-1] / base_g), "relative to the first grid value")
+    trace(ctx, "divergence d", float(d[-1]), "BTC_norm - PAXG_norm")
+    trace(ctx, "velocity (mean of last 10 diffs)", velocity, "per second")
+    trace(ctx, "grid drift (whole window)", grid_drift, "per second")
+    trace(ctx, "blended velocity", combined, "per second")
+    trace(ctx, "meaningful velocity floor", denom, "per second (2 bps / minute)")
+    trace(ctx, "velocity / scale", combined / (denom + EPS), "1.0 = a meaningful divergence speed")
+
+    score = tanh(combined / (denom + EPS))
     return finite(score if asset.upper() == "BTC" else -score)

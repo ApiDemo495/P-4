@@ -10,7 +10,7 @@ seed using the wiring rules of the hemibrain MB:
   * KC -> MBON    : compartment-specific excitatory read-out
   * PN -> MBON    : the direct PN -> MBON-alpha3 pathway (see note below)
   * DAN -> MBON   : PAM excites approach, PPL1 excites avoidance
-  * OA  -> MB/LH  : octopamine suppresses action and raises the HOLD tone
+  * OA  -> MB/LH  : octopamine suppresses action and raises the caution tone
   * MBON -> LH    : excitatory to its own LH target, inhibitory to the opposite
   * LH  -> LH     : lateral inhibition inside the lateral horn
 
@@ -20,7 +20,7 @@ The specification normalises weights into [0, 1].  Real mushroom-body circuits
 contain both excitatory and inhibitory projections, and CCSv2 cannot express
 "bearish" without them: with a purely non-negative matrix and a ReLU on the
 PN -> KC fan-in, an all-negative formula vector would produce zero Kenyon Cell
-activity and the read-out would collapse to HSH (0 = HOLD) regardless of how
+activity and the read-out would collapse to HSH (0 = no decision) regardless of how
 bearish the evidence was.  Weights are therefore signed and normalised by the
 maximum **absolute** weight, which preserves the numerical intent of the
 original rule.
@@ -121,7 +121,7 @@ def build_matrix(seed: int = DEFAULT_SEED) -> np.ndarray:
     w[gc.PPL1, gc.MBON_CONFIDENCE] += 0.25
 
     # Octopamine = hedge stress.  It suppresses both action pathways and raises
-    # the HOLD tone, which is exactly "become cautious when the hedge breaks".
+    # the caution tone, which is exactly "become cautious when the hedge breaks".
     w[gc.OA, gc.MBON_APPROACH] -= 0.55
     w[gc.OA, gc.MBON_AVOID] -= 0.55
     w[gc.OA, gc.MBON_NEUTRAL] += 1.30

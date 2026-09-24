@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from backend.formulas._util import finite, mad, tanh
+from backend.formulas._util import finite, mad, tanh, trace
 
 NAME = "VSD"
 CATEGORY = "A"
@@ -29,6 +29,11 @@ DESCRIPTION = "Robust (median/MAD) volume spike detection with directional sign.
 TOTAL_TICKS = 120
 Z_DIVISOR = 3.0
 EPS = 1e-12
+
+#: Materiality gate: a median-volume difference smaller than this fraction of
+#: the baseline median is not a shock, however many robust sigmas it is worth.
+#: Without it a quiet tape (tiny MAD) reported +-0.38 out of pure noise.
+MIN_SHOCK_RATIO = 0.15
 
 
 class State:
@@ -82,8 +87,34 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     z = (recent_median - mu) / (sigma + EPS)
     state.last_z = z
 
-    direction = float(np.sign(np.sum(sides[split:])))
-    if direction == 0.0:
-        direction = float(np.sign(np.sum(sides[-5:]))) or 0.0
+    ratio = recent_median / (mu + EPS)
+    if abs(ratio - 1.0) < MIN_SHOCK_RATIO:
+        trace(ctx, "baseline median vol", mu, "contracts")
+        trace(ctx, "recent median vol", recent_median, "contracts")
+        trace(ctx, "ratio recent / baseline", ratio, "below the materiality gate - no shock")
+        return 0.0
 
-    return finite(tanh(z / Z_DIVISOR) * direction)
+    prices = ticks[:, 1]
+    anchor = prices[max(0, split - 1)]
+    price_sign = float(np.sign(prices[-1] - anchor))
+    if price_sign == 0.0:
+        # A volume spike with no price move at all carries no direction: saying
+        # "up" or "down" here is exactly the "random numbers" failure mode.
+        trace(ctx, "baseline median vol", mu, "contracts")
+        trace(ctx, "recent median vol", recent_median, "contracts")
+        trace(ctx, "MAD sigma", sigma, "contracts")
+        trace(ctx, "z", z, "robust sigmas")
+        trace(ctx, "price sign", 0.0, "price did not move - no shock direction")
+        return 0.0
+
+    trace(ctx, "baseline median vol", mu, "contracts")
+    trace(ctx, "recent median vol", recent_median, "contracts")
+    trace(ctx, "MAD sigma", sigma, "contracts")
+    trace(ctx, "ratio recent / baseline", ratio, "materiality gate is 0.15")
+    trace(ctx, "z (volume shock)", z, "robust sigmas")
+    trace(ctx, "price move over the shock", float(prices[-1] - anchor), "price units")
+    trace(ctx, "price sign", price_sign, "+1 up / -1 down")
+    net_sides = float(np.sum(sides[split:]))
+    trace(ctx, "net aggressor flow", net_sides, "contracts (context only)")
+
+    return finite(tanh(z / Z_DIVISOR) * price_sign)

@@ -12,8 +12,11 @@ impossible:
 that returns the existing frozen signal, which means a late or duplicate
 computation can never rewrite what the user is looking at.
 
-The single exception is a Critical News Impact Event, and even then the override
-is always to HOLD - never to BUY or SELL.
+The single exception is a Critical News Impact Event.  The override used to force
+HOLD; since the protocol became binary (BUY or SELL only) it forces the **exit
+side** instead - the opposite of whatever direction is currently open, which is
+the only way to flatten a position in a two-state system.  See
+``backend.core.direction``.
 """
 
 from __future__ import annotations
@@ -46,7 +49,7 @@ class FrozenSignal(NamedTuple):
     cycle_number: int
     timestamp: str
     asset: str
-    signal: str  # "BUY" | "SELL" | "HOLD"
+    signal: str  # "BUY" | "SELL" - there is no third state
     confidence: float
     reasoning: str
     formula_values: tuple  # ((name, value), ...)
@@ -56,7 +59,18 @@ class FrozenSignal(NamedTuple):
     # -- v2.0 UI extras -------------------------------------------------
     ccs_value: float = 0.0
     ccs_confidence: float = 0.0
-    hold_lean: str | None = None
+    conviction: str = "HIGH"
+    """HIGH / MEDIUM / LOW - how much the engine trusts this window."""
+    weak: bool = False
+    """True when the side came from the tie-break ladder rather than a real edge."""
+    direction_source: str = ""
+    """Plain-words reason the BUY/SELL side won (shown in the panel)."""
+    direction_reason: str = ""
+    """One-sentence instruction: size, conviction, and why this side."""
+    edge: float = 0.0
+    """|fused score| - the size of the lean."""
+    closed_signal: str | None = None
+    """For an emergency exit: the direction this signal closes."""
     hedge: tuple = ()
     news: tuple = ()
     drg: float = 0.0
@@ -106,7 +120,12 @@ class FrozenSignal(NamedTuple):
             "agents": self.agent_dict(),
             "hedge": dict(self.hedge),
             "news": dict(self.news),
-            "hold_lean": self.hold_lean,
+            "conviction": self.conviction,
+            "weak": self.weak,
+            "direction_source": self.direction_source,
+            "direction_reason": self.direction_reason,
+            "edge": round(self.edge, 4),
+            "closed_signal": self.closed_signal,
             "drg": round(self.drg, 4),
             "ccs_value": round(self.ccs_value, 4),
             "ccs_confidence": round(self.ccs_confidence, 4),
@@ -209,7 +228,15 @@ class SignalLockController:
         duration_seconds: float = 180.0,
         timestamp: str | None = None,
     ) -> FrozenSignal:
-        """Break the lock for a Critical News Impact Event -> forced HOLD."""
+        """Break the lock for a Critical News Impact Event -> the exit side.
+
+        "Exit any open position" in a binary protocol means signalling the
+        opposite side of the position that is open.  HOLD is gone, so this is
+        how flat is expressed; the payload also carries ``closed_signal`` so the
+        panel can say *why* the direction flipped.
+        """
+        from backend.core.direction import BUY, SELL, is_direction, opposite
+
         base = self.current_signal
         previous_signal = base.signal if base else "COMPUTING"
         headline = str(event.get("headline") or "Critical news event")
@@ -217,22 +244,46 @@ class SignalLockController:
         self.emergency_until = max(self.emergency_until, now + duration_seconds)
         self.emergency_event = {**event, "remaining_seconds": self.emergency_until - now}
 
+        exit_side = opposite(previous_signal) if is_direction(previous_signal) else None
+        if exit_side is None:
+            # Nothing open: the emergency cannot flatten anything, so keep the
+            # direction the engine had and flag the window instead of inventing
+            # a reversal the user would have to trade.
+            exit_side = previous_signal if is_direction(previous_signal) else (base.signal if base and is_direction(base.signal) else BUY)
+        closed = previous_signal if is_direction(previous_signal) else None
+
         overridden = FrozenSignal(
             cycle_number=self.cycle_number,
             timestamp=timestamp or _iso(now),
             asset=base.asset if base else "BTC",
-            signal="HOLD",
+            signal=exit_side,
             confidence=1.0,
             reasoning=(
                 f"EMERGENCY OVERRIDE: {headline}. {event.get('reason', '')}. "
-                "Signal overridden to HOLD - exit any open positions."
+                + (
+                    f"{exit_side} flattens the open {closed} - exit any open position now."
+                    if closed
+                    else f"No position was open, so the {exit_side} direction is kept; "
+                    "size down until the event is over."
+                )
             ),
             formula_values=base.formula_values if base else (),
             agent_results=base.agent_results if base else (),
             is_emergency_override=True,
             ccs_value=base.ccs_value if base else 0.0,
             ccs_confidence=base.ccs_confidence if base else 0.0,
-            hold_lean=previous_signal if previous_signal in ("BUY", "SELL") else None,
+            conviction="HIGH" if closed else "LOW",
+            weak=closed is None,
+            direction_source=(
+                f"emergency exit of the open {closed}" if closed
+                else "emergency with nothing open - direction unchanged"
+            ),
+            direction_reason=(
+                f"{exit_side} closes the open {closed}: emergency exit, flat is the only safe state."
+                if closed
+                else f"⚡ emergency on a flat book: keep {exit_side} but trade it small."
+            ),
+            closed_signal=closed,
             hedge=base.hedge if base else (),
             news=base.news if base else (),
             drg=base.drg if base else 0.0,

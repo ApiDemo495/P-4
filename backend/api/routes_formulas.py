@@ -10,10 +10,40 @@ from backend.formulas.engine import CATEGORY_NAMES, FormulaEngine
 router = APIRouter()
 
 
+def _live_payload(result, manager) -> dict:
+    """Values + readings + traces for the pass that produced them."""
+    if result is None:
+        return {"formulas": {}, "readings": {}, "traces": {}}
+    return {
+        "formulas": {k: round(float(v), 6) for k, v in result.values.items()},
+        "readings": result.to_dict().get("readings", {}),
+        "traces": result.traces,
+        "timings_ms": {k: round(float(v), 4) for k, v in result.timings_ms.items()},
+        "total_ms": round(result.total_ms, 4),
+    }
+
+
 @router.get("/api/formulas")
 async def formula_catalogue() -> dict:
-    """All 22 formulas with metadata (used to build the explorer UI)."""
+    """All 22 formulas with metadata + the logic registry (used by the explorer)."""
     return FormulaEngine.metadata()
+
+
+@router.get("/api/formulas/self-test")
+async def formula_self_test(refresh: bool = Query(False)) -> dict:
+    """Does every formula do what it claims?  Runs the four synthetic tapes.
+
+    This is the audit trail behind "the formulas work": each verdict carries the
+    claim, the pass/fail, and the numbers observed on each tape.  Cached after
+    the first call (four tapes x 40 windows of one engine each), ``refresh=true``
+    re-runs it.
+    """
+    from backend.formulas import self_test as self_test_module
+
+    report = self_test_module.cached_report(refresh=refresh)
+    payload = report.to_dict()
+    payload["summary"] = self_test_module.summary_line(report)
+    return payload
 
 
 @router.get("/api/formulas/current")
@@ -35,12 +65,11 @@ async def current_formulas() -> dict:
 async def live_formulas() -> dict:
     """Live values, refreshed every 15 s.  These do NOT change the signal."""
     manager = get_manager()
-    return {
-        "cycle_number": manager.stats.cycle_number,
-        "note": "Live formula values only. Signal remains LOCKED.",
-        "formulas": manager.last_live_formulas,
-        "signal": manager.lock.current_signal.signal if manager.lock.current_signal else None,
-    }
+    payload = _live_payload(manager.last_live_result, manager)
+    payload["cycle_number"] = manager.stats.cycle_number
+    payload["note"] = "Live formula values only. Signal remains LOCKED."
+    payload["signal"] = manager.lock.current_signal.signal if manager.lock.current_signal else None
+    return payload
 
 
 @router.get("/api/formulas/categories")

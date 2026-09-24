@@ -19,7 +19,7 @@ class DegradationLevel(int, Enum):
     NO_AGENTS = 3  # CCSv2 is the sole decision maker
     FALLBACK_BRAIN = 4  # CCSv2 runs on the committed CSV matrix
     COINGECKO = 5  # reduced tick rate: DGW/LCS/BAR disabled
-    MINIMAL = 6  # forces HOLD
+    MINIMAL = 6  # price only: the direction is kept but flagged as weak
 
     @property
     def label(self) -> str:

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from backend.formulas._util import EPS, finite, tanh
+from backend.formulas._util import EPS, finite, tanh, trace
 
 NAME = "LCS"
 CATEGORY = "B"
@@ -59,24 +59,23 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     if ask_qty.size < 3 or bid_qty.size < 3 or not ask_qty.any() or not bid_qty.any():
         return 0.0
 
-    # Ask ladder: liquidity disappearing as you go deeper is negative.
-    d_ask = np.diff(ask_qty)
-    # Bid ladder: a cliff means top-of-book bids are thick and deeper bids thin.
-    d_bid = -np.diff(bid_qty)
-
-    c_ask = float(np.min(d_ask))
-    c_bid = float(np.min(d_bid))
-    state.last_c_ask, state.last_c_bid = c_ask, c_bid
-
-    # Express each cliff relative to that side's top-of-book size so that a
-    # "cliff" on a thin PAXG book is comparable to one on a deep BTC book.
+    # A "cliff" is the worst level-to-level drop in resting size as you walk the
+    # ladder outward, measured against that side's top-of-book size.  Both sides
+    # use the same sign convention, so a symmetric book reads exactly 0 - the
+    # old code took abs() of values whose sign had already been discarded and
+    # reported +0.55 for two identical ladders.
     scale_ask = float(ask_qty[0]) + EPS
     scale_bid = float(bid_qty[0]) + EPS
-    rel_ask = -c_ask / scale_ask  # positive magnitude when liquidity drops away
-    rel_bid = -c_bid / scale_bid
+    w_ask = max(0.0, float(np.max(-np.diff(ask_qty))) / scale_ask)
+    w_bid = max(0.0, float(np.max(-np.diff(bid_qty))) / scale_bid)
+    state.last_c_ask, state.last_c_bid = -w_ask * scale_ask, -w_bid * scale_bid
+    trace(ctx, "ask cliff (worst drop / top size)", w_ask, "fraction of top-of-book")
+    trace(ctx, "bid cliff (worst drop / top size)", w_bid, "fraction of top-of-book")
 
-    if rel_ask <= 0 and rel_bid <= 0:
-        return 0.0  # no cliff on either side
+    if w_ask <= 0.0 and w_bid <= 0.0:
+        trace(ctx, "asymmetry", 0.0, "no cliff on either side")
+        return 0.0
 
-    raw = (abs(rel_ask) - abs(rel_bid)) / (abs(rel_ask) + abs(rel_bid) + EPS)
+    raw = (w_ask - w_bid) / (w_ask + w_bid + EPS)
+    trace(ctx, "asymmetry", raw, "positive = the ask ladder is the broken one")
     return finite(tanh(raw))

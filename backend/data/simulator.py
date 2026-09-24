@@ -5,7 +5,7 @@ Purpose
 Binance, CoinGecko and the news APIs are all reachable from a normal machine but
 may be blocked in restricted sandboxes / CI.  When that happens the app must
 still be demonstrable end-to-end rather than sitting in "NO DATA -> forced
-HOLD" (degradation level 6).  ``MarketSimulator`` therefore synthesises a
+flat" (degradation level 6).  ``MarketSimulator`` therefore synthesises a
 *statistically plausible* BTC/PAXG tape: two correlated assets with a
 risk-on / risk-off regime that rotates capital between them, an order book with
 liquidity walls and cliffs, and occasional flash moves.

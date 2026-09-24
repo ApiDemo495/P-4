@@ -19,8 +19,14 @@ const state = {
   signal: null,
   formulas: {},
   liveFormulas: {},
+  liveReadings: {},
+  liveTraces: {},
+  formulaTraces: {},
+  formulaReadings: {},
   formulaMeta: [],
-  holdWarning: null,
+  selfTest: null,
+  openLogic: {},
+  convictionNote: null,
   emergency: null,
   emergencyUntil: 0,
   window: null,
@@ -132,7 +138,7 @@ function handle(msg) {
       if (d.signal) {
         state.signal = d.signal;
         state.lockState = d.signal.lock_state || "LOCKED";
-        state.holdWarning = d.hold_warning;
+        state.convictionNote = d.conviction_note || null;
       }
       state.formulas = d.formulas || {};
       syncClock();
@@ -154,8 +160,10 @@ function handle(msg) {
       const previous = state.lastPrediction;
       state.signal = msg.data;
       state.lockState = msg.data.lock_state || "LOCKED";
-      state.holdWarning = msg.data.hold_warning || null;
+      state.convictionNote = msg.data.conviction_note || null;
       state.formulas = msg.data.formulas || {};
+      state.formulaReadings = msg.data.readings || {};
+      state.formulaTraces = msg.data.traces || {};
       anchorWindow(msg.data.window);
       renderSignal();
       // Haptics + a flash when the direction actually changes: the user should
@@ -176,6 +184,8 @@ function handle(msg) {
     }
     case "FORMULA_UPDATE": {
       state.liveFormulas = msg.data.formulas || {};
+      state.liveReadings = msg.data.readings || {};
+      state.liveTraces = msg.data.traces || {};
       $("live-note").textContent = "live values " + (msg.data.note || "");
       renderFormulas();
       refreshTimings();
@@ -187,7 +197,7 @@ function handle(msg) {
       if (msg.data.signal) {
         state.signal = msg.data.signal;
         state.lockState = "EMERGENCY_OVERRIDE";
-        state.holdWarning = msg.data.signal.hold_warning || null;
+        state.convictionNote = msg.data.signal.conviction_note || null;
       }
       renderEmergency();
       renderSignal();
@@ -244,8 +254,10 @@ async function syncClock() {
     const current = await getJSON("/api/signal/current");
     if (current?.signal) {
       state.signal = current.signal;
-      state.holdWarning = current.hold_warning;
+      state.convictionNote = current.conviction_note || null;
       state.formulas = current.signal.formulas || {};
+      state.formulaReadings = current.signal.readings || {};
+      state.formulaTraces = current.signal.traces || {};
     }
   }
   renderAssetToggle();
@@ -405,7 +417,7 @@ function renderSignal() {
     if ($("signal-cycle-badge")) $("signal-cycle-badge").textContent = "cycle —";
     if ($("signal-frozen")) $("signal-frozen").textContent = "";
     renderWidgetPanel();
-    renderHoldBox();
+    renderConvictionBox();
     return;
   }
 
@@ -417,7 +429,7 @@ function renderSignal() {
   if ($("signal-icon")) $("signal-icon").textContent = s.lock_icon || (s.is_emergency_override ? "⚡" : "🔒");
   if ($("signal-note")) {
     $("signal-note").textContent = s.is_emergency_override
-      ? "emergency override — forced HOLD"
+      ? "emergency override — exit side locked in"
       : "locked for this window";
   }
   if ($("signal-cycle-badge")) $("signal-cycle-badge").textContent = `cycle ${s.cycle_number}`;
@@ -431,7 +443,7 @@ function renderSignal() {
   const bar = $("confidence-bar");
   if (bar) {
     bar.style.width = `${Math.round((s.confidence || 0) * 100)}%`;
-    bar.className = "bar-fill " + (s.signal === "BUY" ? "" : s.signal === "SELL" ? "neg" : "neutral");
+    bar.className = "bar-fill " + (s.signal === "BUY" ? "" : "neg");
   }
   if ($("reasoning")) $("reasoning").textContent = s.reasoning || "";
 
@@ -443,16 +455,21 @@ function renderSignal() {
       : `window #${s.cycle_number}`;
   }
 
-  const hw = $("hold-warning");
+  // The conviction note replaces the old HOLD box: same slot, but it always
+  // names a side and says how much size to give it.
+  const hw = $("conviction-note");
   if (hw) {
-    if (s.signal === "HOLD" && state.holdWarning) {
+    const note = state.convictionNote || s.conviction_note;
+    if (note && note.visible !== false) {
       hw.classList.remove("hidden");
-      $("hw-text").textContent = `“${state.holdWarning.text}”`;
-      const lean = state.holdWarning.lean;
-      $("hw-lean").textContent = lean
-        ? `Lean direction: ${lean} (score ${fmtSigned(state.holdWarning.lean_score)}, ` +
-          `confidence ${fmtPct(state.holdWarning.confidence)})`
-        : "No directional lean this window.";
+      $("hw-text").textContent = `“${note.text}”`;
+      const bits = [];
+      if (note.direction) bits.push(`side ${note.direction}`);
+      if (note.conviction) bits.push(`conviction ${note.conviction}`);
+      if (typeof note.edge === "number") bits.push(`edge ${fmtSigned(note.edge, 2)}`);
+      bits.push(`confidence ${fmtPct(note.confidence || s.confidence || 0)}`);
+      if (note.source) bits.push(note.source);
+      $("hw-lean").textContent = bits.join(" · ");
     } else {
       hw.classList.add("hidden");
     }
@@ -461,12 +478,12 @@ function renderSignal() {
   renderHedge(s);
   renderNews(s);
   renderWidgetPanel();
-  renderHoldBox();
+  renderConvictionBox();
   if ($("price")) $("price").textContent = fmtMoney(s.price);
 }
 
 /* ============================ WIDGET PANEL ==============================
-   Row 1: prediction | countdown (1-60) | HOLD / wait box
+   Row 1: prediction | countdown (1-60) | signal + conviction box
    Row 2: take profit & stop loss | prediction accuracy
    ======================================================================== */
 function renderWidgetPanel() {
@@ -544,38 +561,42 @@ function renderWidgetPanel() {
   $("w-engine").textContent = `${engine}${state.window?.pipeline ? " · pipelined" : ""}`;
 }
 
-/* The HOLD / wait box: small, inline, glittering - never an overlay.
-   The state class is `override` (scoped as `.hold-box.override`).  It must not
-   be called `emergency`: that bare name used to match a leftover full-screen
-   rule in styles.css and stretched this box over the whole viewport. */
-function renderHoldBox() {
+/* The conviction box: the signal, its conviction and the size it implies.
+   Every window is BUY or SELL - there is no third state to wait on - so this
+   box explains *how much* to trust the side rather than whether to trade.
+   It is small and inline: never an overlay.  The state class is `override`
+   (scoped as `.hold-box.override`).  It must not be called `emergency`: that
+   bare name used to match a leftover full-screen rule in styles.css and
+   stretched this box over the whole viewport. */
+function renderConvictionBox() {
   const box = $("w-hold");
   if (!box) return;
   const s = state.signal;
   const emergency = (state.emergencyUntil > Date.now()) || (s && s.is_emergency_override);
-  const hold = s && s.signal === "HOLD";
-  const warning = state.holdWarning;
+  const conviction = s?.conviction || "—";
+  const note = state.convictionNote || s?.conviction_note;
 
   box.classList.remove("override", "neutral");
   if (emergency) {
     box.classList.add("override");
-    $("w-hold-title").textContent = "⚡ HOLD";
+    const exit = s?.signal ? `${s.signal}` : "—";
+    $("w-hold-title").textContent = `⚡ EXIT → ${exit}`;
     const headline = state.emergency?.headline || s?.emergency_headline || s?.reasoning || "";
-    $("w-hold-text").textContent = "Emergency override — the signal is forced to HOLD. Exit any open position.";
+    $("w-hold-text").textContent = s?.closed_signal
+      ? `${s.signal} closes the open ${s.closed_signal}: emergency override, flat is the only safe state.`
+      : "Emergency override. Exit any open position now.";
     $("w-hold-meta").textContent = headline ? `“${headline}”` : "";
-  } else if (hold) {
-    $("w-hold-title").textContent = "HOLD";
-    $("w-hold-text").textContent = warning?.text
-      || s?.reasoning
-      || "No directional edge strong enough to trade.";
-    $("w-hold-meta").textContent = warning?.lean
-      ? `lean ${warning.lean} ${fmtSigned(warning.lean_score || 0)} · conf ${fmtPct(warning.confidence || 0)}`
-      : "wait for the next window";
   } else if (s) {
     box.classList.add("neutral");
-    $("w-hold-title").textContent = s.signal;
-    $("w-hold-text").textContent = `${s.signal} is live — take profit and stop loss are on the left.`;
-    $("w-hold-meta").textContent = "the hold box lights up when the engine is flat";
+    $("w-hold-title").textContent = `${s.signal} · ${conviction}`;
+    $("w-hold-text").textContent = note?.text
+      || s.direction_reason
+      || `${s.signal} is live (${String(conviction).toLowerCase()} conviction) — levels are on the left.`;
+    $("w-hold-meta").textContent = [
+      s.direction_source ? `why: ${s.direction_source}` : null,
+      s.edge !== undefined ? `edge ${fmtSigned(s.edge || 0, 2)}` : null,
+      `confidence ${fmtPct(s.confidence || 0)}`,
+    ].filter(Boolean).join(" · ");
   } else {
     box.classList.add("neutral");
     $("w-hold-title").textContent = "…";
@@ -588,9 +609,10 @@ function renderHoldBox() {
   chip.classList.toggle("hidden", !emergency);
   if (emergency) {
     const headline = state.emergency?.headline || s?.emergency_headline || "";
+    const exit = s?.signal ? `exit ${s.signal}` : "exit the position";
     $("w-emergency-text").textContent = headline
-      ? `emergency override — forced HOLD: “${headline}”`
-      : "emergency override — forced HOLD";
+      ? `emergency override — ${exit}: “${headline}”`
+      : `emergency override — ${exit}`;
   }
 }
 
@@ -674,7 +696,7 @@ async function refreshAgents() {
       if (a && a.decision) decision = `${a.decision} (${fmtPct(a.confidence ?? 0)})`;
       else if (a && a.error) decision = a.error.slice(0, 40);
     } else if (s && row.key === "drosophila") {
-      decision = s.signal === "HOLD" ? "HOLD" : `${s.signal} (${fmtPct(s.ccs_confidence)})`;
+      decision = `${s.signal} (${fmtPct(s.ccs_confidence)}) · ${s.conviction || "—"}`;
     }
     const li = document.createElement("li");
     li.innerHTML =
@@ -801,7 +823,7 @@ async function refreshOutcomes() {
   (data.rows || []).slice().reverse().slice(0, 8).forEach((row) => {
     const li = document.createElement("li");
     li.innerHTML =
-      `<span class="${row.outcome > 0 ? "sig-BUY" : row.outcome < 0 ? "sig-SELL" : "sig-HOLD"}">` +
+      `<span class="${row.outcome > 0 ? "sig-BUY" : row.outcome < 0 ? "sig-SELL" : "sig-neutral"}">` +
       `${row.outcome > 0 ? "WIN" : row.outcome < 0 ? "LOSS" : "FLAT"}</span>` +
       `<span style="flex:1">${fmtSigned(row.pnl_bps, 1)} bps</span>`;
     list.appendChild(li);
@@ -826,10 +848,39 @@ async function loadFormulaMeta() {
   renderFormulas();
 }
 
+/* The self-test answers "do the 22 formulas do what they claim?".  It is the
+   audit trail behind the numbers, so it is loaded once and shown per formula. */
+async function loadSelfTest() {
+  const data = await getJSON("/api/formulas/self-test");
+  if (!data) return;
+  state.selfTest = data;
+  renderFormulas();
+}
+
+function selfTestVerdict(name) {
+  const list = state.selfTest?.formulas;
+  if (!Array.isArray(list)) return null;
+  return list.find((f) => f.name === name) || null;
+}
+
+async function refreshLiveFormulas() {
+  const data = await getJSON("/api/formulas/live");
+  if (!data) return;
+  state.liveFormulas = data.formulas || {};
+  state.liveReadings = data.readings || {};
+  state.liveTraces = data.traces || {};
+  renderFormulas();
+}
+
 function renderFormulas() {
   const container = $("formula-explorer");
-  const values = Object.keys(state.liveFormulas).length ? state.liveFormulas : state.formulas;
+  const live = Object.keys(state.liveFormulas).length > 0;
+  const values = live ? state.liveFormulas : state.formulas;
+  const readings = live ? state.liveReadings : state.formulaReadings;
+  const traces = live ? state.liveTraces : state.formulaTraces;
   if (!state.formulaMeta.length) return;
+  state.readings = readings;
+  state.traces = traces;
 
   container.innerHTML = "";
   state.formulaMeta.forEach((cat) => {
@@ -848,7 +899,7 @@ function renderFormulas() {
       body.className = "category-body";
       cat.formulas.forEach((f) => {
         const v = values[f.name];
-        body.appendChild(formulaRow(f.name, v, f.description, f));
+        body.appendChild(formulaRow(f.name, v, f.description, f, readings, traces));
       });
       container.appendChild(wrap);
       wrap.appendChild(body);
@@ -864,13 +915,16 @@ function renderFormulas() {
       `<span class="count">modulates the brain, not a market signal</span></div>`;
     const body = document.createElement("div");
     body.className = "category-body";
-    body.appendChild(formulaRow("DRG", values.DRG, state.rewardMeta.description, state.rewardMeta));
+    body.appendChild(
+      formulaRow("DRG", values.DRG, state.rewardMeta.description, state.rewardMeta,
+        readings, traces)
+    );
     wrap.appendChild(body);
     container.appendChild(wrap);
   }
 }
 
-function formulaRow(name, value, description, meta) {
+function formulaRow(name, value, description, meta, readings = {}, traces = {}) {
   const row = document.createElement("div");
   const known = typeof value === "number";
   const v = known ? value : 0;
@@ -879,6 +933,17 @@ function formulaRow(name, value, description, meta) {
   else if (v < -0.15) { posClass = "neg"; fillClass = "fill-neg"; }
   const width = Math.min(50, Math.abs(v) * 50);
 
+  const logic = meta?.logic || null;
+  const verdict = selfTestVerdict(name);
+  const open = !!state.openLogic[name];
+  const reading = readings[name] || logic?.reading || "";
+
+  const verdictChip = verdict
+    ? `<span class="verdict ${verdict.passed ? "pass" : "fail"}" ` +
+      `title="${escapeHtml(verdict.claim + " — " + verdict.detail)}">` +
+      `${verdict.passed ? "✔ self-test" : "✘ self-test"}</span>`
+    : "";
+
   const html =
     `<div class="formula-row">` +
     `  <div class="formula-name" title="${escapeHtml(meta?.brain_node || "")}">${name}</div>` +
@@ -886,10 +951,75 @@ function formulaRow(name, value, description, meta) {
     `    <div class="fill ${fillClass}" style="${v >= 0 ? "left:50%" : `right:50%`};width:${width}%"></div>` +
     `  </div>` +
     `  <div class="formula-value ${posClass}">${known ? fmtSigned(v, 3) : "—"}</div>` +
+    `  <div class="formula-head">` +
+    `    <span class="formula-reading">${escapeHtml(reading)}</span>` +
+    `    ${verdictChip}` +
+    `    <button class="logic-toggle" type="button">${open ? "▾ hide logic" : "▸ logic"}</button>` +
+    `  </div>` +
     (state.explain && description ? `<div class="formula-desc">${escapeHtml(description)}</div>` : "") +
+    (open ? logicBlock(name, logic, verdict, traces[name]) : "") +
     `</div>`;
   row.innerHTML = html;
+  const toggle = row.querySelector(".logic-toggle");
+  if (toggle) {
+    toggle.onclick = () => {
+      state.openLogic[name] = !state.openLogic[name];
+      renderFormulas();
+    };
+  }
   return row;
+}
+
+/* The logic panel: the equation, the steps the code actually performs, how to
+   read the value, and - the point of the whole thing - the intermediate
+   numbers the formula recorded while computing tonight's number. */
+function logicBlock(name, logic, verdict, trace) {
+  if (!logic) {
+    return `<div class="logic-block"><div class="muted">No logic entry for ${escapeHtml(name)}.</div></div>`;
+  }
+  const steps = (logic.steps || [])
+    .map((step, index) => `<li><span class="step-no">${index + 1}</span>${escapeHtml(step)}</li>`)
+    .join("");
+  const bands = (logic.bands || [])
+    .map((band) => `<li><code>${band.lo}</code> → <code>${band.hi}</code> : ${escapeHtml(band.text)}</li>`)
+    .join("");
+  const traceRows = (trace || [])
+    .map((item) => {
+      const value = typeof item.value === "number"
+        ? Math.abs(item.value) < 1e-4 && item.value !== 0
+          ? item.value.toExponential(3)
+          : item.value.toFixed(4)
+        : escapeHtml(String(item.value));
+      return `<li><span class="trace-label">${escapeHtml(item.label)}</span>` +
+        `<b>${value}</b><span class="trace-unit">${escapeHtml(item.unit || "")}</span></li>`;
+    })
+    .join("");
+  const reads = (logic.reads || []).map((r) => `<code>${escapeHtml(r)}</code>`).join(" ");
+
+  return (
+    `<div class="logic-block">` +
+    `  <div class="logic-expression"><code>${escapeHtml(logic.expression)}</code></div>` +
+    `  <div class="logic-reads muted">reads: ${reads}</div>` +
+    `  <div class="logic-cols">` +
+    `    <div><div class="logic-h">How it is computed</div><ol class="logic-steps">${steps}</ol></div>` +
+    `    <div><div class="logic-h">How to read the value</div><ul class="logic-bands">${bands}</ul>` +
+    `      <div class="logic-sign">${escapeHtml(logic.sign || "")}</div>` +
+    (logic.why ? `<div class="logic-why muted">${escapeHtml(logic.why)}</div>` : "") +
+    `    </div>` +
+    `  </div>` +
+    (traceRows
+      ? `<div class="logic-h">Numbers behind this window</div><ul class="logic-trace">${traceRows}</ul>`
+      : `<div class="logic-h">Numbers behind this window</div>` +
+        `<div class="muted">not computed yet — they appear after the first live pass</div>`) +
+    (verdict
+      ? `<div class="logic-verdict ${verdict.passed ? "pass" : "fail"}">` +
+        `<b>Self-test:</b> ${verdict.passed ? "PASS" : "FAIL"} — ${escapeHtml(verdict.claim)}. ` +
+        `BULL ${fmtSigned(verdict.observed.BULL, 3)} · BEAR ${fmtSigned(verdict.observed.BEAR, 3)} · ` +
+        `FLAT ${fmtSigned(verdict.observed.FLAT, 3)} · STRESS ${fmtSigned(verdict.observed.STRESS, 3)}.` +
+        `<br><span class="muted">${escapeHtml(verdict.detail)}</span></div>`
+      : "") +
+    `</div>`
+  );
 }
 
 function escapeHtml(text) {
@@ -899,7 +1029,7 @@ function escapeHtml(text) {
 
 /* ------------------------------------------------------------- emergency */
 /* The emergency path no longer takes over the screen: it lights the inline
-   HOLD box and a small chip under the prediction, both inside the page. */
+   conviction box and a small chip under the prediction, both inside the page. */
 function renderEmergency() {
   renderHoldBox();
 }
@@ -1101,6 +1231,8 @@ async function boot() {
   renderKeyStates();
   maybeShowSetupBanner();
   await loadFormulaMeta();
+  await loadSelfTest();
+  await refreshLiveFormulas();
   await syncClock();
   await refreshHistory();
   await refreshOutcomes();
@@ -1121,6 +1253,7 @@ async function boot() {
   setInterval(refreshOutcomes, 15000);
   setInterval(refreshBrainExplain, 10000);
   setInterval(renderEmergency, 1000);
+  setInterval(refreshLiveFormulas, 15000);
 }
 
 boot();

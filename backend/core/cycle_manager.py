@@ -16,7 +16,8 @@ The manager also owns:
 * the **outcome tracker** - 60 s after a signal fires, the result is evaluated
   and pushed into the DRG reward buffer
 * the **emergency path** - critical news events or a flash move override the
-  locked signal to HOLD for three cycles
+  locked signal to the *exit side* (the opposite of the direction that is open)
+  for three cycles; the protocol is binary, so "flat" is expressed as a flip
 * **queued asset switching** - toggling BTC/PAXG mid-cycle takes effect at the
   next boundary (test case 13)
 """
@@ -35,6 +36,7 @@ from backend.agents.orchestrator import AgentOrchestrator
 from backend.brain.brain import Brain
 from backend.core import config as cfg
 from backend.core.clock import WorldClock
+from backend.core.direction import describe as describe_direction
 from backend.core.errors import ComponentStatus, DegradationLevel
 from backend.core.frozen_snapshot import FrozenMarketSnapshot
 from backend.core.redis_bus import Store
@@ -62,9 +64,11 @@ class CycleStats:
     agent_ms: float = 0.0
     last_cycle_started: float = 0.0
     cycles_completed: int = 0
-    forced_holds: int = 0
+    forced_fallbacks: int = 0
+    """Windows whose side came from the tie-break ladder instead of a real edge."""
+    weak_windows: int = 0
     emergency_count: int = 0
-    signal_counts: dict = field(default_factory=lambda: {"BUY": 0, "SELL": 0, "HOLD": 0})
+    signal_counts: dict = field(default_factory=lambda: {"BUY": 0, "SELL": 0})
 
     def to_dict(self) -> dict:
         return {
@@ -73,10 +77,23 @@ class CycleStats:
             "lock_ms": round(self.lock_ms, 2),
             "formula_ms": round(self.formula_ms, 2),
             "agent_ms": round(self.agent_ms, 2),
-            "forced_holds": self.forced_holds,
+            "forced_fallbacks": self.forced_fallbacks,
+            "weak_windows": self.weak_windows,
             "emergency_count": self.emergency_count,
             "signal_counts": dict(self.signal_counts),
         }
+
+
+def _readings_for(result) -> dict:
+    """The plain-words interpretation of each value, or {} if unavailable."""
+    if result is None:
+        return {}
+    try:
+        from backend.formulas import logic as logic_module
+
+        return logic_module.readings(result.values)
+    except Exception:  # pragma: no cover - defensive
+        return {}
 
 
 class CycleManager:
@@ -107,8 +124,13 @@ class CycleManager:
         #: always describe what the user is actually looking at.
         self.last_formula_result: FormulaResult | None = None
         self.last_live_formulas: dict[str, float] = {}
+        #: The pass those live values came from, so the explorer can show the
+        #: intermediate numbers (traces) behind each one, not just the value.
+        self.last_live_result: FormulaResult | None = None
         self.last_fusion: dict = {}
-        self.hold_warning: dict | None = None
+        #: The "thin edge" note (replaces the Section 10.2 HOLD box).  Present
+        #: only when the side came from the tie-break ladder.
+        self.conviction_note: dict | None = None
 
         # --- pipelined publication (Sections 10.4) ----------------------
         self._pending_signal: FrozenSignal | None = None
@@ -384,16 +406,26 @@ class CycleManager:
         boundary*, not at prefetch time, because that is the price the user is
         trading from.
         """
+        from backend.core.direction import opposite
+
         period = self.settings.cycle_period_seconds
         price = self.market.last_price(self.asset) or draft.price
         emergency = self.lock.emergency_active()
+        exit_side = opposite(draft.signal)
+        signal_for_levels = draft.signal
+        if emergency and exit_side:
+            # An emergency that fires between prefetch and publication: the
+            # frozen draft direction is replaced by the side that flattens it.
+            signal_for_levels = exit_side
         risk = risk_levels(
             self.asset,
-            "HOLD" if emergency else draft.signal,
+            signal_for_levels,
             price,
             self._pending_vol_bps,
             self.settings,
             horizon_seconds=period,
+            conviction="HIGH" if (emergency and exit_side) else draft.conviction,
+            emergency_exit=bool(emergency and exit_side),
         )
         signal = draft._replace(
             cycle_number=cycle,
@@ -408,19 +440,44 @@ class CycleManager:
         )
         if emergency and not signal.is_emergency_override:
             # The override may have fired while the signal was being prepared.
+            # Binary protocol: the exit side flattens the direction that was
+            # about to be published (see backend.core.direction).
             previous = signal.signal
+            flipped = exit_side or previous
             signal = signal._replace(
-                signal="HOLD",
+                signal=flipped,
                 confidence=1.0,
                 is_emergency_override=True,
                 lock_state=LockState.EMERGENCY_OVERRIDE.value,
                 superseded_by=previous,
-                hold_lean=previous if previous in ("BUY", "SELL") else None,
+                conviction="HIGH" if exit_side else "LOW",
+                weak=exit_side is None,
+                direction_source=(
+                    f"emergency exit of the open {previous}" if exit_side
+                    else "emergency with nothing open - direction unchanged"
+                ),
+                direction_reason=(
+                    f"{flipped} closes the open {previous}: emergency exit, flat is the only safe state."
+                    if exit_side
+                    else f"⚡ emergency on a flat book: keep {flipped} but trade it small."
+                ),
+                closed_signal=previous if exit_side else None,
                 emergency_headline=str(
                     (self.lock.emergency_event or {}).get("headline", "")
                 ),
             )
         return signal
+
+    def _previous_direction(self) -> str | None:
+        """The direction of the window before this one, for the tie-break ladder."""
+        current = self.lock.current_signal
+        if current is not None and current.signal in ("BUY", "SELL"):
+            return current.signal
+        if self.lock.history:
+            for past in reversed(self.lock.history):
+                if past.signal in ("BUY", "SELL"):
+                    return past.signal
+        return None
 
     async def _prefetch(self, publish_deadline_wall: float) -> None:
         """Compute the signal for the next window - during this one."""
@@ -433,6 +490,7 @@ class CycleManager:
         formula_result = self.formulas.run(snapshot, self.asset)
         self.pending_formula_result = formula_result
         self.last_live_formulas = dict(formula_result.values)
+        self.last_live_result = formula_result
 
         context = self._agent_context(snapshot, formula_result)
         agent_results = await self.agents.run_all(context)
@@ -455,13 +513,10 @@ class CycleManager:
             warnings=warnings,
             insufficient_evidence=formula_result.insufficient_evidence,
             emergency=self.lock.emergency_active(),
+            previous_signal=self._previous_direction(),
         )
         self.last_fusion = fusion.to_dict()
-        self.hold_warning = (
-            fusion_module.hold_warning(fusion.score, fusion.lean, fusion.confidence)
-            if fusion.decision == "HOLD"
-            else None
-        )
+        self.conviction_note = fusion_module.conviction_note(fusion.direction, fusion.confidence)
         self.warnings = warnings
         self.degradation = self._compute_degradation(snapshot)
 
@@ -553,6 +608,7 @@ class CycleManager:
         formula_result = self.formulas.run(snapshot, self.asset)
         self.last_formula_result = formula_result
         self.last_live_formulas = dict(formula_result.values)
+        self.last_live_result = formula_result
         self.stats.formula_ms = formula_result.total_ms
 
         if formula_result.insufficient_evidence:
@@ -579,13 +635,10 @@ class CycleManager:
             warnings=self.warnings,
             insufficient_evidence=formula_result.insufficient_evidence,
             emergency=self.lock.emergency_active(),
+            previous_signal=self._previous_direction(),
         )
         self.last_fusion = fusion.to_dict()
-
-        if fusion.decision == "HOLD":
-            self.hold_warning = fusion_module.hold_warning(fusion.score, fusion.lean, fusion.confidence)
-        else:
-            self.hold_warning = None
+        self.conviction_note = fusion_module.conviction_note(fusion.direction, fusion.confidence)
 
         signal = self._build_frozen_signal(snapshot, formula_result, agent_results, fusion, context)
         self._pending_vol_bps = realized_volatility_bps(snapshot, self.asset)
@@ -624,7 +677,9 @@ class CycleManager:
         self.stats.cycles_completed += 1
         self.stats.signal_counts[locked.signal] = self.stats.signal_counts.get(locked.signal, 0) + 1
         if fusion.forced_reason:
-            self.stats.forced_holds += 1
+            self.stats.forced_fallbacks += 1
+        if fusion.weak:
+            self.stats.weak_windows += 1
 
         await self.broadcast({"type": "SIGNAL", "data": self.signal_payload(locked)})
         self._schedule_outcome(locked, snapshot)
@@ -723,7 +778,14 @@ class CycleManager:
             is_emergency_override=emergency,
             ccs_value=float(f.get("CCSv2", 0.0)),
             ccs_confidence=float(formula_result.ccs_confidence),
-            hold_lean=fusion.lean,
+            conviction=fusion.conviction,
+            weak=bool(fusion.weak),
+            direction_source=fusion.direction_source,
+            direction_reason=describe_direction(fusion.direction, fusion.confidence)
+            if fusion.direction
+            else "",
+            edge=float(fusion.edge),
+            closed_signal=fusion.direction.closed_signal if fusion.direction else None,
             hedge=tuple(sorted(hedge.items())),
             news=tuple(sorted(news_block.items())),
             drg=float(f.get("DRG", 0.0)),
@@ -765,6 +827,10 @@ class CycleManager:
                             if self.lock.current_signal
                             else None,
                             "formulas": self.last_live_formulas,
+                            "readings": _readings_for(self.last_live_result),
+                            "traces": self.last_live_result.traces
+                            if self.last_live_result is not None
+                            else {},
                         },
                     }
                 )
@@ -782,6 +848,9 @@ class CycleManager:
     async def trigger_emergency(self, event: CriticalEvent | dict) -> dict:
         payload = event.to_dict() if isinstance(event, CriticalEvent) else dict(event)
         previous = self.lock.current_signal.signal if self.lock.current_signal else "COMPUTING"
+        from backend.core.direction import opposite as _opposite
+
+        exit_side = _opposite(previous)
         overridden = self.lock.emergency_override(
             payload,
             duration_seconds=self.settings.scaled(self.settings.emergency_duration_seconds),
@@ -798,7 +867,9 @@ class CycleManager:
                 "severity": payload.get("severity", "CRITICAL"),
                 "reason": payload.get("reason", ""),
                 "previous_signal": previous,
-                "overridden_to": "HOLD",
+                "overridden_to": overridden.signal,
+                "exit_side": exit_side,
+                "closes_position": exit_side is not None,
                 "emergency_duration_seconds": self.settings.scaled(
                     self.settings.emergency_duration_seconds
                 ),
@@ -833,8 +904,10 @@ class CycleManager:
     # Outcome tracking (Appendix B) - feeds the DRG reward signal
     # ==================================================================
     def _schedule_outcome(self, signal: FrozenSignal, snapshot: FrozenMarketSnapshot) -> None:
-        if signal.signal == "HOLD":
-            self.outcomes.append(0.0, 0.0)
+        if signal.signal not in ("BUY", "SELL"):
+            # Cannot happen any more (the protocol is binary), but an unknown
+            # direction must never be scored as a win or a loss.
+            log.warning("outcome skipped: unknown signal %r", signal.signal)
             return
         task = asyncio.create_task(self._evaluate_outcome(signal, snapshot))
         self._outcome_tasks.add(task)
@@ -919,13 +992,21 @@ class CycleManager:
                 "valid_until": window["valid_until"],
                 "window_seconds": window["window_seconds"],
                 "seconds_remaining": window["seconds_remaining"],
-                "hold_warning": None,
+                "conviction_note": None,
                 "fusion": self.last_fusion,
                 "pending_asset": self.pending_asset,
                 "window": window,
             }
         payload = current.to_dict()
-        payload["hold_warning"] = self.hold_warning if current.signal == "HOLD" else None
+        payload["conviction_note"] = self.conviction_note
+        # The per-formula provenance of the *locked* values: what each number
+        # means (reading) and the intermediate arithmetic behind it (trace).
+        # `last_formula_result` is documented as the pass behind the locked
+        # signal, so the explorer can show it without a second computation.
+        locked_result = self.last_formula_result
+        if locked_result is not None:
+            payload["readings"] = _readings_for(locked_result)
+            payload["traces"] = locked_result.traces
         payload["fusion"] = self.last_fusion
         payload["pending_asset"] = self.pending_asset
         payload["window"] = window

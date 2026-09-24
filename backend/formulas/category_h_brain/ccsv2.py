@@ -81,6 +81,16 @@ def prepare(snapshot, asset: str, state: State, params: dict, ctx: dict) -> gc.A
 
     trace = conv.propagate(_vector_from_ctx(ctx), drg=drg, hsi=hsi)
 
+    # --- resting-baseline calibration (Deviation 22-A, SPEC_NOTES.md) -----
+    # The Kenyon Cells drive the neutral MBON on the rectified (bullish) side
+    # only, so with *no inputs at all* this circuit still reports a positive
+    # lateral-horn imbalance.  Subtracting the read-out of the zero vector
+    # removes that resting bias and makes the score sign-symmetric: the same
+    # ensemble conviction bullish and bearish now produce equal magnitudes.
+    resting = conv.propagate(np.zeros(len(FORMULA_ORDER), dtype=np.float64), drg=drg, hsi=hsi)
+    resting_balance = float(resting.lh_approach - resting.lh_avoid)
+    trace.resting_balance = resting_balance  # surfaced through the brain trace
+
     # KCAE is measured on the Kenyon Cell *drive* (see the |a|^2 note below).
     kcae_value = kcae_formula.from_activations(trace.kc_drive)
     trace.kcae = kcae_value
@@ -107,6 +117,8 @@ def prepare(snapshot, asset: str, state: State, params: dict, ctx: dict) -> gc.A
         "confidence_spec": confidence_spec,
         "decisiveness": margin,
         "neutral_share": abs(trace.lh_neutral) / denominator,
+        "resting_balance": resting_balance,
+        "balance_used": float(trace.lh_approach - trace.lh_avoid) - resting_balance,
     }
 
     state.trace = trace
@@ -131,7 +143,8 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     trace = state.trace
     if trace is None:
         return 0.0
-    score = np.tanh(trace.lh_approach - trace.lh_avoid)
+    balance = float(trace.lh_approach - trace.lh_avoid) - float(trace.resting_balance)
+    score = np.tanh(balance)
     # The score is computed here rather than in ``prepare``, so publish it on the
     # trace as well: /api/brain/trace and the matrix viewer must show the same
     # CCSv2 value the signal was built from.

@@ -7,15 +7,15 @@ private internals:
     E01  cold start      - first cycle locks a signal within one cycle
     E02  immutability    - the locked signal cannot change mid-cycle
     E03  isolation       - one broken formula cannot kill the pass
-    E04  evidence gate   - 11+ zero formulas force HOLD
-    E05  emergency       - critical news overrides to HOLD (never BUY/SELL)
+    E04  evidence gate   - 11+ zero formulas keep the side but drop conviction
+    E05  emergency       - critical news forces the exit side (never HOLD)
     E06  trust gate      - only Tier <=2 critical headlines can break a lock
     E07  brain fallback  - committed 80x80 matrix keeps the brain healthy
     E08  degradation     - levels 1-6 map to real component failures
     E09  local model     - GGUF/ONNX validation + stub-mode usability
     E10  agents          - key tests fail safe and never block a cycle
     E11  asset switch    - BTC -> PAXG takes effect at a cycle boundary
-    E12  hedge stress    - HSI > 0.8 dampens confidence and forces HOLD
+    E12  hedge stress    - HSI > 0.8 dampens confidence and conviction
     E13  outcomes        - locked signals are scored and feed DRG
 
 Run with:  PYTHONPATH=. python -m pytest backend/tests -q
@@ -112,7 +112,8 @@ async def test_e01_cold_start_locks_a_complete_signal(manager: CycleManager):
 
     assert data["lock_state"] == "LOCKED"
     assert data["lock_icon"] == "\U0001f512"          # padlock - not the hourglass
-    assert data["signal"] in {"BUY", "SELL", "HOLD"}
+    # Round E: the third state is gone - a locked signal is always executable
+    assert data["signal"] in {"BUY", "SELL"}
     assert 0.0 <= data["confidence"] <= 0.95
     assert data["cycle_number"] >= 1
     assert data["price"] > 0
@@ -128,8 +129,12 @@ async def test_e01_cold_start_locks_a_complete_signal(manager: CycleManager):
     assert data["total_ms"] < 50.0
 
     # the payload the UI binds to (Section 11)
-    for key in ("hedge", "news", "agents", "hold_warning", "ccs_value", "warnings"):
+    for key in ("hedge", "news", "agents", "conviction_note", "ccs_value", "warnings"):
         assert key in data, key
+    assert "hold_warning" not in data
+    # ... and the payload explains *which side* won and how much it is trusted
+    assert data["conviction"] in {"HIGH", "MEDIUM", "LOW"}
+    assert data["direction_source"]
 
 
 # ---------------------------------------------------------------------------
@@ -217,11 +222,11 @@ async def test_e03_broken_formula_is_isolated(manager: CycleManager):
 
 
 # ---------------------------------------------------------------------------
-# E04 - insufficient evidence forces HOLD
+# E04 - insufficient evidence keeps the side and drops the conviction
 # ---------------------------------------------------------------------------
 
 
-def test_e04_insufficient_evidence_forces_hold():
+def test_e04_insufficient_evidence_keeps_side_low_conviction():
     result = FormulaResult(asset="BTC")
     for index, name in enumerate(FORMULA_NAMES):
         result.values[name] = 0.0 if index < 11 else 0.4
@@ -241,9 +246,17 @@ def test_e04_insufficient_evidence_forces_hold():
         settings=cfg.SETTINGS,
         insufficient_evidence=True,
     )
-    assert forced.decision == "HOLD"
-    assert forced.confidence == 0.5
-    assert "Insufficient" in forced.forced_reason
+    # The evidence gate no longer silences the engine: it names the side the
+    # brain points at, flags it as weak, and reports LOW conviction so the UI
+    # can size it down instead of printing nothing.
+    assert forced.decision in {"BUY", "SELL"}
+    assert forced.decision == "BUY"          # CCSv2 is +0.9 in this case
+    assert forced.forced_reason == "Insufficient formula evidence"
+    assert forced.direction is not None
+    assert forced.direction.conviction == "LOW"
+    assert forced.direction.weak is True
+    assert "degraded" in forced.direction.source.lower()
+    assert 0.0 <= forced.confidence <= 0.95
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +264,7 @@ def test_e04_insufficient_evidence_forces_hold():
 # ---------------------------------------------------------------------------
 
 
-async def test_e05_critical_event_overrides_lock_to_hold(manager: CycleManager):
+async def test_e05_critical_event_overrides_lock_to_exit_side(manager: CycleManager):
     manager.lock.clear_emergency()
     before = manager.lock.try_get_current()
     queue = manager.subscribe()
@@ -269,22 +282,36 @@ async def test_e05_critical_event_overrides_lock_to_hold(manager: CycleManager):
     finally:
         manager.unsubscribe(queue)
 
-    assert payload["overridden_to"] == "HOLD"
-    assert payload["previous_signal"] == (before.signal if before else "COMPUTING")
+    previous = before.signal if before else None
+    # In a two-state system "get flat" is expressed as the *opposite* side of
+    # whatever is open; with nothing open the engine keeps its direction.
+    expected = {"BUY": "SELL", "SELL": "BUY"}.get(previous, previous or "BUY")
+    assert payload["overridden_to"] in {"BUY", "SELL"}
+    assert payload["overridden_to"] == expected
+    assert payload["previous_signal"] == (previous or "COMPUTING")
     assert message["data"]["headline"] == payload["headline"]
 
     current = manager.lock.get_current()
-    assert current.signal == "HOLD"
+    assert current.signal in {"BUY", "SELL"}
+    assert current.signal == expected
     assert current.is_emergency_override is True
     assert current.lock_state == "EMERGENCY_OVERRIDE"
     assert current.superseded_by == payload["previous_signal"]
     assert current.confidence == 1.0
-    assert current.hold_lean in ("BUY", "SELL", None)
+    assert current.conviction == "HIGH"
+    assert current.direction_reason
 
     wire = payload["signal"]
     assert wire["lock_icon"] == "\u26a1"
     assert wire["is_emergency_override"] is True
-    assert wire["signal"] == "HOLD"
+    assert wire["signal"] in {"BUY", "SELL"}
+    # the broadcast names the exit side explicitly, so a two-state signal can
+    # still say "this closes the position you are in"
+    if previous in {"BUY", "SELL"}:
+        assert message["data"]["exit_side"] == expected
+        assert message["data"]["closes_position"] is True
+    else:
+        assert message["data"]["closes_position"] is False
 
     # expiration semantics: the override is bounded, not permanent
     assert manager.lock.emergency_remaining() > 0
@@ -398,7 +425,7 @@ def test_e08_degradation_ladder(manager: CycleManager):
         assert manager._compute_degradation(snapshot) >= DegradationLevel.NO_AGENTS
     assert manager.agents.local.ready is True  # the live stub is back
 
-    # no market data at all -> level 6, and the fusion layer forces HOLD
+    # no market data at all -> level 6, and the fusion layer still names a side
     class DeadSnapshot:
         def tick_count(self, _asset: str) -> int:
             return 0
@@ -412,7 +439,8 @@ def test_e08_degradation_ladder(manager: CycleManager):
         settings=cfg.SETTINGS,
         insufficient_evidence=True,
     )
-    assert forced.decision == "HOLD"
+    assert forced.decision in {"BUY", "SELL"}
+    assert forced.direction is not None and forced.direction.weak is True
 
 
 # ---------------------------------------------------------------------------
@@ -472,7 +500,7 @@ async def test_e09_local_model_validation_and_stub(tmp_path: Path):
     }
     decision = await agent.decide(context, 0.2)
     assert decision.status.value == "STUB"
-    assert decision.decision in {"BUY", "SELL", "HOLD"}
+    assert decision.decision in {"BUY", "SELL"}
     assert 0.0 <= float(decision.confidence) <= 1.0
     agent.unload()
 
@@ -507,7 +535,7 @@ async def test_e10_agent_key_tests_fail_safe(manager: CycleManager):
     finally:
         manager.unsubscribe(queue)
     assert data["agents"]["local"]["status"] == "STUB"
-    assert data["agents"]["local"]["decision"] in {"BUY", "SELL", "HOLD", None}
+    assert data["agents"]["local"]["decision"] in {"BUY", "SELL", None}
     assert data["agents"]["gemini"]["decision"] is None
 
 
@@ -557,7 +585,7 @@ async def test_e11_asset_switch_takes_effect_at_the_cycle_boundary(manager: Cycl
 # ---------------------------------------------------------------------------
 
 
-def test_e12_hedge_stress_dampens_confidence_and_forces_hold():
+def test_e12_hedge_stress_dampens_confidence_and_conviction():
     calm = fusion_module.fuse(
         agents={}, ccs_value=0.8, ccs_confidence=0.6, hsi=0.10, settings=cfg.SETTINGS
     )
@@ -570,14 +598,18 @@ def test_e12_hedge_stress_dampens_confidence_and_forces_hold():
 
     assert stressed.hsi_adjustment == pytest.approx(cfg.SETTINGS.hsi_confidence_floor)
     assert stressed.confidence < calm.confidence
-    assert stressed.decision == "HOLD"
+    # The hedge breakdown dampens the *trust* in the signal, not its existence:
+    # the side is unchanged and the conviction drops instead of becoming HOLD.
+    assert stressed.decision == "BUY"
+    assert stressed.direction.conviction != "HIGH"
+    assert calm.direction.conviction == "HIGH"
     assert "above the" in stressed.reasoning
 
-    warning = fusion_module.hold_warning(stressed.score, "BUY", stressed.confidence)
-    assert warning["visible"] is True
-    assert "not as powerful as it should be" in warning["text"]
-    assert "proceed with caution" in warning["text"]
-    assert warning["lean"] == "BUY"
+    note = fusion_module.conviction_note(stressed.direction, stressed.confidence)
+    assert note is not None
+    assert note["conviction"] in {"LOW", "MEDIUM"}
+    assert note["direction"] == "BUY"
+    assert note["text"]
 
 
 # ---------------------------------------------------------------------------
@@ -636,15 +668,18 @@ async def test_e13_outcomes_are_scored_and_feed_drg(manager: CycleManager):
         abs(row[0] - 1.0) < 1e-9 and abs(row[1] - 20.0) < 1.0 for row in scored_rows
     ), scored_rows
 
-    # a HOLD is scored as neutral, not as a loss
+    # a weak fallback signal is still scored (there is no neutral state left)
     manager._schedule_outcome(
         FrozenSignal(
             cycle_number=999_002,
             timestamp="2026-01-01T00:00:00Z",
             asset="BTC",
-            signal="HOLD",
+            signal="SELL",
+            conviction="LOW",
+            weak=True,
+            direction_source="previous window",
             confidence=0.4,
-            reasoning="hold",
+            reasoning="weak sell from the tie-break ladder",
             formula_values=(),
             agent_results=(),
             is_emergency_override=False,

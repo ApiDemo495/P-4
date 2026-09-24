@@ -193,6 +193,41 @@ body {
 .fill-pos { background: linear-gradient(90deg, #15803d, var(--green)); }
 .fill-neg { background: linear-gradient(270deg, #b91c1c, var(--red)); }
 .formula-row.stale .formula-name { color: #7f8ea8; }
+/* The logic panel under a formula row: the equation, the steps, the reading
+   table and - the important part - the intermediate numbers the formula
+   recorded while it computed the value above.  Layout rail: it lives inside
+   the row, it never grows past the card, and it never overlays anything. */
+.formula-head { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 0 0 4px 74px; }
+.formula-reading { font-size: 11px; color: #9fb3d1; }
+.verdict { font-size: 10px; padding: 1px 7px; border-radius: 999px; border: 1px solid; }
+.verdict.pass { color: var(--green); border-color: #1d5c3a; background: #0e2018; }
+.verdict.fail { color: var(--red); border-color: #6b2020; background: #24100f; }
+.logic-toggle { margin-left: auto; background: #16203a; border: 1px solid #26365a; color: #b9cbea; font-size: 11px; border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+.logic-toggle:hover { background: #1d2b45; }
+.logic-block { grid-column: 1 / -1; margin: 2px 0 8px 74px; padding: 10px 12px; background: #0d1424; border: 1px solid var(--line); border-left: 3px solid #2f4d80; border-radius: 8px; }
+.logic-expression { font-size: 12px; margin-bottom: 4px; }
+.logic-expression code { color: #d7e6ff; background: transparent; font-family: var(--mono); }
+.logic-reads { font-size: 11px; margin-bottom: 8px; }
+.logic-reads code { font-family: var(--mono); font-size: 10.5px; color: #9fb3d1; margin-right: 6px; }
+.logic-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 900px) { .logic-cols { grid-template-columns: 1fr; } }
+.logic-h { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 5px; }
+.logic-steps { margin: 0; padding: 0; list-style: none; font-size: 11px; color: #c4d4ee; }
+.logic-steps li { margin-bottom: 5px; padding-left: 20px; position: relative; line-height: 1.35; }
+.logic-steps .step-no { position: absolute; left: 0; top: 0; font-family: var(--mono); font-size: 10px; color: #6f84a8; }
+.logic-bands { margin: 0 0 6px; padding: 0; list-style: none; font-size: 11px; color: #c4d4ee; }
+.logic-bands li { margin-bottom: 3px; }
+.logic-bands code { font-family: var(--mono); font-size: 10.5px; color: #9fb3d1; }
+.logic-sign { font-size: 11px; color: #d7e6ff; }
+.logic-why { font-size: 11px; margin-top: 4px; }
+.logic-trace { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2px 16px; }
+.logic-trace li { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; font-size: 11px; align-items: baseline; border-bottom: 1px dotted #1d2842; padding: 2px 0; }
+.logic-trace .trace-label { color: #9fb3d1; }
+.logic-trace b { font-family: var(--mono); color: #e6eefc; }
+.logic-trace .trace-unit { color: var(--muted); font-size: 10px; }
+.logic-verdict { margin-top: 8px; font-size: 11px; color: #c4d4ee; border-top: 1px solid var(--line); padding-top: 6px; }
+.logic-verdict.fail { color: #f0b4b4; }
+.logic-verdict.pass { color: #b8e6c8; }
 .timings { margin-top: 12px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
 
 /* ------------------------------ controls ------------------------------- */

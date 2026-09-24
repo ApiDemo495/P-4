@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from backend.formulas._util import EPS, finite, tanh
+from backend.formulas._util import EPS, finite, tanh, trace
 
 NAME = "DRG"
 CATEGORY = "REWARD"
@@ -76,11 +76,17 @@ def discounted_value(outcomes: np.ndarray, gamma: float = GAMMA) -> float:
     return float(np.sum(discounts * m * o) / denom)
 
 
-def compute(snapshot, state: State, params: dict | None = None) -> float:
+def compute(
+    snapshot,
+    state: State,
+    params: dict | None = None,
+    ctx: dict | None = None,
+) -> float:
     """DRG for the current cycle.  ``snapshot.drg_outcomes`` is (R, 2)."""
     outcomes = snapshot.drg_outcomes
     if outcomes is None or outcomes.size == 0:
         state.last_drg = 0.0
+        trace(ctx, "outcomes in the window", 0, "cycles")
         return 0.0
 
     outcomes = outcomes[-OUTCOMES:]
@@ -107,4 +113,11 @@ def compute(snapshot, state: State, params: dict | None = None) -> float:
     drg = tanh(GAIN * da)
     state.last_drg = drg
     state.samples = r
+    trace(ctx, "outcomes in the window", r, "cycles")
+    trace(ctx, "newest outcome (m * o)", newest_m * newest_o, "magnitude x result")
+    trace(ctx, "discounted value V_R", value_r, "gamma = 0.95")
+    trace(ctx, "value V_{R-1} (before the newest)", value_prev, "gamma = 0.95")
+    trace(ctx, "TD error (delta)", delta, "(m*o + gamma V_R) - V_{R-1}")
+    trace(ctx, "dopamine (asymmetric)", da, "delta^0.8 / -|delta|^1.2")
+    trace(ctx, "reward gradient", drg, "tanh(0.1 * dopamine)")
     return finite(drg)

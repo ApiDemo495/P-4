@@ -39,13 +39,15 @@ MIN_GGUF_BYTES = 100 * 1024 * 1024  # 100 MB - rejects truncated downloads
 MEMORY_LIMIT_FRACTION = 0.85  # unload if we are eating the machine
 
 TEST_PROMPT = (
-    'Reply with exactly: {"decision": "HOLD", "confidence": 0.5, "reasoning": "test"}'
+    'Reply with exactly: {"decision": "BUY", "confidence": 0.5, "reasoning": "test"}'
 )
 
 SYSTEM_PROMPT_LOCAL = (
     "You are a 1-minute scalping assistant for BTC and PAXG. "
-    "Respond with JSON only: {\"decision\":\"BUY\"|\"SELL\"|\"HOLD\","
-    "\"confidence\":0.0-1.0,\"reasoning\":\"one sentence\"}."
+    "Respond with JSON only: {\"decision\":\"BUY\"|\"SELL\","
+    "\"confidence\":0.0-1.0,\"reasoning\":\"one sentence\"}. "
+    "HOLD is not an option: always name a side, and lower the confidence when the "
+    "evidence is mixed."
 )
 
 
@@ -632,12 +634,14 @@ class _StubModel:
 
         core = 0.4 * grab("CCSv2") + 0.2 * grab("TAI") + 0.2 * grab("SHRP") + 0.2 * grab("MPS")
         hsi = grab("HSI")
+        # HOLD is not a signal any more.  A real model would be told to name a
+        # side even when the evidence is mixed; the stub does the same and shows
+        # the mixed evidence through a lower confidence instead of a third state.
+        decision = "BUY" if core >= 0.0 else "SELL"
         if hsi > 0.7 or abs(core) < 0.12:
-            decision, confidence = "HOLD", 0.55
-        elif core > 0:
-            decision, confidence = "BUY", min(0.9, 0.5 + core)
+            confidence = 0.52
         else:
-            decision, confidence = "SELL", min(0.9, 0.5 - core)
+            confidence = min(0.9, 0.5 + abs(core))
         return json.dumps(
             {
                 "decision": decision,

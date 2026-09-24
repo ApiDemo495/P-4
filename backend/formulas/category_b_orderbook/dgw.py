@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from backend.formulas._util import EPS, finite
+from backend.formulas._util import EPS, finite, tanh, trace, tanh, trace
 
 NAME = "DGW"
 CATEGORY = "B"
@@ -72,10 +72,29 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     p_ask = float(np.sum(ask_prices[valid_asks] * w_ask) / (np.sum(w_ask) + EPS))
     state.last_p_bid, state.last_p_ask = p_bid, p_ask
 
-    span = p_ask - p_bid
-    if not np.isfinite(span) or abs(span) < EPS:
+    # Both distances are positive.  The size-weighted centre of mass sits FAR
+    # from the mid on the side whose liquidity is stretched away from the touch,
+    # and the specification reads the asymmetry as
+    #     gravity = (g_bid - mid) - (mid - g_ask) = distance_ask - distance_bid
+    # so positive means the ask ladder is the emptier one -> upward pull.
+    distance_bid = m - p_bid
+    distance_ask = p_ask - m
+    if m <= EPS or not np.isfinite(distance_bid) or not np.isfinite(distance_ask):
         return 0.0
 
-    gravity = ((m - p_bid) - (p_ask - m)) / span
-    state.last_gravity = gravity
-    return finite(max(-1.0, min(1.0, gravity)))
+    # Normalise by the mid, not by the distance between the two centres of mass:
+    # on a healthy book that distance is about one spread wide, and dividing by
+    # it turned rounding noise into +-1 spikes every cycle.
+    relative = (distance_ask - distance_bid) / m
+    state.last_gravity = relative
+    trace(ctx, "mid", m, "price")
+    trace(ctx, "bid centre of mass", p_bid, "price")
+    trace(ctx, "ask centre of mass", p_ask, "price")
+    trace(ctx, "bid distance from mid", distance_bid, "price units")
+    trace(ctx, "ask distance from mid", distance_ask, "price units")
+    trace(ctx, "relative gravity", relative, "fraction of mid")
+
+    # 2 bps of asymmetry is a clear pull; the value is symmetric and saturating.
+    gravity = 1e4 * relative / 2.0
+    trace(ctx, "gravity (bps-equivalent)", gravity, "2 bps saturates")
+    return finite(tanh(gravity))

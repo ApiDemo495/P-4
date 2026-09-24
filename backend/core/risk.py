@@ -10,11 +10,15 @@ market's own volatility** rather than from fixed pip targets:
 
     BUY :  tp = entry * (1 + tp_bps/1e4)    sl = entry * (1 - sl_bps/1e4)
     SELL:  tp = entry * (1 - tp_bps/1e4)    sl = entry * (1 + sl_bps/1e4)
-    HOLD:  no position - levels are None, and the UI says so instead of
-           inventing a trade the engine did not recommend.
 
 The ratio `tp_bps / sl_bps` is the reward:risk, which is reported to the UI so
 the user can see whether the geometry of the trade is worth taking.
+
+Since the signal layer became binary (BUY or SELL only), *every* window has a
+position plan.  What changes instead is the sizing instruction: a LOW conviction
+window carries QUIETER levels - the same volatility geometry, but the block says
+so, so the panel can print "quarter size" next to it rather than inventing an
+invisible half-signal.
 """
 
 from __future__ import annotations
@@ -60,6 +64,14 @@ def realized_volatility_bps(snapshot, asset: str, horizon_seconds: float = 60.0)
     return sigma_tick * float(np.sqrt(max(horizon_seconds, 1.0) / span))
 
 
+#: Conviction -> position size hint, printed with the levels.
+SIZE_HINT = {
+    "HIGH": "full size",
+    "MEDIUM": "half size",
+    "LOW": "quarter size",
+}
+
+
 def risk_levels(
     asset: str,
     signal: str,
@@ -67,6 +79,8 @@ def risk_levels(
     volatility_bps: float,
     settings=None,
     horizon_seconds: float = 60.0,
+    conviction: str = "HIGH",
+    emergency_exit: bool = False,
 ) -> dict:
     """Build the risk block embedded in every locked signal."""
     settings = settings or cfg.SETTINGS
@@ -91,7 +105,10 @@ def risk_levels(
         "horizon_seconds": round(horizon_seconds, 1),
         "take_profit": None,
         "stop_loss": None,
-        "note": "no position while the signal is HOLD",
+        "conviction": conviction,
+        "size_hint": SIZE_HINT.get(conviction, "full size"),
+        "emergency_exit": bool(emergency_exit),
+        "note": "waiting for a usable price to set the levels",
     }
 
     if entry > 0 and block["tradeable"]:
@@ -101,5 +118,11 @@ def risk_levels(
         block["note"] = (
             f"{tp_bps:.0f} bps target / {sl_bps:.0f} bps stop = "
             f"{block['rr']:.2f}:1 reward:risk, sized on {sigma:.0f} bps realised 1-minute volatility"
+            f" - {block['size_hint']} ({conviction.lower()} conviction)"
         )
+        if emergency_exit:
+            block["note"] = (
+                f"EMERGENCY EXIT: {signal} flattens the position that is open. "
+                f"{block['note']}"
+            )
     return block
