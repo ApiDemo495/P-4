@@ -87,13 +87,13 @@ body {
 .timer-card { padding-bottom: 16px; }
 .timer-row { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
 .timer { font-family: var(--mono); font-size: 52px; font-weight: 700; letter-spacing: .02em; line-height: 1; }
-.timer.emergency { color: var(--red); animation: pulse 1s infinite; }
+.timer.override { color: var(--red); animation: pulse 1s infinite; }
 .timer-side { display: flex; gap: 18px; margin-left: auto; flex-wrap: wrap; }
 .kv { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); }
 .kv b { font-family: var(--mono); font-size: 13px; color: var(--text); font-weight: 600; }
 .progress { height: 8px; border-radius: 999px; background: #131c2c; margin-top: 14px; overflow: hidden; }
 .progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--violet), var(--blue)); transition: width .25s linear; }
-.progress-fill.emergency { background: linear-gradient(90deg, #7f1d1d, var(--red)); }
+.progress-fill.override { background: linear-gradient(90deg, #7f1d1d, var(--red)); }
 
 /* ------------------------------- signal -------------------------------- */
 .signal-card { text-align: center; padding: 22px 16px; }
@@ -218,19 +218,37 @@ label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 5px
 .status-line.err { color: var(--red); }
 .status-line.warn { color: var(--amber); }
 
-/* ------------------------------ emergency ------------------------------ */
-.shade { position: fixed; inset: 0; background: #05070bd0; z-index: 90; backdrop-filter: blur(2px); }
-.emergency { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 16px; }
-.emergency-card {
-  max-width: 640px; width: 100%; background: #170a0d; border: 3px solid var(--red);
-  border-radius: 18px; padding: 22px; box-shadow: 0 0 60px #ef444455, 0 0 0 6px #7f1d1d33 inset;
-  animation: pulse 1.1s infinite;
-}
-.emergency-title { color: var(--red); font-weight: 800; letter-spacing: .1em; font-size: 15px; text-align: center; }
-.emergency-headline { font-size: 22px; font-weight: 700; margin: 16px 0; text-align: center; }
-.emergency-body { text-align: center; font-size: 15px; color: #ffd9d9; }
-.emergency-countdown { text-align: center; margin-top: 14px; font-family: var(--mono); color: var(--amber); font-size: 22px; }
-.emergency-actions { display: flex; gap: 10px; justify-content: center; margin-top: 18px; }
+/* ======================================================================
+   LAYOUT RAIL - read this before adding anything that looks like an alert
+   ======================================================================
+   Page content never leaves the document flow.  The only full-screen layers
+   in this app are dialogs, and they are named as such (`.modal`, used by the
+   API-key dialog).  There is deliberately NO global alert class.
+
+   Why this comment exists: this file used to contain
+
+       .emergency { position: fixed; inset: 0; z-index: 100; ... }
+
+   and the dashboard ran `holdBox.classList.add("emergency")` whenever a news
+   override arrived.  The rule matched the HOLD widget, lifted it out of its
+   grid cell and stretched it over the viewport - the user saw a red,
+   glittering screen instead of the app.  The overlay markup was deleted in an
+   earlier round but the CSS rule was left behind, so the bug survived.
+
+   Rules for any future state styling:
+     1. Scope state classes to their element: `.hold-box.override`,
+        `.timer.override` - never a bare name that some other script may set
+        on a widget.
+     2. Never give a state class position: fixed / inset: 0.  A notice lives
+        inside its own cell, at a fixed small size, and the page stays usable.
+     3. backend/tests/test_ui_layout_guard.py fails the build if a class the
+        client applies ever picks up a full-screen rule again.
+
+   The emergency path today: the inline hold box turns red, the small chip
+   under the prediction lights up, the timer shows a bolt and haptics fire.
+   Everything else on the page stays visible and scrollable.
+   ====================================================================== */
+
 
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .62; } }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -402,6 +420,8 @@ th { color: var(--muted); font-weight: 600; }
 .cell-holdbox { justify-content: flex-start; }
 .hold-box {
   flex: 1; border-radius: 12px; padding: 12px;
+  position: static; z-index: auto;      /* layout rail: stays in its cell */
+  max-height: 190px; overflow: auto;    /* a long headline scrolls, never grows */
   border: 1px solid #4a3520;
   background: linear-gradient(140deg, #2a1e0b 0%, #1b1622 60%, #2a1e0b 100%);
   background-size: 200% 200%;
@@ -409,7 +429,7 @@ th { color: var(--muted); font-weight: 600; }
   animation: glitter 3.6s ease-in-out infinite;
 }
 .hold-box.neutral { border-color: var(--line); background: #0f1626; animation: none; }
-.hold-box.emergency {
+.hold-box.override {
   border-color: #ef4444;
   background: linear-gradient(140deg, #4c1010 0%, #7f1d1d 50%, #4c1010 100%);
   background-size: 200% 200%;

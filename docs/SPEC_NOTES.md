@@ -293,6 +293,28 @@ announced by (a) a small glittering chip immediately under the prediction and
 (b) the HOLD box turning red and glittering harder, both inside the page. The
 Flutter client follows the same rule and adds haptics.
 
+**Why the overlay came back anyway (round 3).** The overlay *markup* was removed
+but two things were left behind: the class name and a CSS rule.
+
+```css
+.emergency { position: fixed; inset: 0; z-index: 100; }   /* deleted */
+```
+
+```js
+holdBox.classList.add("emergency");                        /* -> "override" */
+```
+
+The dashboard still painted that class onto the HOLD widget whenever an override
+arrived, so the leftover rule lifted the widget out of its grid cell and stretched
+it over the viewport — a red, glittering screen with no app in it. The override
+now uses a *scoped* class (`hold-box.override`, `timer.override`), the bare
+`.emergency` / `.shade` / `.emergency-card` rules are deleted, the HOLD box is
+pinned to the flow with `position: static` and a `max-height` so a long headline
+scrolls instead of growing, and `backend/tests/test_ui_layout_guard.py` fails the
+build if any class the client applies ever picks up `position: fixed` again
+(dialogs such as `.modal` are the only sanctioned full-screen layers). The static
+assets are loaded with `?v=` stamps so a cached stylesheet cannot hide the fix.
+
 ---
 
 ## 9-A — The port opens before the engine is warm (and a supervisor keeps it open)

@@ -275,10 +275,10 @@ function tickClock() {
     const icon = state.lockState === "COMPUTING" ? "\u23f3"
       : state.lockState === "EMERGENCY_OVERRIDE" ? "\u26a1" : "\ud83d\udd12";
     $("timer").innerHTML = `${mm}:${ss} <span id="lock-icon">${icon}</span>`;
-    $("timer").className = "timer" + (state.lockState === "EMERGENCY_OVERRIDE" ? " emergency" : "");
+    $("timer").className = "timer" + (state.lockState === "EMERGENCY_OVERRIDE" ? " override" : "");
     $("lock-state").textContent = state.lockState;
     $("progress").style.width = `${clamp(100 - (remaining / period) * 100, 0, 100)}%`;
-    $("progress").className = "progress-fill" + (state.lockState === "EMERGENCY_OVERRIDE" ? " emergency" : "");
+    $("progress").className = "progress-fill" + (state.lockState === "EMERGENCY_OVERRIDE" ? " override" : "");
     $("utc").textContent = new Date().toISOString().substr(11, 8) + "Z";
   }
 
@@ -544,7 +544,10 @@ function renderWidgetPanel() {
   $("w-engine").textContent = `${engine}${state.window?.pipeline ? " · pipelined" : ""}`;
 }
 
-/* The HOLD / wait box: small, inline, glittering - never an overlay. */
+/* The HOLD / wait box: small, inline, glittering - never an overlay.
+   The state class is `override` (scoped as `.hold-box.override`).  It must not
+   be called `emergency`: that bare name used to match a leftover full-screen
+   rule in styles.css and stretched this box over the whole viewport. */
 function renderHoldBox() {
   const box = $("w-hold");
   if (!box) return;
@@ -553,9 +556,9 @@ function renderHoldBox() {
   const hold = s && s.signal === "HOLD";
   const warning = state.holdWarning;
 
-  box.classList.remove("emergency", "neutral");
+  box.classList.remove("override", "neutral");
   if (emergency) {
-    box.classList.add("emergency");
+    box.classList.add("override");
     $("w-hold-title").textContent = "⚡ HOLD";
     const headline = state.emergency?.headline || s?.emergency_headline || s?.reasoning || "";
     $("w-hold-text").textContent = "Emergency override — the signal is forced to HOLD. Exit any open position.";

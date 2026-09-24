@@ -225,6 +225,7 @@ Codespace tab and let the attach command run, then reload the URL.
 | Sad-page error on port 8000 | nothing is listening | `bash run.sh --bg` then `bash run.sh --status` |
 | 502 right after opening the Codespace | the container was asleep; the attach command has not finished | wait a few seconds, reload; `bash run.sh --bg` if needed |
 | "Warming up…" banner in the dashboard | the port answers but the brain/market warm-up has not finished | wait ~5 s, the banner clears by itself |
+| A notice covering the whole screen | it cannot happen any more: notices are inline chips and a red HOLD box, never a full-screen layer | nothing to fix — if you ever see one, it is a browser cache: reload with `Ctrl+Shift+R` |
 | Several ports, each one "not working" | dead processes of other tools (`flutter run` picks a random port) | `bash run.sh --clean`, then forward **only 8000** |
 | `pip install` fails or "downloading requirements" stalls | `python3-venv` missing, PEP 668, or a proxy | see the block below |
 | Flutter SDK download fails | 700 MB download, optional | `rm -rf ~/flutter` then `INSTALL_FLUTTER=1 bash frontend/run_web.sh` |
@@ -262,6 +263,10 @@ last lines of it when an install fails.
 ```bash
 PYTHONPATH=. .venv/bin/python -m pytest backend/tests -q
 ```
+
+The layout guard (`backend/tests/test_ui_layout_guard.py`) is part of that run: it
+fails if a class the dashboard applies to a widget ever picks up a full-screen
+rule again — the bug that once stretched the HOLD box over the whole page.
 
 ```bash
 PYTHONPATH=. .venv/bin/python -m backend.tests.smoke --seconds 90
