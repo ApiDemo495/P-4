@@ -14,17 +14,28 @@
     "memory": "4gb",
     "storage": "16gb"
   },
-  "postCreateCommand": "bash .devcontainer/setup.sh",
-  // Auto-start on attach: `--bg` is idempotent, so this both starts the app the
-  // first time and simply prints the URL on every later attach.  The result is
-  // that the forwarded port always has something answering it (a port with no
-  // listener is what the browser reports as HTTP 502).
-  "postAttachCommand": "bash -lc 'bash run.sh --bg >/dev/null 2>&1; bash run.sh --urls'",
+
+  // ---------------------------------------------------------------------------
+  // ZERO COMMANDS.  Create the codespace, then do nothing: these three hooks
+  // install everything, start the engine, wait until the first prediction is
+  // locked, publish the port and print the URL.  See tools/codespace_autostart.sh.
+  //
+  //   postCreateCommand  once per codespace - apt, virtualenv, requirements,
+  //                      .env, redis, and the Flutter download started in the
+  //                      background (it never blocks this step)
+  //   postStartCommand   every start / wake - self-heals a missing .venv or a
+  //                      changed requirements.txt, then (re)starts the engine
+  //   postAttachCommand  every editor attach - the same, plus the URL banner
+  // ---------------------------------------------------------------------------
+  "postCreateCommand": "bash tools/codespace_autostart.sh --provision",
+  "postStartCommand": "bash tools/codespace_autostart.sh --start",
+  "postAttachCommand": "bash tools/codespace_autostart.sh --attach",
   "forwardPorts": [8000],
   "portsAttributes": {
     "8000": {
       "label": "Drosophila Trader - everything (dashboard, API, WS, /flutter)",
-      "onAutoForward": "openPreview"
+      "onAutoForward": "openBrowser",
+      "visibility": "public"
     }
   },
   // Any other port you start by hand (flutter run, a scratch tool) is left
@@ -48,6 +59,9 @@
   },
   "remoteEnv": {
     "PYTHONPATH": "${containerWorkspaceFolder}",
-    "PYTHONUNBUFFERED": "1"
+    "PYTHONUNBUFFERED": "1",
+    // 1 = download the Flutter SDK and build the web client automatically.
+    // Set it to 0 (or export AUTO_FLUTTER=0) to skip the ~700 MB download.
+    "AUTO_FLUTTER": "1"
   }
 }

@@ -68,3 +68,13 @@ Thumbs.db
 # launcher runtime state
 .run/
 server.log
+
+# automatic-startup runtime state (never committed)
+flutter-setup.log
+frontend/build/
+frontend/.dart_tool/
+frontend/.flutter-plugins*
+frontend/.packages
+.devcontainer/.provisioned
+.devcontainer/flutter.pid
+.devcontainer/logs/

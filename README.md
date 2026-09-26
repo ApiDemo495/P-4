@@ -22,9 +22,46 @@ is exactly one URL to forward and no second window to keep open.
 
 ---
 
+## 0. Zero commands: open the Codespace and wait
+
+There is nothing to type. Create a Codespace on this branch (the **Code**
+button → *Codespaces* → *Create on arena/01a0c844-p-4*) and the container does
+the rest by itself:
+
+| When | What happens automatically |
+| --- | --- |
+| container created | `bash tools/codespace_autostart.sh --provision`: apt packages, `.venv`, `requirements.txt`, `.env`, redis (optional), and the Flutter SDK download + web build started **in the background** (`flutter-setup.log`) |
+| every start / wake | `--start`: self-heals a missing `.venv` or a changed `requirements.txt`, then starts the engine under its supervisor |
+| every editor attach | `--attach`: the same, plus it waits until the first prediction is locked and prints the URL |
+
+Port **8000** is forwarded, made **public** and opened in your browser for you,
+so the dashboard appears on its own. Everything else is on that one URL:
+`/` dashboard · `/settings` API keys · `/matrix` connectome · `/docs` API ·
+`/flutter` the Flutter client (once its background build finishes).
+
+**If it ever looks stuck**, open the Ports tab and click the globe next to
+`8000`, or open the URL it prints. The engine restarts itself if it stops.
+
+### Switches (all optional - set them as Codespace secrets or in `.env`)
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `AUTO_FLUTTER` | `1` | download the Flutter SDK (~700 MB) and build the web client. Set `0` to skip |
+| `PORT` | `8000` | the single port everything is served on |
+| `AUTO_OPEN` | `1` | try to make the forwarded port public |
+
+### Doing it by hand instead (any machine, no Codespace)
+
+The rest of this section is the manual path - useful outside Codespaces, or if
+you prefer to see every step. In a Codespace it is already done for you.
+
+---
+
 ## 1. Install and run (copy-paste, in order)
 
 ### Step 1 — get the code
+
+*(Skip to [section 0](#0-zero-commands-open-the-codespace-and-wait) if you are in a Codespace.)*
 
 ```bash
 git clone -b arena/01a0c844-p-4 https://github.com/ApiDemo495/P-4.git
