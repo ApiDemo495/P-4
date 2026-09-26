@@ -65,11 +65,9 @@ async def current_formulas() -> dict:
 async def live_formulas() -> dict:
     """Live values, refreshed every 15 s.  These do NOT change the signal."""
     manager = get_manager()
-    payload = _live_payload(manager.last_live_result, manager)
-    payload["cycle_number"] = manager.stats.cycle_number
-    payload["note"] = "Live formula values only. Signal remains LOCKED."
-    payload["signal"] = manager.lock.current_signal.signal if manager.lock.current_signal else None
-    return payload
+    return manager.live_formulas_payload(
+        note="Live formula values only. Signal remains LOCKED."
+    )
 
 
 @router.get("/api/formulas/categories")

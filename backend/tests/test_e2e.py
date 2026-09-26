@@ -155,14 +155,26 @@ async def test_e02_locked_signal_never_changes_mid_cycle(manager: CycleManager):
             except asyncio.TimeoutError:
                 continue
             kind = message.get("type")
-            if kind == "FORMULA_UPDATE":
+            if kind == "PULSE":
                 updates += 1
                 # the explorer refreshes with live numbers and says so
-                assert "Live formula values only" in message["data"]["note"]
-                assert message["data"]["signal"] == locked.signal
+                assert "Live values only" in message["data"]["note"]
+                # the pulse names the locked side and does not move it
+                assert message["data"]["locked_side"] == locked.signal
+                # ... and it never carries a bare "signal" key: that name
+                # belongs to the signal payload (where it is the direction),
+                # and clashing them made the client drop the locked signal.
+                assert "signal" not in message["data"]
+                assert message["data"]["live_formulas"]["signal"] == locked.signal
                 # ... and the frozen signal object is literally the same one
                 assert manager.lock.get_current() is locked
                 assert manager.lock.current_signal.confidence == locked.confidence
+                # the pulse refreshes EVERY panel, in one message
+                for key in ("live_formulas", "news_feed", "agents_status", "clock", "window"):
+                    assert key in message["data"], key
+                assert message["data"]["clock"]["seconds_remaining"] <= (
+                    message["data"]["clock"]["window_seconds"] + 1e-6
+                )
             elif kind == "CYCLE_START":
                 saw_new_cycle = True
     finally:

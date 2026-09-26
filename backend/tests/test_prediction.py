@@ -2,8 +2,10 @@
 
 These are the rules the user stated, encoded so they cannot regress:
 
-1. a prediction may never be older than 15 seconds (``CYCLE_SECONDS`` and
-   ``PREDICTION_MAX_AGE_SECONDS``, plus ``CycleManager.ensure_fresh``);
+1. a prediction is *the* signal for exactly one window: it is published at the
+   boundary and replaced at the next one, and it may never outlive its own
+   window by more than the small publishing grace (``CYCLE_SECONDS=60``,
+   ``prediction_expired``, ``CycleManager.ensure_fresh``);
 2. every prediction carries its reasoning (the case *for* and *against*);
 3. the take-profit and the stop-loss are the same distance from the entry, so
    the reward:risk ratio is exactly 1:1;
@@ -32,7 +34,9 @@ async def manager():
     await instance.start()
     instance.mark_started()
     # Let one full window (and therefore one outcome) happen: the accuracy and
-    # freshness assertions need a published signal to look at.
+    # freshness assertions need a published signal to look at.  Under the test
+    # harness a window is cycle_period_seconds, and the outcome horizon is one
+    # window, so this covers two windows with margin.
     deadline = time.time() + 12.0
     while time.time() < deadline and len(instance.outcomes) == 0:
         await asyncio.sleep(0.25)
@@ -47,29 +51,51 @@ async def manager():
 # ---------------------------------------------------------------------------
 
 
-def test_the_window_is_short_enough_to_keep_predictions_fresh():
+def test_the_window_is_sixty_seconds_and_the_prediction_lives_exactly_that_long():
+    """The user's rule: the countdown is 60 seconds.
+
+    The freshness rule did not get weaker - it got sharper.  The prediction on
+    screen is the signal for the window being counted down, and it is replaced
+    at every boundary; the only slack is the small grace that covers a request
+    landing while the next window is published.
+    """
     settings = cfg.SETTINGS
-    # ``cycle_seconds`` is the un-compressed wall-clock cadence: under the test
-    # harness the window is scaled down further, which only makes it fresher.
-    assert settings.cycle_seconds <= 15.0 + 1e-9, settings.cycle_seconds
-    assert settings.prediction_expired <= 15.0 + 1e-9, settings.prediction_expired
-    assert settings.prediction_expired <= settings.cycle_seconds * 1.5
+    # ``cycle_seconds`` is the un-compressed wall-clock cadence: 60 s, aligned
+    # to the UTC minute.  The test harness compresses the *wall clock* by 20x,
+    # but the ratio is preserved.
+    assert settings.cycle_seconds == 60.0, settings.cycle_seconds
+    # The harness compresses the wall clock, so alignment to the UTC minute is
+    # asserted against the *uncompressed* configuration (what a Codespace runs).
+    production = cfg.Settings(time_scale=1.0)
+    assert production.cycle_period_seconds == 60.0
+    assert production.use_world_clock is True, "the 60 s window must be minute-aligned"
+    assert production.prediction_expired == 65.0
+    assert production.outcome_horizon == 60.0
     assert settings.cycle_period_seconds <= settings.cycle_seconds + 1e-9
-    # ... and the outcome tracking is window-relative, so accuracy fills at the
-    # same rate the predictions arrive.
-    assert settings.outcome_horizon_seconds <= 60.0
+    # Fresh = "still the window it belongs to" (its own window + a small grace).
+    # The grace has a 2 s floor so it cannot flap in a compressed window; at the
+    # real 60 s cadence it is 5 s, i.e. 8 % of the window.
+    assert settings.prediction_expired >= settings.cycle_period_seconds
+    assert settings.prediction_expired == pytest.approx(
+        settings.cycle_period_seconds + settings.freshness_grace_seconds, rel=1e-6
+    )
+    grace = settings.freshness_grace_seconds
+    assert grace <= settings.cycle_period_seconds + 2.0
+    # ... and scoring the prediction happens one window later, so the accuracy
+    # panel fills at the same rate the predictions arrive.
+    assert settings.outcome_horizon == pytest.approx(settings.cycle_period_seconds, rel=1e-6)
 
 
 def test_freshness_flags_an_old_prediction():
     now = 1_700_000_000.0
-    fresh = prediction_module.freshness(now - 3.0, 15.0, now=now)
-    stale = prediction_module.freshness(now - 21.0, 15.0, now=now)
+    fresh = prediction_module.freshness(now - 3.0, 65.0, now=now)
+    stale = prediction_module.freshness(now - 71.0, 65.0, now=now)
     assert fresh["state"] == "LIVE" and fresh["on_time"] is True
     assert fresh["age_seconds"] == 3.0
     assert stale["state"] == "STALE" and stale["on_time"] is False
-    assert stale["age_seconds"] == 21.0
+    assert stale["age_seconds"] == 71.0
     assert stale["seconds_until_stale"] == 0.0
-    assert prediction_module.freshness(0.0, 15.0, now=now)["on_time"] is False
+    assert prediction_module.freshness(0.0, 65.0, now=now)["on_time"] is False
 
 
 async def test_the_api_never_serves_a_stale_prediction(manager: CycleManager):

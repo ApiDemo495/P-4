@@ -1,17 +1,26 @@
 # DROSOPHILA TRADER v2.0
 
 A scalp-trading engine for **BTC** and **PAXG** built around a Drosophila
-mushroom-body connectome. One immutable prediction per window - **never older
-than 15 seconds** - 22 formulas, three AI agents, and a brain that keeps working
-when neuPrint, the exchange or your API keys do not.
+mushroom-body connectome. One immutable prediction per **60-second window**,
+22 formulas, three AI agents, and a brain that keeps working when neuPrint, the
+exchange or your API keys do not.
 
 ```
    ┌──────────────────────────────────────────────────────────────────────┐
-   │  window N-1   compute prediction N  (during the countdown)           │
-   │  window N     🔒 LOCK ─▶ broadcast + reasoning ─▶ compute N+1        │
-   │  12 s         score the outcome until it is stale, reward the DANs   │
+   │  window N-1   compute prediction N  (during the previous countdown)  │
+   │  window N  t=0   🔒 LOCK ─▶ broadcast the whole dashboard            │
+   │            t=15  ⚡ PULSE ─▶ formulas · news · agents · brain · rates │
+   │            t=30  ⚡ PULSE ─▶ the same, plus a fresh news poll         │
+   │            t=45  ⚡ PULSE ─▶ the same                                 │
+   │            t=60  boundary ─▶ next signal; this one is scored         │
    └──────────────────────────────────────────────────────────────────────┘
 ```
+
+**One clock, one tick.** The countdown is 60 seconds, phase-locked to the UTC
+minute, and it is rendered from absolute instants the backend publishes - so it
+cannot drift or restart. Every panel (signal, formulas, news, agents, brain,
+accuracy) refreshes on the *same* tick, from a single message, instead of each
+one polling on a private timer.
 
 Every prediction carries a **side (BUY or SELL - there is no HOLD), a fresh-ness
 age, the reasoning behind it, and a 1:1 take-profit / stop-loss pair**.
@@ -152,10 +161,10 @@ bash frontend/run_web.sh --dev
 | `bash run.sh --stop` | stops the engine and its supervisor |
 | `bash run.sh --setup-only` | installs everything, starts nothing |
 | `bash run.sh --port 8020` | uses a different port (then forward that one instead) |
-| `CYCLE_SECONDS=12` | length of one prediction window (the freshness contract is 15 s) |
-| `PREDICTION_MAX_AGE_SECONDS=15` | age at which a prediction is labelled STALE and recomputed |
+| `CYCLE_SECONDS=60` | length of one prediction window; 60 keeps it locked to the UTC minute |
+| `PREDICTION_MAX_AGE_SECONDS=0` | `0` = as long as its own window (60 s + a 5 s grace); set a number to pin a hard cap |
 | `RR_TARGET=1.0` | reward:risk target; 1.0 = take-profit and stop-loss are equidistant |
-| `OUTCOME_HORIZON_SECONDS=30` | how long after a prediction its result is scored |
+| `OUTCOME_HORIZON_SECONDS=0` | `0` = score each prediction one window later (60 s) |
 | `bash run.sh --public` | flips the Codespaces port to public |
 | `bash .devcontainer/setup.sh` | the Codespaces `postCreateCommand`: system packages, venv, requirements, redis, `.env` |
 | `bash frontend/run_web.sh` | downloads the Flutter SDK if needed and builds the web client into `frontend/build/web` |
@@ -350,13 +359,26 @@ tail -f server.log
 
 ## 9. The parts that make it v2.0
 
-* **Fresh predictions, provably.** The window is 12 seconds
-  (`CYCLE_SECONDS`, and `PREDICTION_MAX_AGE_SECONDS=15` is the hard cap), the
-  prediction is computed *during the previous countdown*, and every payload
-  carries `age_seconds` / `stale` / `expires_at`. The dashboard prints
-  "updated 4s ago · max 15s" and turns the chip red if the contract is ever
-  broken; `/api/signal/current` calls `ensure_fresh()` first, which recomputes
-  out of band rather than answering with an old call.
+* **A 60-second countdown you can watch.** The window is 60 seconds, aligned to
+  the UTC minute, and the countdown walks 60 → 1 one second at a time. It is
+  rendered from the absolute instants the backend publishes
+  (`window_started_at_ms`, `window_ends_at_ms`, `server_time_ms`, `cycle_id`),
+  and it only re-anchors when the window id changes - a late message can never
+  make the number jump, repeat or restart. `tools/clock_check.js` watches a real
+  browser-DOM session cross a boundary and asserts exactly that.
+* **Everything refreshes together.** The backend owns one schedule: a `SIGNAL`
+  snapshot at the boundary and one `PULSE` at every grid mark inside the window
+  (t+15, t+30, t+45), each carrying the formulas, the news feed, the agents, the
+  brain read-out and the accuracy rates. The client has **one** `setInterval`
+  (a safety net that does nothing while the socket is healthy) and one animation
+  frame loop for the countdown. No panel polls on its own any more.
+* **Fresh predictions, provably.** The prediction on screen is *the* signal for
+  the window being counted down: it is computed *during the previous countdown*,
+  published at the boundary, and every payload carries
+  `age_seconds` / `stale` / `expires_at` plus the window it belongs to. The
+  dashboard prints "updated 4s ago · max 65s" and turns the chip red if the
+  engine ever misses a boundary; `/api/signal/current` calls `ensure_fresh()`
+  first, which recomputes out of band rather than answering with an old call.
 * **Reasoning, not just a number.** `prediction.reasoning` holds a one-line
   summary plus bullets: the brain read-out and its fusion weight, the formula
   consensus (how many of the directional formulas agree), the strongest

@@ -381,8 +381,8 @@ The user's rules, and where they live in the code:
 * **Realised-form calibration.** With 8 or more scored windows, a hit rate
   below 50 % scales confidence down (`calibration`), because a high confidence
   the engine has not been earning is a lie the panel should not print.
-* **Denser scoring.** `OUTCOME_HORIZON_SECONDS` is 30 s = two windows, so every
-  window is scored instead of one in four, and the accuracy panel fills at the
+* **Denser scoring.** Every window is scored: `OUTCOME_HORIZON_SECONDS=0` means
+  "one window after the prediction fired", so the accuracy panel fills at the
   rate predictions arrive. `accuracy_block()` adds per-side hit rates.
 * **Two formulas that read a permanent zero on live data** were fixed as part of
   this round: `HRDD` used a hard dead zone (now a soft 1-to-3-sigma ramp) and
@@ -401,3 +401,80 @@ calls a function it never defines, or looks up an element id its page never
 renders, or fails `node --check`. The jsdom walkthrough
 (`tools/ui_override_check.js`) additionally boots the live page against a
 running server and asserts the freshness chip and the reasoning list render.
+
+---
+
+## G — One clock, one tick: the 60-second countdown
+
+**Symptom.** *"Countdown is not 60 seconds and it is too glitchy and not in
+parallel with other features it randomly running."* Three complaints, one
+architecture: the engine ran a 12-second window, the dashboard ran eleven
+private `setInterval`s (news 15 s, agents 5 s, brain 20 s, readiness 2 s,
+history 30 s, outcomes 15 s, brain-explain 10 s, emergency 1 s, formulas 15 s,
+status 20 s, countdown 100 ms), and the countdown re-anchored from
+`seconds_remaining` on every one of them. Each panel changed at its own moment,
+and any message arriving mid-second could nudge the number on screen.
+
+**Cause.**
+* `CYCLE_SECONDS` had been lowered to 12 s (a Round-F freshness decision that
+  traded the spec's minute for headroom under a 15 s cap), so the "1..60"
+  widget could only ever count 12.
+* The countdown was derived from a *duration* (`seconds_remaining`, rounded to
+  0.1 s on the server, then advanced locally with `performance.now()` from the
+  moment the message happened to arrive). Round trip time and re-anchoring both
+  leaked into the digits.
+* Nothing owned the schedule: every feature and every panel fetched when its own
+  timer told it to.
+
+**Decision.**
+* **The window is 60 seconds again**, phase-locked to the UTC minute
+  (`CYCLE_SECONDS=60` → `use_world_clock`, `_snap_to_minute`). Freshness is now
+  *window-relative*: `PREDICTION_MAX_AGE_SECONDS=0` means "as long as its own
+  window" (60 s + a 5 s publishing grace) and `OUTCOME_HORIZON_SECONDS=0` means
+  "one window later". The Round-F rule ("what is on screen is always the current
+  call, never an old one") is unchanged - only the window it is measured against.
+* **One authoritative clock.** `CycleManager.master_clock()` publishes the window
+  as absolute instants (`window_started_at_ms`, `window_ends_at_ms`),
+  `server_time_ms`, `cycle_id`, `seconds_remaining`, and the window's refresh
+  marks. The client measures the offset once, nudges it by at most 120 ms per
+  message, and counts down to a fixed instant. **Within a window the deadline
+  can never move**: only a new `cycle_id` re-anchors it.
+* **One tick.** `tick_grid()` derives the in-window marks from the window start
+  (t+15 / t+30 / t+45 for a 60-second window, news polled on the t+30 mark), and
+  `_heartbeat_loop` broadcasts **one `PULSE` per mark** carrying the live
+  formulas, the news feed, the agent status, the brain read-out and the accuracy
+  block. The boundary `SIGNAL` is the same snapshot plus history and outcomes.
+  Both clients apply one message in one render pass.
+* **The clients lost their timers.** The web client has exactly one
+  `setInterval` left (a safety net that returns immediately while the socket is
+  open) plus one `requestAnimationFrame` loop for the countdown; the Flutter
+  client has one 100 ms tick and one 5 s safety net. Nothing polls when the
+  socket is healthy.
+
+**Verification.**
+* `backend/tests/test_countdown.py` - the window is 60 s and minute-aligned, the
+  clock counts down monotonically inside a window and never exceeds the window,
+  the grid is derived from the window (15/30/45), a pulse carries every panel
+  and is not a formula-only message, the client has one timer, and the
+  anti-glitch rule (`re-anchor only on a new cycle id`) is asserted in the source.
+* `tools/clock_check.js` - boots the live dashboard in a real DOM and watches a
+  full boundary: it asserts the digits reach 60, walk down one second at a time,
+  never jump upward mid-window, agree with the ring, and that the panels repaint
+  in **four batches 15 seconds apart** (the grid), each one a single synchronous
+  pass.
+* `backend/tests/test_flutter_contract.py` + `tools/dart_balance.py` - the same
+  contract in the Flutter client, plus a structural check of the Dart sources
+  (there is no Dart toolchain in this environment).
+
+**A bug this round found and fixed.** The first cut of the heartbeat named the
+locked side `signal` in the pulse payload. A *signal payload* uses `signal` for
+the direction ("BUY"), so the client's shape test mistook the pulse for a signal
+payload and the dashboard never adopted the locked signal - the countdown worked
+while the signal panel stayed empty. The pulse now says `locked_side`, the client
+recognises a signal payload by `lock_state` + `risk` + `cycle_number`, and
+`test_countdown.py::test_only_a_signal_payload_is_called_signal` locks the rule
+in.
+
+**Escape hatch.** `CYCLE_SECONDS=12` (or any value) restores a shorter window;
+`TIME_SCALE` compresses the whole schedule for demos and tests without touching
+the ratios. `SIGNAL_PIPELINE=0` restores the literal draft timing.

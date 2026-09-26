@@ -20,13 +20,9 @@ class EmergencyRequest(BaseModel):
 @router.get("/api/news")
 async def latest_news(limit: int = 8) -> dict:
     manager = get_manager()
-    return {
-        "items": manager.news.latest_items(limit),
-        "status": manager.news.status.to_dict(),
-        "niv": round(manager.news.current_niv(), 4),
-        "cache_size": len(manager.news.cache.all()),
-        "providers": manager.news.cache.providers,
-    }
+    # Same builder the WebSocket snapshot uses, so the panel and the endpoint
+    # can never disagree.
+    return manager.news_payload(limit)
 
 
 @router.get("/api/news/critical")

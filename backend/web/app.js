@@ -13,7 +13,7 @@ const state = {
   pendingAsset: null,
   lockState: "COMPUTING",
   cycleNumber: 0,
-  cyclePeriod: 15,
+  cyclePeriod: 60,
   secondsIntoMinute: 0,
   lastCycleAt: null,
   signal: null,
@@ -32,7 +32,18 @@ const state = {
   emergency: null,
   emergencyUntil: 0,
   window: null,
-  winAnchor: null,        // {at, remaining} - one server reading, advanced locally
+  /* ---------------------------------------------------------------- clock --
+     ONE clock for the whole page.  The backend publishes the window as two
+     absolute instants (start and end, epoch ms) plus its own time; we measure
+     the offset between its clock and ours once, then count down to that fixed
+     instant.  Within a window the deadline NEVER moves: an unrelated message
+     arriving late cannot make the number jump, repeat or restart - which is
+     exactly what "too glitchy" was.  Only a new cycle id re-anchors. */
+  clock: null,            // {period, windowId, startedAtMs, endsAtMs, offsetMs}
+  serverOffsetMs: null,
+  clockSamples: 0,
+  lastSecondShown: null,
+  tickParts: null,
   outcomes: [],
   wiring: null,
   explain: null,
@@ -124,27 +135,23 @@ function send(payload) {
 
 function handle(msg) {
   switch (msg.type) {
-    case "HELLO": {
+    case "HELLO":
+    case "SIGNAL": {
+      // Both carry the complete snapshot.  SIGNAL means "a new window just
+      // opened": the countdown re-anchors to the new boundary and every panel
+      // redraws in the same pass.
       const d = msg.data;
-      state.asset = d.asset;
-      state.pendingAsset = d.pending_asset;
-      state.cycleNumber = d.status?.cycle?.cycle_number ?? 0;
-      state.degradation = d.status?.degradation_level;
-      renderAssetToggle();
-      renderStatus(d.status);
-      renderWarming(d.status);
-      anchorWindow(d.window || d.status?.window || d.signal?.window);
-      // The sentinel is a signal payload too - it just carries signal: null
-      // while the first window is being computed.  Rendering it keeps the
-      // widget layout complete instead of half-empty.
-      if (d.signal) {
-        state.signal = d.signal;
-        state.lockState = d.signal.lock_state || "LOCKED";
-        state.convictionNote = d.conviction_note || null;
-      }
-      state.formulas = d.formulas || {};
-      syncClock();
-      renderAll();
+      const boundary = msg.type === "SIGNAL";
+      applySnapshot(d, { rttMs: state.lastRttMs, force: boundary, boundary });
+      state.cycleNumber = d.cycle_number ?? d.status?.cycle?.cycle_number ?? state.cycleNumber;
+      // The snapshot normally carries history and outcomes itself; this is the
+      // belt-and-braces fetch when the payload was the cold-start sentinel.
+      if (boundary && !d.history) refreshHistory();
+      break;
+    }
+    case "PULSE": {
+      // One message, every panel: this is the "in parallel" contract.
+      applySnapshot(msg.data, { rttMs: state.lastRttMs });
       break;
     }
     case "CYCLE_START": {
@@ -158,42 +165,22 @@ function handle(msg) {
       $("degradation").textContent = degradationLabel(msg.data.degradation_level);
       break;
     }
-    case "SIGNAL": {
-      const previous = state.lastPrediction;
-      state.signal = msg.data;
-      state.lockState = msg.data.lock_state || "LOCKED";
-      state.convictionNote = msg.data.conviction_note || null;
-      state.formulas = msg.data.formulas || {};
-      state.formulaReadings = msg.data.readings || {};
-      state.formulaTraces = msg.data.traces || {};
-      anchorWindow(msg.data.window);
-      renderSignal();
-      // Haptics + a flash when the direction actually changes: the user should
-      // feel the new window arrive without staring at the screen.
-      if (msg.data.signal && msg.data.signal !== previous) {
-        haptic(msg.data.is_emergency_override ? [24, 60, 24] : [18]);
-      }
-      refreshHistory();
-      refreshOutcomes();
-      refreshBrainExplain();
-      break;
-    }
     case "NEXT_WINDOW_READY": {
+      // The next window's signal is computed and held.  This changes a pipeline
+      // flag, not any value the user reads, so it is picked up by the frame
+      // loop on its next second rather than repainting panels mid-window.
       state.nextReady = msg.data;
       if (state.window) state.window.prefetch_ready = true;
-      renderWidgetPanel();
       break;
     }
     case "FORMULA_UPDATE": {
-      state.liveFormulas = msg.data.formulas || {};
-      state.liveReadings = msg.data.readings || {};
-      state.liveTraces = msg.data.traces || {};
-      $("live-note").textContent = "live values " + (msg.data.note || "");
-      renderFormulas();
-      refreshTimings();
+      // Legacy shape (older backends / SIGNAL_PIPELINE=0).  Same one-pass path.
+      applySnapshot({ live_formulas: msg.data }, { rttMs: state.lastRttMs });
       break;
     }
     case "EMERGENCY_OVERRIDE": {
+      // Safety-critical, so it is not deferred to the next tick: the flip is
+      // applied the instant it arrives, in the same single render pass.
       state.emergency = msg.data;
       state.emergencyUntil = Date.now() + (msg.data.remaining_seconds || 180) * 1000;
       if (msg.data.signal) {
@@ -201,6 +188,7 @@ function handle(msg) {
         state.lockState = "EMERGENCY_OVERRIDE";
         state.convictionNote = msg.data.signal.conviction_note || null;
       }
+      if (msg.data.clock) applyClock(msg.data, { rttMs: state.lastRttMs });
       renderEmergency();
       renderSignal();
       break;
@@ -214,34 +202,167 @@ function handle(msg) {
       break;
     }
   }
-  renderAll();
 }
 
 /* ------------------------------------------------------------------ clock */
-/* The countdown is driven by one server reading per window ("seconds_remaining"),
-   advanced locally with a monotonic clock, so the number on screen always
-   belongs to the window the backend published. */
-function anchorWindow(window) {
-  if (!window) return;
-  state.window = window;
-  if (typeof window.seconds_remaining === "number") {
-    state.winAnchor = { at: performance.now(), remaining: window.seconds_remaining };
+/* ONE clock, ONE tick.
+
+   The backend owns the schedule: a 60-second window aligned to the UTC minute,
+   with refresh marks at fixed offsets inside it (t+15, t+30, t+45).  It sends
+   the window as absolute instants and the client counts down to a fixed point
+   in time - so the digits are smooth, they never jump when an unrelated message
+   arrives, and every panel refreshes on the same tick instead of each one
+   polling on a private timer ("not in parallel with other features"). */
+
+function serverNowMs() {
+  return Date.now() + (state.serverOffsetMs || 0);
+}
+
+/* Adopt the server clock from any payload that carries it.
+   Within a window the deadline is frozen; only a new cycle id re-anchors.  The
+   offset estimate is nudged (never snapped) so a slow network cannot shift the
+   deadline under the running countdown. */
+function applyClock(payload, opts = {}) {
+  const clock = payload?.clock || payload?.window?.clock || null;
+  if (!clock || typeof clock.window_ends_at_ms !== "number") {
+    if (payload?.window) state.window = payload.window;
+    return false;
   }
-  state.cyclePeriod = window.window_seconds || state.cyclePeriod;
+
+  // One-way delay estimate: half the round trip of the request that carried it.
+  const rttMs = typeof opts.rttMs === "number" ? opts.rttMs : 0;
+  const sample = (clock.server_time_ms + rttMs / 2) - Date.now();
+  if (state.serverOffsetMs === null) {
+    state.serverOffsetMs = sample;
+    state.clockSamples = 1;
+  } else {
+    // Trust the new sample slowly: at most 120 ms per message, so the numbers
+    // on screen never lurch, and never enough to move this window's deadline.
+    const step = clamp(sample - state.serverOffsetMs, -120, 120);
+    state.serverOffsetMs += step;
+    state.clockSamples += 1;
+  }
+
+  const sameWindow = state.clock && state.clock.windowId === clock.cycle_id;
+  const period = Number(clock.window_seconds || clock.period_seconds || state.cyclePeriod);
+  state.cyclePeriod = period > 0 ? period : state.cyclePeriod;
+  if (payload?.window) state.window = payload.window;
+
+  if (!sameWindow || opts.force) {
+    // New window: re-anchor to the instants the server published.
+    state.clock = {
+      windowId: clock.cycle_id,
+      period: state.cyclePeriod,
+      startedAtMs: clock.window_started_at_ms,
+      endsAtMs: clock.window_ends_at_ms,
+      minuteAligned: !!clock.minute_aligned,
+      ticks: clock.ticks || [],
+      freshnessMaxAge: clock.freshness_max_age_seconds,
+      windowEndsAt: clock.next_boundary_at,
+    };
+    state.lastSecondShown = null;   // force one redraw of the digits
+    state.newWindow = true;
+  } else {
+    // Same window: keep the deadline, refresh only the descriptive fields.
+    state.clock.ticks = clock.ticks || state.clock.ticks;
+    state.clock.minuteAligned = !!clock.minute_aligned;
+  }
+  return !sameWindow;
 }
 
 function windowRemaining() {
-  if (state.winAnchor) {
-    return Math.max(0, state.winAnchor.remaining - (performance.now() - state.winAnchor.at) / 1000);
+  if (!state.clock) return state.cyclePeriod || 60;
+  return Math.max(0, (state.clock.endsAtMs - serverNowMs()) / 1000);
+}
+
+function windowElapsed() {
+  return Math.max(0, (state.cyclePeriod || 60) - windowRemaining());
+}
+
+function anchorWindow(window) {
+  // Window blocks carry the clock too; this keeps the old call sites working.
+  if (!window) return false;
+  return applyClock({ window, clock: window.clock });
+}
+
+/* The single frame loop.  The ring animates every frame; the digits and the
+   clock-driven panels (freshness age, pipeline bar, emergency countdown) are
+   written only when the whole second changes, so nothing flickers. */
+function frame() {
+  const remaining = windowRemaining();
+  const period = state.cyclePeriod || 60;
+  const secs = clamp(Math.ceil(remaining - 1e-6), 0, Math.ceil(period));
+  const ring = $("w-ring");
+  if (ring) {
+    ring.style.setProperty("--frac", clamp(remaining / period, 0, 1).toFixed(4));
+    ring.classList.toggle("ready", !!state.window?.prefetch_ready);
+    ring.classList.toggle("urgent", secs <= 5);
   }
-  return state.cyclePeriod;
+  if ($("progress")) {
+    $("progress").style.width = `${clamp(100 - (remaining / period) * 100, 0, 100)}%`;
+  }
+  if (secs !== state.lastSecondShown) {
+    state.lastSecondShown = secs;
+    const el = $("w-countdown");
+    if (el) el.textContent = String(secs);
+    if ($("timer")) {
+      const mm = String(Math.floor(remaining / 60)).padStart(2, "0");
+      const ss = String(Math.floor(remaining % 60)).padStart(2, "0");
+      const icon = state.lockState === "COMPUTING" ? "\u23f3"
+        : state.lockState === "EMERGENCY_OVERRIDE" ? "\u26a1" : "\ud83d\udd12";
+      $("timer").innerHTML = `${mm}:${ss} <span id="lock-icon">${icon}</span>`;
+      $("timer").className = "timer" + (state.lockState === "EMERGENCY_OVERRIDE" ? " override" : "");
+      $("lock-state").textContent = state.lockState;
+      $("progress").className = "progress-fill" + (state.lockState === "EMERGENCY_OVERRIDE" ? " override" : "");
+      $("utc").textContent = new Date(serverNowMs()).toISOString().substr(11, 8) + "Z";
+    }
+    if ($("w-countdown-sub")) $("w-countdown-sub").innerHTML = countdownSubLine();
+    renderFreshness(state.prediction);
+    renderPipelineProgress();
+    renderWindowStrip();
+    if (state.emergencyUntil > Date.now()) renderConvictionBox();
+  }
+  state.raf = requestAnimationFrame(frame);
+}
+
+/* What the countdown is counting down to: the window boundary, on the same grid
+   every other panel refreshes on. */
+function countdownSubLine() {
+  const t = state.clock?.ticks || [];
+  const next = t.find((mark) => !mark.done && mark.seconds_until > 0);
+  const parts = next ? (next.parts || []).join(" + ") : "";
+  const every = state.clock?.minuteAligned ? "minute-aligned" : `every ${Math.round(state.cyclePeriod)}s`;
+  if (next) {
+    return `next refresh t+${Math.round(next.offset_seconds)}s <b>${Math.round(next.seconds_until)}s</b>` +
+      (parts ? ` · ${parts}` : "") + ` · ${every}`;
+  }
+  return `window closes at the boundary · every panel refreshes together · ${every}`;
+}
+
+/* REST is the safety net, not the schedule: it only runs while the socket is
+   down, so a healthy dashboard makes no polls of its own. */
+async function safetyNet() {
+  // Nothing to do while the socket is healthy - the backend is the schedule.
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+    const t0 = performance.now();
+    const current = await getJSON("/api/signal/current");
+    if (current && !current.error) {
+      const rttMs = performance.now() - t0;
+      applyClock({ clock: current.clock, window: current.window }, { rttMs });
+      applySnapshot(current, { source: "poll" });
+    }
+    const status = await getJSON("/api/signal/status");
+    if (status && !status.error) renderStatus(status);
+  }
+  if (!state.ready || state.startError) await pollReadiness();
 }
 
 async function syncClock() {
+  const t0 = performance.now();
   const status = await getJSON("/api/signal/status");
   if (!status) return;
-  renderStatus(status);
-  state.cyclePeriod = status.clock?.cycle_period_seconds || 15;
+  const rttMs = performance.now() - t0;
+  applyClock({ clock: status.window?.clock || status.clock, window: status.window }, { rttMs });
   state.secondsIntoMinute = status.clock?.seconds_into_minute || 0;
   if (status.lock) {
     state.lockState = status.lock.state;
@@ -251,58 +372,13 @@ async function syncClock() {
   }
   if (status.asset) state.asset = status.asset;
   state.pendingAsset = status.pending_asset;
-  anchorWindow(status.window);
+  renderStatus(status);
   if (!state.signal) {
     const current = await getJSON("/api/signal/current");
-    if (current?.signal) {
-      state.signal = current.signal;
-      state.convictionNote = current.conviction_note || null;
-      if (current.prediction) {
-        state.prediction = current.prediction;
-        state.predictionAnchoredAt = Date.now();
-      }
-      state.formulas = current.signal.formulas || {};
-      state.formulaReadings = current.signal.readings || {};
-      state.formulaTraces = current.signal.traces || {};
-    }
+    if (current && !current.error) applySnapshot(current, { source: "poll" });
   }
   renderAssetToggle();
   renderAll();
-}
-
-function tickClock() {
-  const period = state.cyclePeriod || 15;
-  const remaining = windowRemaining();
-  const elapsed = Math.max(0, period - remaining);
-
-  // --- the widget row-1 countdown: 1..60, never blank ------------------
-  const secs = clamp(Math.ceil(remaining), 0, Math.ceil(period));
-  const countEl = $("w-countdown");
-  if (countEl) {
-    countEl.textContent = secs > 0 ? String(secs) : "0";
-    const ring = $("w-ring");
-    ring.style.setProperty("--frac", clamp(remaining / period, 0, 1).toFixed(3));
-    ring.classList.toggle("ready", !!state.window?.prefetch_ready);
-    ring.classList.toggle("urgent", secs <= 5);
-  }
-
-  // --- legacy timer card (kept for SIGNAL_PIPELINE=0) ------------------
-  if ($("timer")) {
-    const mm = String(Math.floor(remaining / 60)).padStart(2, "0");
-    const ss = String(Math.floor(remaining % 60)).padStart(2, "0");
-    const icon = state.lockState === "COMPUTING" ? "\u23f3"
-      : state.lockState === "EMERGENCY_OVERRIDE" ? "\u26a1" : "\ud83d\udd12";
-    $("timer").innerHTML = `${mm}:${ss} <span id="lock-icon">${icon}</span>`;
-    $("timer").className = "timer" + (state.lockState === "EMERGENCY_OVERRIDE" ? " override" : "");
-    $("lock-state").textContent = state.lockState;
-    $("progress").style.width = `${clamp(100 - (remaining / period) * 100, 0, 100)}%`;
-    $("progress").className = "progress-fill" + (state.lockState === "EMERGENCY_OVERRIDE" ? " override" : "");
-    $("utc").textContent = new Date().toISOString().substr(11, 8) + "Z";
-  }
-
-  renderFreshness(state.prediction);
-  renderPipelineProgress();
-  renderWindowStrip();
 }
 
 /* The freshness contract: the prediction may never be older than the
@@ -317,10 +393,11 @@ function renderFreshness(prediction) {
     chip.className = "fresh-chip";
     return;
   }
-  const maxAge = p.max_age_seconds || 15;
+  const maxAge = p.max_age_seconds || state.clock?.freshnessMaxAge || 65;
   let age = typeof p.age_seconds === "number" ? p.age_seconds : null;
-  if (age !== null && state.predictionAnchoredAt) {
-    age += (Date.now() - state.predictionAnchoredAt) / 1000;
+  if (age !== null && typeof state.predictionAnchoredServerMs === "number") {
+    // Advanced on the *server* clock, the same one the countdown runs on.
+    age += Math.max(0, (serverNowMs() - state.predictionAnchoredServerMs) / 1000);
   }
   if (age === null) {
     chip.textContent = "—";
@@ -367,7 +444,7 @@ function renderPipelineProgress() {
   const fill = $("w-pipeline-fill");
   const ready = !!w.prefetch_ready;
   const lead = state.config?.lock_deadline_seconds || 8;
-  const period = state.cyclePeriod || 15;
+  const period = state.cyclePeriod || 60;
   // Progress of the *next* window's computation: idle until the prefetch lead
   // window opens (the engine deliberately computes late so its snapshot is
   // fresh), then 0 -> 100 %.
@@ -376,9 +453,13 @@ function renderPipelineProgress() {
   fill.style.width = `${Math.round(progress * 100)}%`;
   fill.classList.toggle("ready", ready);
   const nextCycle = (state.cycleNumber || 0) + 1;
+  const computedAgo = state.window?.computed_seconds_ago;
+  const proof = computedAgo
+    ? ` · this window's signal was computed <b>${Math.round(computedAgo)}s</b> before it opened`
+    : "";
   $("w-next").innerHTML = ready
-    ? `next signal <b>#${nextCycle}</b> computed and held — it is revealed at the boundary`
-    : `computing signal <b>#${nextCycle}</b> … ${Math.round(progress * 100)}%`;
+    ? `next signal <b>#${nextCycle}</b> computed and held — revealed at the boundary${proof}`
+    : `computing signal <b>#${nextCycle}</b> … ${Math.round(progress * 100)}%${proof}`;
 }
 
 /* ---------------------------------------------------------------- renders */
@@ -446,11 +527,15 @@ function renderWindowStrip() {
   $("w-window-span").textContent =
     `${(w.valid_from || "").substr(11, 8)}–${(w.valid_until || "").substr(11, 8)}Z`;
   const bootstrap = !state.signal || state.signal.preview;
+  const period = state.clock?.period || state.cyclePeriod || 60;
+  const cadence = state.clock?.minuteAligned
+    ? `${Math.round(period)}s window, minute-aligned`
+    : `${Math.round(period)}s window`;
+  const ticks = (state.clock?.ticks || []).map((m) => `t+${Math.round(m.offset_seconds)}s`).join(" · ");
   $("w-clock-note").textContent = !w.pipeline
     ? "SIGNAL_PIPELINE=0 · literal 8-second computing window"
-    : bootstrap
-        ? "bootstrap window: computed at the boundary, pipelining starts next window"
-        : `pipelined: window ${state.cycleNumber} was computed during window ${state.cycleNumber - 1}`;
+    : `${cadence} · every panel refreshes together${ticks ? ` at ${ticks}` : ""}` +
+      (bootstrap ? " · bootstrapping" : ` · window ${state.cycleNumber}`);
   $("lock-state").textContent = state.lockState;
 }
 
@@ -547,7 +632,7 @@ function renderSignal() {
 
   renderHedge(s);
   renderNews(s);
-  renderWidgetPanel();
+  if (!state.inRenderAll) renderWidgetPanel();
   renderConvictionBox();
   if ($("price")) $("price").textContent = fmtMoney(s.price);
 }
@@ -588,12 +673,6 @@ function renderWidgetPanel() {
     : (s.preview
         ? "bootstrap window — computed at the boundary"
         : `computed ${(s.computed_at || "").substr(11, 8)}Z · confidence ${fmtPct(s.confidence)}`);
-
-  // ---- countdown sub-line: prove the pipeline ---------------------------
-  const computedAgo = w.computed_seconds_ago;
-  $("w-countdown-sub").innerHTML = computedAgo
-    ? `showing signal computed <b>${Math.round(computedAgo)}s</b> before this window started`
-    : (has ? "waiting for the window clock…" : "engine starting…");
 
   // ---- row 2: risk ------------------------------------------------------
   const risk = s?.risk || {};
@@ -650,10 +729,10 @@ function renderWidgetPanel() {
 
   const engine = state.config?.simulated
     ? `simulated market data · ${state.config?.market_source || "simulator"}`
-    : `${state.config?.market_source || "live feed"} · ${state.config?.cycle_period_seconds || 15}s windows`;
+    : `${state.config?.market_source || "live feed"} · ${state.config?.cycle_period_seconds || 60}s windows`;
   $("w-engine").textContent =
     `${engine}${state.window?.pipeline ? " · pipelined" : ""}` +
-    ` · ${Math.round(state.window?.window_seconds || state.cyclePeriod || 15)}s predictions`;
+    ` · ${Math.round(state.window?.window_seconds || state.cyclePeriod || 60)}s predictions`;
 }
 
 /* The conviction box: the signal, its conviction and the size it implies.
@@ -742,9 +821,8 @@ function renderNews(s) {
   }
 }
 
-async function refreshNewsList() {
-  const data = await getJSON("/api/news?limit=5");
-  if (!data) return;
+function renderNewsList(data) {
+  if (!data || data.error) return;
   $("news-coverage").textContent = `coverage ${data.status?.coverage ?? "—"}`;
   const list = $("news-list");
   list.innerHTML = "";
@@ -760,9 +838,12 @@ async function refreshNewsList() {
   });
 }
 
-async function refreshAgents() {
-  const data = await getJSON("/api/agents");
-  if (!data) return;
+async function refreshNewsList() {
+  renderNewsList(await getJSON("/api/news?limit=5"));
+}
+
+function renderAgents(data) {
+  if (!data || data.error) return;
   const weights = data.weights || {};
   const rows = [
     { key: "drosophila", label: "🧠 Drosophila CCSv2", weight: weights.drosophila },
@@ -804,6 +885,10 @@ async function refreshAgents() {
   if (data.brain?.status) {
     $("brain-status").textContent = data.brain.status;
   }
+}
+
+async function refreshAgents() {
+  renderAgents(await getJSON("/api/agents"));
 }
 
 /* ---------------- brain wiring card (item 6): where the fly is used ---- */
@@ -856,8 +941,7 @@ function renderWiringTable() {
     `→ MBONs → lateral horn → CCSv2/KCAE → ${Math.round((state.wiring.fusion_weight || 0.4) * 100)}% of the fused decision.</p>`;
 }
 
-async function refreshBrainExplain() {
-  const data = await getJSON("/api/brain/explain");
+function renderBrainExplain(data) {
   if (!data || data.error) return;
   state.explain = data;
   if (!data.available) {
@@ -883,17 +967,23 @@ async function refreshBrainExplain() {
   renderBrainPipeline();
 }
 
-async function refreshBrain() {
-  const data = await getJSON("/api/brain/status");
-  if (!data) return;
+async function refreshBrainExplain() {
+  renderBrainExplain(await getJSON("/api/brain/explain"));
+}
+
+function renderBrainStatus(data) {
+  if (!data || data.error) return;
   $("brain-status").textContent = data.status;
   $("brain-detail").textContent =
     `${data.health?.message || data.message} · checksum ${data.matrix?.checksum || "—"} · gain ${data.gain}`;
 }
 
-async function refreshHistory() {
-  const data = await getJSON("/api/signal/history?limit=12");
-  if (!data) return;
+async function refreshBrain() {
+  renderBrainStatus(await getJSON("/api/brain/status"));
+}
+
+function renderHistory(data) {
+  if (!data || data.error) return;
   const list = $("history");
   list.innerHTML = "";
   (data.history || []).forEach((s) => {
@@ -907,9 +997,12 @@ async function refreshHistory() {
   });
 }
 
-async function refreshOutcomes() {
-  const data = await getJSON("/api/signal/outcomes");
-  if (!data) return;
+async function refreshHistory() {
+  renderHistory(await getJSON("/api/signal/history?limit=12"));
+}
+
+function renderOutcomes(data) {
+  if (!data || data.error) return;
   state.outcomes = data.rows || [];
   if ($("win-rate")) $("win-rate").textContent = `win rate ${fmtPct(data.win_rate)} (${data.count} outcomes)`;
   renderWidgetPanel();
@@ -925,13 +1018,20 @@ async function refreshOutcomes() {
   });
 }
 
-async function refreshTimings() {
-  const data = await getJSON("/api/formulas/timings");
+async function refreshOutcomes() {
+  renderOutcomes(await getJSON("/api/signal/outcomes"));
+}
+
+function renderTimings(data) {
   if (!data || !data.timings_ms) return;
   const top = Object.entries(data.timings_ms).slice(0, 5)
     .map(([k, v]) => `${k} ${v.toFixed(3)}ms`).join(" · ");
   $("timings").textContent =
     `total formula pass ${data.total_ms?.toFixed(2) ?? "?"}ms (budget ${data.budget_ms}ms) · slowest: ${top}`;
+}
+
+async function refreshTimings() {
+  renderTimings(await getJSON("/api/formulas/timings"));
 }
 
 /* ------------------------------------------------------------ formular UI */
@@ -958,13 +1058,21 @@ function selfTestVerdict(name) {
   return list.find((f) => f.name === name) || null;
 }
 
-async function refreshLiveFormulas() {
-  const data = await getJSON("/api/formulas/live");
-  if (!data) return;
+function renderLiveFormulas(data) {
+  if (!data || data.error) return;
   state.liveFormulas = data.formulas || {};
   state.liveReadings = data.readings || {};
   state.liveTraces = data.traces || {};
+  if (data.note) {
+    const note = $("live-note");
+    if (note) note.textContent = "live values " + data.note;
+  }
+  if (data.timings_ms) renderTimings(data);
   renderFormulas();
+}
+
+async function refreshLiveFormulas() {
+  renderLiveFormulas(await getJSON("/api/formulas/live"));
 }
 
 function renderFormulas() {
@@ -1295,13 +1403,81 @@ $("collapse-all").addEventListener("click", () => {
   renderFormulas();
 });
 
-/* ------------------------------------------------------------------ boot */
+/* Is this object the signal payload the panel renders?  It has the frozen
+   levels and the lock state; its `signal` field is the direction ("BUY"). */
+function isSignalPayload(value) {
+  return !!value && typeof value === "object" &&
+    "lock_state" in value && "risk" in value && "cycle_number" in value;
+}
+
+/* ------------------------------------------------------- one snapshot, one pass
+   Every panel on the page is rendered from a single payload.  The boundary
+   message (SIGNAL) and the mid-window heartbeat (PULSE) carry the same feature
+   set, so the signal, the formulas, the news list, the agents, the brain and
+   the accuracy panel all change on the same frame - in parallel, never one
+   panel at a time on a timer of its own. */
+function applySnapshot(data, opts = {}) {
+  if (!data || data.error) return;
+  const anchored = applyClock(data, { rttMs: opts.rttMs, force: opts.force });
+  if (data.asset) state.asset = data.asset;
+  if ("pending_asset" in data) state.pendingAsset = data.pending_asset;
+  if (data.lock_state) state.lockState = data.lock_state;
+  if (data.conviction_note !== undefined) state.convictionNote = data.conviction_note;
+  if (data.degradation_level !== undefined) {
+    const el = $("degradation");
+    if (el) el.textContent = degradationLabel(data.degradation_level);
+  }
+  if (data.status) renderStatus(data.status);
+  // A signal *payload* is the object the panel renders: it carries the frozen
+  // levels and the lock state, and its own `signal` field is the direction.
+  // (A pulse carries `locked_side` instead - the two must never be confused.)
+  if (isSignalPayload(data)) {
+    state.signal = data;
+    state.formulas = data.formulas || state.formulas;
+    state.formulaReadings = data.readings || state.formulaReadings;
+    state.formulaTraces = data.traces || state.formulaTraces;
+  } else if (isSignalPayload(data.signal)) {
+    state.signal = data.signal;
+  }
+  if (data.prediction) {
+    state.prediction = data.prediction;
+    state.predictionAnchoredAt = Date.now();
+    state.predictionAnchoredServerMs = serverNowMs();
+  }
+  if (data.live_formulas) renderLiveFormulas(data.live_formulas);
+  if (data.news_feed) renderNewsList(data.news_feed);
+  if (data.agents_status) renderAgents(data.agents_status);
+  if (data.brain_explain) renderBrainExplain(data.brain_explain);
+  if (data.brain_status) renderBrainStatus(data.brain_status);
+  if (data.history) renderHistory(data.history);
+  if (data.outcomes) renderOutcomes(data.outcomes);
+  if (data.accuracy && state.prediction) state.prediction.accuracy = data.accuracy;
+  if (data.window) state.window = data.window;
+  state.lastSnapshotAt = Date.now();
+  state.snapshotCount = (state.snapshotCount || 0) + 1;
+  renderAll();
+  if (anchored) {
+    // A new window: the prediction may have flipped - feel it and say it.
+    const previous = state.lastPrediction;
+    if (state.signal?.signal && state.signal.signal !== previous) {
+      haptic(state.signal.is_emergency_override ? [24, 60, 24] : [18]);
+    }
+  }
+}
+
+/* One pass, in a fixed order: the panels that read state.signal render after it
+   has been replaced, and nothing repaints twice inside the pass. */
 function renderAll() {
-  renderAssetToggle();
-  renderSignal();
-  renderFormulas();
-  renderWidgetPanel();
-  renderConvictionBox();
+  state.inRenderAll = true;
+  try {
+    renderAssetToggle();
+    renderSignal();
+    renderFormulas();
+    renderWidgetPanel();
+    renderConvictionBox();
+  } finally {
+    state.inRenderAll = false;
+  }
 }
 
 async function pollReadiness() {
@@ -1315,40 +1491,39 @@ async function pollReadiness() {
   });
 }
 
+window.addEventListener("load", pollReadiness, { once: true });
+
 async function boot() {
   state.config = await getJSON("/api/system/config");
   if (state.config && !state.config.error) {
-    state.cyclePeriod = state.config.cycle_period_seconds || 15;
+    state.cyclePeriod = state.config.cycle_period_seconds || 60;
     state.asset = (state.config.assets || ["BTC"])[0];
   } else {
     state.config = {};
   }
   renderKeyStates();
   maybeShowSetupBanner();
+
+  /* Static material: fetched once, it does not change while the page is open. */
   await loadFormulaMeta();
   await loadSelfTest();
-  await refreshLiveFormulas();
-  await syncClock();
-  await refreshHistory();
-  await refreshOutcomes();
-  await refreshNewsList();
-  await refreshAgents();
-  await refreshBrain();
   await loadWiring();
-  await refreshBrainExplain();
-  await refreshTimings();
+
+  /* Everything else arrives in the HELLO snapshot, and then in one message per
+     tick.  Before the socket is up (or if it is down) one REST pass paints the
+     page so it is never blank. */
+  const t0 = performance.now();
+  state.lastRttMs = 0;
+  await syncClock();
+  state.lastRttMs = performance.now() - t0;
+
+  /* ONE frame loop drives the countdown and every clock-derived readout. */
+  state.raf = requestAnimationFrame(frame);
+
+  /* ONE safety net, and it does nothing while the socket is healthy. */
+  setInterval(safetyNet, 5000);
+
   connect();
-  setInterval(tickClock, 100);
-  setInterval(syncClock, 20000);
-  setInterval(refreshAgents, 5000);
-  setInterval(refreshNewsList, 15000);
-  setInterval(refreshBrain, 20000);
-  setInterval(pollReadiness, 2000);
-  setInterval(refreshHistory, 30000);
-  setInterval(refreshOutcomes, 15000);
-  setInterval(refreshBrainExplain, 10000);
-  setInterval(renderEmergency, 1000);
-  setInterval(refreshLiveFormulas, 15000);
 }
 
 boot();

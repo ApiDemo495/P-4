@@ -12,12 +12,7 @@ router = APIRouter()
 
 @router.get("/api/brain/status")
 async def brain_status() -> dict:
-    manager = get_manager()
-    payload = manager.brain.status_dict()
-    payload["health"] = (
-        manager.brain.last_health.to_dict() if manager.brain.last_health else None
-    )
-    return payload
+    return get_manager().brain_payload()
 
 
 @router.get("/api/brain/matrix")
@@ -67,4 +62,4 @@ async def brain_wiring() -> dict:
 @router.get("/api/brain/explain")
 async def brain_explanation() -> dict:
     """Plain-language account of what the brain just did, for the locked window."""
-    return brain_explain.explain(get_manager())
+    return get_manager().brain_explain_payload()

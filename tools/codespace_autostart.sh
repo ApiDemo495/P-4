@@ -266,9 +266,18 @@ banner() {
   if [ -n "${LOCKED_SIDE:-}" ]; then
     printf '  right now    %s locked · %s\n' "$LOCKED_SIDE" "$(prediction_age)"
   fi
-  printf '\n  predictions refresh every %s seconds and are never older than %s\n' \
-    "$(PYTHONPATH="$REPO_ROOT" "$PY" -c 'from backend.core import config as c; print(int(c.SETTINGS.cycle_seconds))' 2>/dev/null || echo 12)" \
-    "$(PYTHONPATH="$REPO_ROOT" "$PY" -c 'from backend.core import config as c; print(int(c.SETTINGS.prediction_max_age_seconds))' 2>/dev/null || echo 15)"
+  # The *effective* timing: PREDICTION_MAX_AGE_SECONDS and OUTCOME_HORIZON_SECONDS
+  # default to "0 = as long as its own window", so the raw config would print 0.
+  local timing cadence maxage horizon
+  timing="$(PYTHONPATH="$REPO_ROOT" "$PY" -c \
+    'from backend.core import config as c; s = c.SETTINGS; print(int(s.cycle_period_seconds), int(s.prediction_expired), int(s.outcome_horizon))' \
+    2>/dev/null || true)"
+  read -r cadence maxage horizon <<EOF
+$timing
+EOF
+  [ -n "${cadence:-}" ] || cadence=60
+  printf '\n  %ss countdown · every panel refreshes together at t+15 / t+30 / t+45\n' "$cadence"
+  printf '  the signal on screen is always this window'"'"'s own · scored %ss later\n' "${horizon:-60}"
   printf '  it restarts itself if it ever stops; this container brings it back on wake\n\n'
 }
 

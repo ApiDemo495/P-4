@@ -2,13 +2,21 @@
 
 ``/ws/signals`` is the single real-time channel.  Message types:
 
-    HELLO             connection accepted + current state
-    CYCLE_START       t=0: signal cleared, "Computing..."
-    SIGNAL            t~8 s: the LOCKED signal (sent once per cycle)
-    FORMULA_UPDATE    every 15 s: live formula values, signal stays locked
+    HELLO             connection accepted + current state + full snapshot
+    SIGNAL            at the boundary: the LOCKED signal for the window that
+                      just started, plus the same snapshot (one render pass)
+    PULSE             on every mark of the window grid (t+15, t+30, t+45 of a
+                      60 s window): live formulas, news, agents, brain, accuracy
+                      - all in ONE message, so every panel refreshes together
+    CYCLE_START       only with SIGNAL_PIPELINE=0: signal cleared, "Computing..."
     EMERGENCY_OVERRIDE  critical news event -> the exit side (flip of the open
                         direction); the protocol is binary, so there is no HOLD
     OUTCOME           60 s later: win/loss for the DRG learner
+
+Every message that carries a window also carries ``clock``: the absolute
+(window_started_at_ms, window_ends_at_ms, server_time_ms, cycle_id) block both
+frontends render their countdown from.  The countdown can therefore never drift
+or restart when an unrelated message arrives.
 """
 
 from __future__ import annotations
@@ -41,24 +49,21 @@ async def signals_socket(websocket: WebSocket) -> None:
     log.info("WebSocket client connected (%d total)", len(manager._subscribers))
 
     try:
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "type": "HELLO",
-                    "data": {
-                        "asset": manager.asset,
-                        "pending_asset": manager.pending_asset,
-                        "lock": manager.lock.status(),
-                        "status": manager.status(),
-                        "signal": manager.signal_payload(),
-                        "window": manager.window_status(),
-                        "formulas": manager.last_live_formulas,
-                        "conviction_note": manager.conviction_note,
-                        "assets": list(cfg.ASSETS),
-                    },
-                }
-            )
+        # One snapshot on connect: the client paints every panel from this
+        # single message instead of firing six REST requests on boot.
+        snapshot = manager.snapshot_payload(include_history=True)
+        snapshot.update(
+            {
+                "asset": manager.asset,
+                "pending_asset": manager.pending_asset,
+                "lock": manager.lock.status(),
+                "status": manager.status(),
+                "formulas": manager.last_live_formulas,
+                "conviction_note": manager.conviction_note,
+                "assets": list(cfg.ASSETS),
+            }
         )
+        await websocket.send_text(json.dumps({"type": "HELLO", "data": snapshot}))
 
         async def pump() -> None:
             while True:
@@ -138,6 +143,9 @@ async def current_signal() -> dict:
         "prediction_stale": prediction["state"] == "STALE",
         "conviction_note": manager.conviction_note,
         "window": manager.window_status(),
+        # The same authoritative clock the WebSocket pushes, so a client that
+        # can only poll still counts down to the true boundary.
+        "clock": manager.master_clock(),
         "asset": manager.asset,
         "pending_asset": manager.pending_asset,
         "degradation_level": int(manager.degradation),
@@ -147,18 +155,13 @@ async def current_signal() -> dict:
 @router.get("/api/signal/history")
 async def signal_history(limit: int = 20) -> dict:
     manager = get_manager()
-    return {"history": manager.lock.recent_history(min(max(limit, 1), 240))}
+    return manager.history_payload(limit)
 
 
 @router.get("/api/signal/outcomes")
 async def outcomes() -> dict:
     manager = get_manager()
-    rows = manager.outcomes.array()
-    return {
-        "count": int(rows.shape[0]),
-        "win_rate": round(manager.outcomes.win_rate(), 4),
-        "rows": [{"outcome": float(o), "pnl_bps": float(p)} for o, p in rows],
-    }
+    return manager.outcomes_payload()
 
 
 @router.post("/api/assets/switch")

@@ -54,6 +54,21 @@ from backend.news.news_engine import NewsEngine
 log = logging.getLogger("drosophila.cycle")
 
 
+def _grid_offsets(every: float, period: float) -> list[float]:
+    """Marks at every, every*2, ... inside ``period`` (never at the boundary)."""
+    if every <= 0 or period <= 0:
+        return []
+    offsets: list[float] = []
+    step = every
+    # Guard against a pathological cadence producing thousands of marks.
+    for index in range(1, 65):
+        offset = step * index
+        if offset >= period - 0.05:
+            break
+        offsets.append(offset)
+    return offsets
+
+
 def _iso(timestamp: float) -> str:
     """Wall-clock ISO-8601 (UTC) stamp, second precision - what the UI renders."""
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp))
@@ -403,9 +418,14 @@ class CycleManager:
         # panel still says "computed Xs before this window started".
         self.published_computed_at = deadline_wall
         self.published_compute_ms = self.prefetch_ms
-        await self.broadcast({"type": "SIGNAL", "data": self.signal_payload(locked)})
+        await self.broadcast(
+            {
+                "type": "SIGNAL",
+                "data": self.snapshot_payload(locked, include_history=True),
+            }
+        )
         self._schedule_outcome(locked, None)
-        asyncio.create_task(self._live_refresh_loop(cycle, time.perf_counter()))
+        asyncio.create_task(self._heartbeat_loop(cycle, deadline_wall, self.window_valid_until))
         log.info(
             "window %d published %s (%.0f%%) computed %.1fs earlier",
             cycle, locked.signal, locked.confidence * 100,
@@ -706,11 +726,20 @@ class CycleManager:
         if fusion.weak:
             self.stats.weak_windows += 1
 
-        await self.broadcast({"type": "SIGNAL", "data": self.signal_payload(locked)})
+        await self.broadcast(
+            {
+                "type": "SIGNAL",
+                "data": self.snapshot_payload(locked, include_history=True),
+            }
+        )
         self._schedule_outcome(locked, snapshot)
 
-        # --- 15-second live formula refresh (never touches the signal) ----
-        asyncio.create_task(self._live_refresh_loop(self.stats.cycle_number, started))
+        # --- one heartbeat for the whole dashboard, on the window grid ----
+        asyncio.create_task(
+            self._heartbeat_loop(
+                self.stats.cycle_number, self.window_valid_from, self.window_valid_until
+            )
+        )
 
     async def _hold_until_lock_deadline(self, cycle_started: float) -> None:
         """Wait out the "Computing..." window before publishing the signal."""
@@ -829,51 +858,74 @@ class CycleManager:
     # ------------------------------------------------------------------
     # Live formula refresh (15 s) - Rule 2: the signal panel does NOT update
     # ------------------------------------------------------------------
-    async def _live_refresh_loop(self, cycle_number: int, cycle_started: float) -> None:
-        # The Formula Explorer must refresh *inside* the window it belongs to.
-        # With the 15-second cadence the nominal 15-second refresh would land
-        # exactly on the next boundary, so the interval is capped at a third of
-        # the window: the panel always shows numbers from the current window.
-        cadence = max(
-            0.2,
-            min(
-                self.settings.scaled(self.settings.formula_refresh_seconds),
-                self.settings.cycle_period_seconds / 3.0,
-            ),
-        )
+    async def _heartbeat_loop(self, cycle_number: int, started: float, ends: float) -> None:
+        """One PULSE per mark on the grid - everything refreshes together.
+
+        This used to be a private 15-second formula timer, and the dashboard ran
+        eight more of them (news, agents, brain, readiness, history...).  The
+        user's report was exactly that: *"not in parallel with other features, it
+        randomly running"*.  So there is now one schedule, owned by the window,
+        and one message per mark carrying every feature the dashboard shows.
+        A client that receives a PULSE renders the whole page from it in a single
+        pass, at the same instant, and the countdown it is running was computed
+        from the same grid.
+        """
         try:
-            while True:
-                await asyncio.sleep(cadence)
+            for mark in self.tick_grid(started, ends):
+                await self._sleep_until(mark["at_wall"])
                 if self._stop.is_set() or self.stats.cycle_number != cycle_number:
                     return
-                snapshot = self.market.freeze(
-                    news_items=self.news.cache.latest(5),
-                    drg_outcomes=self.outcomes.array(),
-                )
-                result = self.formulas.run(snapshot, self.asset)
-                self.last_live_formulas = {k: round(v, 6) for k, v in result.values.items()}
+                parts = mark["parts"]
+                if "news" in parts:
+                    # Fresh headlines on the tick, not on a private timer.
+                    try:
+                        await self.news.poll_all()
+                    except Exception as exc:  # noqa: BLE001 - news is optional
+                        log.debug("news poll on tick failed: %s", exc)
+                if "formulas" in parts:
+                    snapshot = self.market.freeze(
+                        news_items=self.news.cache.latest(5),
+                        drg_outcomes=self.outcomes.array(),
+                    )
+                    result = self.formulas.run(snapshot, self.asset)
+                    self.last_live_result = result
+                    self.last_live_formulas = {k: round(v, 6) for k, v in result.values.items()}
                 await self.broadcast(
                     {
-                        "type": "FORMULA_UPDATE",
+                        "type": "PULSE",
                         "data": {
                             "cycle_number": cycle_number,
+                            "parts": parts,
+                            "offset_seconds": mark["offset_seconds"],
                             "timestamp": self.clock.iso(),
-                            "note": "Live formula values only. Signal remains LOCKED.",
-                            "signal": self.lock.current_signal.signal
+                            "clock": self.master_clock(),
+                            "window": self.window_status(),
+                            "note": "Live values only - the signal stays LOCKED until the boundary.",
+                            "lock": self.lock.status(),
+                            # NB: deliberately NOT called "signal".  A signal
+                            # *payload* uses "signal" for the locked direction,
+                            # and clashing the two made the client mistake a
+                            # pulse for a signal payload.
+                            "locked_side": self.lock.current_signal.signal
                             if self.lock.current_signal
                             else None,
-                            "formulas": self.last_live_formulas,
-                            "readings": _readings_for(self.last_live_result),
-                            "traces": self.last_live_result.traces
-                            if self.last_live_result is not None
-                            else {},
+                            "live_formulas": self.live_formulas_payload(
+                                note=(
+                                    f"live at t+{int(mark['offset_seconds'])}s of window "
+                                    f"{cycle_number}; the signal stays LOCKED until the boundary"
+                                )
+                            ),
+                            "agents_status": self.agents_payload(),
+                            "news_feed": self.news_payload(limit=5),
+                            "accuracy": self.accuracy_block(),
+                            "brain_explain": self.brain_explain_payload(),
                         },
                     }
                 )
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
-            log.debug("live formula refresh stopped: %s", exc)
+            log.debug("heartbeat stopped: %s", exc)
 
     # ==================================================================
     # Emergency handling
@@ -950,7 +1002,7 @@ class CycleManager:
         task.add_done_callback(self._outcome_tasks.discard)
 
     async def _evaluate_outcome(self, signal: FrozenSignal, snapshot: FrozenMarketSnapshot) -> None:
-        horizon = self.settings.scaled(self.settings.outcome_horizon_seconds)
+        horizon = self.settings.outcome_horizon
         await asyncio.sleep(horizon)
         entry = signal.price or (
             snapshot.last_price(signal.asset) if snapshot is not None else 0.0
@@ -1003,6 +1055,89 @@ class CycleManager:
     # ==================================================================
     # Public API surface
     # ==================================================================
+    # ------------------------------------------------------------------
+    # Feature payloads: one shape, used by both the REST mirrors and the
+    # WebSocket snapshot, so a panel can never disagree with its endpoint.
+    # ------------------------------------------------------------------
+    def news_payload(self, limit: int = 5) -> dict:
+        return {
+            "items": self.news.latest_items(limit),
+            "status": self.news.status.to_dict(),
+            "niv": round(self.news.current_niv(), 4),
+            "cache_size": len(self.news.cache.all()),
+            "providers": self.news.cache.providers,
+        }
+
+    def agents_payload(self) -> dict:
+        return self.agents.status_payload()
+
+    def brain_payload(self) -> dict:
+        """Exactly what ``/api/brain/status`` returns, built without HTTP."""
+        return self.brain.status_dict()
+
+    def history_payload(self, limit: int = 12) -> dict:
+        return {"history": self.lock.recent_history(min(max(limit, 1), 240))}
+
+    def outcomes_payload(self) -> dict:
+        rows = self.outcomes.array()
+        return {
+            "count": int(rows.shape[0]),
+            "win_rate": round(self.outcomes.win_rate(), 4),
+            "rows": [{"outcome": float(o), "pnl_bps": float(p)} for o, p in rows],
+        }
+
+    def brain_explain_payload(self) -> dict:
+        """What the brain just did, in plain language - the /api/brain/explain shape."""
+        # Imported here: backend.brain.explain imports the manager's module.
+        from backend.brain import explain as brain_explain
+
+        return brain_explain.explain(self)
+
+    def live_formulas_payload(self, note: str | None = None) -> dict:
+        """The Formula Explorer block: live values, readings, traces, timings.
+
+        Same shape as ``/api/formulas/live`` (which now calls this), so the
+        Formula Explorer renders identically whether the values arrived in a
+        PULSE or over REST.
+        """
+        result = self.last_live_result
+        payload = {
+            "cycle_number": self.stats.cycle_number,
+            "timestamp": self.clock.iso(),
+            "note": note or "Live formula values only. Signal remains LOCKED.",
+            "signal": self.lock.current_signal.signal if self.lock.current_signal else None,
+            "formulas": dict(self.last_live_formulas),
+            "readings": _readings_for(result) if result is not None else {},
+            "traces": result.traces if result is not None else {},
+            "timings_ms": (
+                {k: round(float(v), 4) for k, v in result.timings_ms.items()}
+                if result is not None
+                else {}
+            ),
+            "total_ms": round(result.total_ms, 4) if result is not None else 0.0,
+        }
+        return payload
+
+    def snapshot_payload(self, signal: FrozenSignal | None = None, *, include_history: bool = False) -> dict:
+        """Everything the dashboard renders, in one message.
+
+        This is what makes the panels update *in parallel*: the client applies
+        one snapshot in a single render pass, so the signal, the formulas, the
+        news list, the agents and the accuracy panel all change on the same
+        frame instead of on five private timers.
+        """
+        payload = self.signal_payload(signal)
+        payload["clock"] = self.master_clock()
+        payload["live_formulas"] = self.live_formulas_payload()
+        payload["agents_status"] = self.agents_payload()
+        payload["news_feed"] = self.news_payload(limit=5)
+        payload["accuracy"] = self.accuracy_block()
+        payload["brain_explain"] = self.brain_explain_payload()
+        if include_history:
+            payload["history"] = self.history_payload(limit=12)
+            payload["outcomes"] = self.outcomes_payload()
+        return payload
+
     def signal_payload(self, signal: FrozenSignal | None = None) -> dict:
         """The message the dashboard and the Flutter client both render.
 
@@ -1158,7 +1293,7 @@ class CycleManager:
                 else ("WIN" if rows[-1, 0] > 0 else "LOSS" if rows[-1, 0] < 0 else "FLAT")
             ),
             "last_pnl_bps": None if not evaluated else round(float(rows[-1, 1]), 2),
-            "target_seconds": round(self.settings.outcome_horizon_seconds, 1),
+            "target_seconds": round(self.settings.outcome_horizon, 1),
             "per_side": per_side,
         }
 
@@ -1284,6 +1419,105 @@ class CycleManager:
         )
         return True
 
+    # ------------------------------------------------------------------
+    # One clock, one tick (the countdown contract)
+    # ------------------------------------------------------------------
+    def tick_grid(self, started: float, ends: float) -> list[dict]:
+        """The refresh marks inside one window, on a fixed grid.
+
+        Everything that refreshes mid-window does it *here*, at the same
+        instants, so the whole dashboard updates in parallel instead of each
+        panel running a private timer:
+
+            t+0    the signal for this window (published at the boundary)
+            t+15   formulas + news + agents + brain + accuracy   (one PULSE)
+            t+30   the same, plus a fresh news poll
+            t+45   the same
+
+        The marks are derived from the window start, never from "now", so two
+        clients - and the backend - always agree on when the next one is.
+        """
+        period = max(0.05, ends - started)
+        offsets: list[tuple[float, str]] = []
+        formula_every = self.settings.scaled(self.settings.formula_refresh_seconds)
+        news_every = self.settings.scaled(self.settings.news_poll_seconds)
+        # A window shorter than the nominal cadence still gets marks: the grid
+        # is capped so the panel is never static for a whole window.
+        formula_every = min(formula_every, period / 2.0)
+        news_every = min(news_every, period)
+        for offset in _grid_offsets(formula_every, period):
+            offsets.append((offset, "formulas"))
+        for offset in _grid_offsets(news_every, period):
+            offsets.append((offset, "news"))
+        marks: list[dict] = []
+        for offset in sorted({round(o, 3) for o, _ in offsets}):
+            if offset <= 0.05 or offset >= period - 0.05:
+                continue
+            kinds = sorted({kind for o, kind in offsets if abs(o - offset) < 1e-6})
+            marks.append(
+                {
+                    "kind": "tick",
+                    "parts": kinds,
+                    "offset_seconds": round(offset, 3),
+                    "at": _iso(started + offset),
+                    "at_wall": started + offset,
+                }
+            )
+        return marks
+
+    def master_clock(self, now: float | None = None) -> dict:
+        """The one clock every countdown in both frontends is rendered from.
+
+        It is deliberately absolute: the client is told when the window started
+        and when it ends (as epoch milliseconds), plus the server's own time.
+        The client measures its offset against ``server_time_ms`` once and then
+        counts down to a fixed instant, so the number on screen cannot drift,
+        jump or restart when an unrelated message arrives.
+        """
+        moment = time.time() if now is None else now
+        period = self.settings.cycle_period_seconds
+        started = self.window_valid_from or moment
+        ends = self.window_valid_until or (started + period)
+        marks = self.tick_grid(started, ends)
+        remaining = max(0.0, ends - moment)
+        return {
+            "period_seconds": round(period, 3),
+            "window_seconds": round(max(0.0, ends - started), 3),
+            "window_started_at_ms": int(round(started * 1000)),
+            "window_ends_at_ms": int(round(ends * 1000)),
+            "server_time_ms": int(round(moment * 1000)),
+            "seconds_remaining": round(remaining, 3),
+            "seconds_elapsed": round(max(0.0, moment - started), 3),
+            "cycle_id": self.stats.cycle_number,
+            "minute_aligned": bool(self.settings.use_world_clock),
+            "aligned_to": _iso(started),
+            "next_boundary_at": _iso(ends),
+            "ticks": [
+                {
+                    "parts": mark["parts"],
+                    "offset_seconds": mark["offset_seconds"],
+                    "at": mark["at"],
+                    "seconds_until": round(mark["at_wall"] - moment, 3),
+                    "done": mark["at_wall"] <= moment,
+                }
+                for mark in marks
+            ],
+            "next_tick": next(
+                (
+                    {
+                        "parts": mark["parts"],
+                        "at": mark["at"],
+                        "seconds_until": round(mark["at_wall"] - moment, 3),
+                    }
+                    for mark in marks
+                    if mark["at_wall"] > moment
+                ),
+                None,
+            ),
+            "freshness_max_age_seconds": round(self.settings.prediction_expired, 1),
+            "scoring_horizon_seconds": round(self.settings.outcome_horizon, 1),
+        }
+
     def window_status(self) -> dict:
         """The countdown the UI renders, plus what the engine is doing in it.
 
@@ -1302,6 +1536,9 @@ class CycleManager:
             "valid_until": _iso(ends),
             "seconds_remaining": round(max(0.0, ends - now), 1),
             "window_seconds": period,
+            # The authoritative clock block: every countdown in the dashboard and
+            # in the Flutter client is rendered from this, and from nothing else.
+            "clock": self.master_clock(now),
             "computed_at": getattr(signal, "computed_at", "") if signal else "",
             "computed_seconds_ago": (
                 round(max(0.0, now - self.published_computed_at), 1)

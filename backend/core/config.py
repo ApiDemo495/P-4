@@ -247,18 +247,24 @@ class Settings:
     redis_url: str = field(default_factory=lambda: _env("REDIS_URL", "redis://localhost:6379/0"))
 
     # Cycle timing
-    #: Length of one prediction window, in wall-clock seconds.  The user's rule
-    #: is that a prediction may never be older than 15 seconds, so the engine
-    #: recomputes and republishes every window at this cadence.  The v2.0 draft
-    #: used the full 60-second minute; 12 s leaves 20 % headroom under the hard
-    #: 15-second cap, so the freshness chip cannot flicker to STALE on a slow
-    #: request, and the agents (7 s budget) still fit inside the window.
+    #: Length of one prediction window, in wall-clock seconds.  This is the
+    #: countdown the user watches, and it is **60 seconds**, phase-locked to the
+    #: UTC minute (the literal v2.0 timing, Section 9).  Every feature of the
+    #: engine - the signal, the formulas, the news poll, the accuracy scoring -
+    #: is scheduled on that one grid, so the dashboard refreshes in parallel
+    #: instead of each panel ticking on a private timer.
+    #:
+    #: ``CYCLE_SECONDS`` still overrides it for compressed demos, and
+    #: ``TIME_SCALE`` compresses it further for the test suite.
     cycle_seconds: float = field(
-        default_factory=lambda: _env_float("CYCLE_SECONDS", 12.0)
+        default_factory=lambda: _env_float("CYCLE_SECONDS", 60.0)
     )
-    #: Hard freshness contract for a published prediction.
+    #: Freshness contract for a published prediction.  ``0`` (the default) means
+    #: "as long as its own window": the signal rendered on screen is the signal
+    #: that governs the window being counted down, and it is replaced at every
+    #: boundary.  Set ``PREDICTION_MAX_AGE_SECONDS`` to pin an explicit cap.
     prediction_max_age_seconds: float = field(
-        default_factory=lambda: _env_float("PREDICTION_MAX_AGE_SECONDS", 15.0)
+        default_factory=lambda: _env_float("PREDICTION_MAX_AGE_SECONDS", 0.0)
     )
     time_scale: float = field(default_factory=lambda: _env_float("TIME_SCALE", 1.0))
     lock_deadline_seconds: float = field(
@@ -267,11 +273,11 @@ class Settings:
     formula_refresh_seconds: float = field(
         default_factory=lambda: _env_float("FORMULA_REFRESH_SECONDS", 15.0)
     )
-    #: How long after a prediction its result is scored.  Two windows: with a
-    #: 15 s cycle that is 30 s, so every window is evaluated and the accuracy
-    #: panel fills at the same rate the predictions arrive.
+    #: How long after a prediction its result is scored.  ``0`` (the default)
+    #: means "one window later", so the accuracy panel fills at the same rate
+    #: the predictions arrive: 60 s with the 60-second countdown.
     outcome_horizon_seconds: float = field(
-        default_factory=lambda: _env_float("OUTCOME_HORIZON_SECONDS", 30.0)
+        default_factory=lambda: _env_float("OUTCOME_HORIZON_SECONDS", 0.0)
     )
     #: Target reward:risk ratio.  1.0 = the take-profit and the stop-loss are
     #: the same distance from the entry.
@@ -297,10 +303,27 @@ class Settings:
     def cycle_period_seconds(self) -> float:
         """Wall-clock length of one prediction window.
 
-        ``CYCLE_SECONDS`` (15 s by default) sets the cadence; a larger
-        ``TIME_SCALE`` compresses it further for demos and automated tests.
+        ``CYCLE_SECONDS`` (60 s by default, minute-aligned) sets the cadence; a
+        larger ``TIME_SCALE`` compresses it further for demos and tests.
         """
         return self.cycle_seconds / max(self.time_scale, 0.01)
+
+    @property
+    def outcome_horizon(self) -> float:
+        """Wall-clock seconds a prediction is given before it is scored."""
+        configured = self.scaled(self.outcome_horizon_seconds)
+        return configured if configured > 0 else self.cycle_period_seconds
+
+    @property
+    def freshness_grace_seconds(self) -> float:
+        """How long past its own window a prediction is still called fresh.
+
+        A prediction is *the* signal for exactly one window: it is computed
+        before the window opens and replaced at the next boundary.  The grace is
+        the small allowance for a request that lands while the next window is
+        being published, so the chip cannot flicker to STALE.
+        """
+        return max(2.0, self.scaled(5.0))
 
     @property
     def use_world_clock(self) -> bool:
@@ -312,8 +335,15 @@ class Settings:
 
     @property
     def prediction_expired(self) -> float:
-        """Age at which a prediction must be considered stale."""
-        return max(1.0, self.prediction_max_age_seconds)
+        """Age at which a prediction must be considered stale.
+
+        Default: the length of its own window plus a small grace.  The user's
+        rule is that what is on screen is always the signal for the window being
+        counted down - never an older one.
+        """
+        if self.prediction_max_age_seconds > 0:
+            return max(1.0, self.prediction_max_age_seconds)
+        return max(1.0, self.cycle_period_seconds + self.freshness_grace_seconds)
 
     def scaled(self, seconds: float) -> float:
         """Convert a spec (virtual, 60s-cycle) duration to wall-clock seconds."""

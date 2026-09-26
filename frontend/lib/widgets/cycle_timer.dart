@@ -13,6 +13,9 @@ class CycleTimer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // A 60-second window: the number is the seconds left to the boundary, on
+    // the one clock the whole engine ticks to (the backend publishes the window
+    // as absolute instants, so this cannot drift or restart).
     final total = state.cyclePeriodSeconds <= 0 ? 60.0 : state.cyclePeriodSeconds;
     final elapsed = (total - state.secondsRemaining).clamp(0.0, total);
     final remaining = state.secondsRemaining;
@@ -54,6 +57,11 @@ class CycleTimer extends StatelessWidget {
           Text(
             state.lockLabel,
             style: const TextStyle(color: AppTheme.textMuted, fontSize: 12),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            state.countdownNote,
+            style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
           ),
           const SizedBox(height: 6),
           Row(

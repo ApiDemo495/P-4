@@ -167,7 +167,7 @@ class SignalWidgetPanel extends StatelessWidget {
   }
 
   Widget _countdownCell(bool fill) {
-    final period = state.cyclePeriodSeconds <= 0 ? 15.0 : state.cyclePeriodSeconds;
+    final period = state.cyclePeriodSeconds <= 0 ? 60.0 : state.cyclePeriodSeconds;
     final remaining = state.secondsRemaining.clamp(0.0, period);
     final seconds = remaining.ceil();
     final progress = (remaining / period).clamp(0.0, 1.0);
@@ -226,11 +226,10 @@ class SignalWidgetPanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
+          // The same schedule the backend runs on: when the next refresh mark
+          // is, and what it refreshes.  Every panel moves on that tick.
           Text(
-            w?.computedSecondsAgo == null
-                ? 'engine starting…'
-                : 'showing the signal computed '
-                    '${w!.computedSecondsAgo!.round()}s before this window',
+            state.countdownNote,
             textAlign: TextAlign.center,
             style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
           ),
@@ -255,6 +254,13 @@ class SignalWidgetPanel extends StatelessWidget {
             textAlign: TextAlign.center,
             style: const TextStyle(color: AppTheme.textMuted, fontSize: 10.5),
           ),
+          if (w?.computedSecondsAgo != null)
+            Text(
+              'this window was computed '
+              '${w!.computedSecondsAgo!.round()}s before it opened',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
+            ),
         ],
       ),
     );
@@ -353,6 +359,8 @@ class SignalWidgetPanel extends StatelessWidget {
       child: _KvGrid(items: [
         _Kv('Win rate', '${(state.winRate * 100).toStringAsFixed(0)}%'),
         _Kv('Evaluated windows', '${state.outcomeCount}'),
+        _Kv('BUY hit rate', _sideRate(state.buyAccuracy)),
+        _Kv('SELL hit rate', _sideRate(state.sellAccuracy)),
         _Kv(
           'Prediction age',
           state.prediction.ageSeconds == null

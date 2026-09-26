@@ -285,6 +285,89 @@ class Prediction {
 /// The pipeline means `computedAt` is *always* inside the previous countdown:
 /// the countdown the user reads shows a signal that already existed when the
 /// window started, while the engine computes the next one.
+/// The master clock block the backend publishes with every window.
+///
+/// It is deliberately absolute: the window's start and end are epoch
+/// milliseconds, so the countdown is computed against a fixed instant and never
+/// restarts or jumps when an unrelated message arrives.  [ticks] are the
+/// in-window refresh marks (t+15, t+30, t+45 of a 60-second window) - every
+/// panel refreshes on them, together.
+class MasterClock {
+  const MasterClock({
+    this.windowStartedAtMs = 0,
+    this.windowEndsAtMs = 0,
+    this.serverTimeMs = 0,
+    this.cycleId = 0,
+    this.periodSeconds = 60.0,
+    this.windowSeconds = 60.0,
+    this.secondsRemaining = 60.0,
+    this.minuteAligned = false,
+    this.freshnessMaxAgeSeconds = 65.0,
+    this.scoringHorizonSeconds = 60.0,
+    this.ticks = const [],
+  });
+
+  final int windowStartedAtMs;
+  final int windowEndsAtMs;
+  final int serverTimeMs;
+  final int cycleId;
+  final double periodSeconds;
+  final double windowSeconds;
+  final double secondsRemaining;
+  final bool minuteAligned;
+  final double freshnessMaxAgeSeconds;
+  final double scoringHorizonSeconds;
+  final List<ClockTick> ticks;
+
+  /// The next refresh mark, or null at the very end of a window.
+  ClockTick? get nextTick {
+    for (final tick in ticks) {
+      if (!tick.done && tick.secondsUntil > 0) return tick;
+    }
+    return null;
+  }
+
+  factory MasterClock.fromJson(Map<String, dynamic> json) => MasterClock(
+        windowStartedAtMs: _i(json['window_started_at_ms']),
+        windowEndsAtMs: _i(json['window_ends_at_ms']),
+        serverTimeMs: _i(json['server_time_ms']),
+        cycleId: _i(json['cycle_id']),
+        periodSeconds: _d(json['period_seconds'], 60),
+        windowSeconds: _d(json['window_seconds'], 60),
+        secondsRemaining: _d(json['seconds_remaining'], 60),
+        minuteAligned: json['minute_aligned'] == true,
+        freshnessMaxAgeSeconds: _d(json['freshness_max_age_seconds'], 65),
+        scoringHorizonSeconds: _d(json['scoring_horizon_seconds'], 60),
+        ticks: ((json['ticks'] as List?) ?? const [])
+            .map((t) => ClockTick.fromJson(Map<String, dynamic>.from(t as Map)))
+            .toList(),
+      );
+}
+
+/// One refresh mark inside a window.
+class ClockTick {
+  const ClockTick({
+    this.parts = const [],
+    this.offsetSeconds = 0.0,
+    this.secondsUntil = 0.0,
+    this.done = false,
+  });
+
+  final List<String> parts;
+  final double offsetSeconds;
+  final double secondsUntil;
+  final bool done;
+
+  factory ClockTick.fromJson(Map<String, dynamic> json) => ClockTick(
+        parts: ((json['parts'] as List?) ?? const [])
+            .map((p) => p.toString())
+            .toList(),
+        offsetSeconds: _d(json['offset_seconds']),
+        secondsUntil: _d(json['seconds_until']),
+        done: json['done'] == true,
+      );
+}
+
 class WindowInfo {
   const WindowInfo({
     this.validFrom = '',
@@ -298,6 +381,7 @@ class WindowInfo {
     this.pipeline = true,
     this.phase = '',
     this.computeProgress = 0.0,
+    this.clock,
   });
 
   final String validFrom;
@@ -311,6 +395,9 @@ class WindowInfo {
   final bool pipeline;
   final String phase;
   final double computeProgress;
+
+  /// The authoritative clock for this window (null on very old payloads).
+  final MasterClock? clock;
 
   factory WindowInfo.fromJson(Map<String, dynamic> json) => WindowInfo(
         validFrom: _s(json['valid_from']),
@@ -326,6 +413,10 @@ class WindowInfo {
         pipeline: json['pipeline'] != false,
         phase: _s(json['phase']),
         computeProgress: _d(json['compute_progress']),
+        clock: json['clock'] is Map
+            ? MasterClock.fromJson(
+                Map<String, dynamic>.from(json['clock'] as Map))
+            : null,
       );
 }
 
