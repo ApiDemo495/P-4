@@ -1,0 +1,67 @@
+{
+  "name": "Drosophila Trader v2.0",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  // Codespaces: everything lives on ONE port - 8000 serves the dashboard, the
+  // API, the WebSocket stream, /matrix, /settings, /docs and the Flutter build
+  // at /flutter.  Nothing else needs forwarding, and ports you start by hand
+  // (a Flutter dev server, a scratch tool) stay silent instead of popping a
+  // broken preview.
+  "hostRequirements": {
+    "cpus": 2,
+    "memory": "4gb",
+    "storage": "16gb"
+  },
+
+  // ---------------------------------------------------------------------------
+  // ZERO COMMANDS.  Create the codespace, then do nothing: these three hooks
+  // install everything, start the engine, wait until the first prediction is
+  // locked, publish the port and print the URL.  See tools/codespace_autostart.sh.
+  //
+  //   postCreateCommand  once per codespace - apt, virtualenv, requirements,
+  //                      .env, redis, and the Flutter download started in the
+  //                      background (it never blocks this step)
+  //   postStartCommand   every start / wake - self-heals a missing .venv or a
+  //                      changed requirements.txt, then (re)starts the engine
+  //   postAttachCommand  every editor attach - the same, plus the URL banner
+  // ---------------------------------------------------------------------------
+  "postCreateCommand": "bash tools/codespace_autostart.sh --provision",
+  "postStartCommand": "bash tools/codespace_autostart.sh --start",
+  "postAttachCommand": "bash tools/codespace_autostart.sh --attach",
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "Drosophila Trader - everything (dashboard, API, WS, /flutter)",
+      "onAutoForward": "openBrowser",
+      "visibility": "public"
+    }
+  },
+  // Any other port you start by hand (flutter run, a scratch tool) is left
+  // alone instead of auto-opening a preview that cannot work.
+  "otherPortsAttributes": { "onAutoForward": "silent" },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "Dart-Code.dart-code",
+        "Dart-Code.flutter"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python",
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": ["backend/tests"],
+        "files.exclude": { "**/__pycache__": true }
+      }
+    }
+  },
+  "remoteEnv": {
+    "PYTHONPATH": "${containerWorkspaceFolder}",
+    "PYTHONUNBUFFERED": "1",
+    // 1 = download the Flutter SDK and build the web client automatically.
+    // Set it to 0 (or export AUTO_FLUTTER=0) to skip the ~700 MB download.
+    "AUTO_FLUTTER": "1"
+  }
+}

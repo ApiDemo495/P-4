@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Drosophila Trader v2.0</title>
+<link rel="stylesheet" href="/static/styles.css?v=2.1.0" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪰</text></svg>" />
+</head>
+<body>
+
+<!-- ============================ HEADER ============================ -->
+<header class="topbar">
+  <div class="brand"><span class="fly">🪰</span> DROSOPHILA TRADER <span class="ver">v2.0</span></div>
+  <nav>
+    <a href="/" class="active">Dashboard</a>
+    <a href="/matrix">Brain Matrix</a>
+    <a href="/settings">⚙ Settings</a>
+    <a href="#" id="open-keys">🔑 API keys</a>
+    <a href="/flutter" id="flutter-link" class="hidden" target="_blank">📱 Flutter app</a>
+    <a href="/docs" target="_blank">API</a>
+  </nav>
+  <div class="conn"><span id="ws-dot" class="dot"></span><span id="ws-label">connecting…</span></div>
+</header>
+
+<main class="wrap">
+
+<!-- ===================== WARM-UP / STARTUP BANNER ===================== -->
+<!-- Served during the seconds between "the port is open" and "the engine is
+     ready".  It exists so a slow start can never look like a broken app
+     (a forwarded port that nobody answers returns HTTP 502). -->
+<section class="card hidden" id="warming-banner">
+  <div class="card-head">
+    <h2 id="warming-title">🪰 Engine warming up…</h2>
+    <span class="muted" id="warming-elapsed">—</span>
+  </div>
+  <p class="muted" style="margin-top:0" id="warming-text">
+    The port is live and this page is served by the real app. The brain
+    verification, the market connect and the first formula pass run in the
+    background; the panel below fills itself in as soon as the first window
+    locks.
+  </p>
+  <div class="progress"><div class="progress-fill" id="warming-progress"></div></div>
+</section>
+
+<!-- ===================== FIRST-RUN / KEY SETUP ===================== -->
+<section class="card hidden" id="setup-banner">
+  <div class="card-head">
+    <h2>🔑 Add your API keys — takes 30 seconds</h2>
+    <span class="muted">optional, the engine runs without them</span>
+  </div>
+  <p class="muted" style="margin-top:0">
+    Nothing here is required to start. Adding keys upgrades the engine: a Gemini key
+    turns on the AI agent, a CryptoPanic key switches the news engine to the 30-second
+    live feed, and a neuPrint token replaces the fallback connectome with the real
+    hemibrain.
+  </p>
+  <div class="keys-grid">
+    <div class="key-row">
+      <div class="key-label"><b>Gemini</b><span class="muted">AI agent · 25% of the fusion</span></div>
+      <span class="key-state" id="state-gemini">not set</span>
+    </div>
+    <div class="key-row">
+      <div class="key-label"><b>CryptoPanic</b><span class="muted">live news every 30 s</span></div>
+      <span class="key-state" id="state-cryptopanic">not set</span>
+    </div>
+    <div class="key-row">
+      <div class="key-label"><b>NewsAPI</b><span class="muted">news backup</span></div>
+      <span class="key-state" id="state-newsapi">not set</span>
+    </div>
+    <div class="key-row">
+      <div class="key-label"><b>GitHub PAT</b><span class="muted">GitHub Models agent · 15%</span></div>
+      <span class="key-state" id="state-github">not set</span>
+    </div>
+    <div class="key-row">
+      <div class="key-label"><b>neuPrint</b><span class="muted">live hemibrain connectome</span></div>
+      <span class="key-state" id="state-neuprint">not set</span>
+    </div>
+  </div>
+  <div class="row" style="margin-top:14px">
+    <button class="btn" id="setup-open">Enter keys</button>
+    <a class="btn ghost" href="/settings" style="text-decoration:none">Full settings</a>
+    <span style="flex:1"></span>
+    <button class="btn ghost" id="setup-dismiss">Don't show again</button>
+  </div>
+</section>
+
+  <!-- ========================= ASSET TOGGLE ========================= -->
+  <section class="card asset-card">
+    <div class="asset-toggle" id="asset-toggle">
+      <button class="asset active" data-asset="BTC"><span class="radio">●</span> BTC</button>
+      <button class="asset" data-asset="PAXG"><span class="radio">○</span> PAXG</button>
+    </div>
+    <div class="asset-meta">
+      <span id="price">—</span>
+      <span id="pending-switch" class="pending hidden"></span>
+      <span id="degradation" class="badge">—</span>
+    </div>
+  </section>
+
+  <!-- ============ WIDGET PANEL (fixed layout, rows 1 and 2) ============ -->
+  <!-- Row 1: prediction | countdown 1-60 | signal + conviction box       -->
+  <!-- Row 2: take profit / stop loss | prediction accuracy                  -->
+  <section class="card widget-panel">
+    <div class="widget-row row-top">
+
+      <div class="widget-cell cell-prediction">
+        <div class="cell-label">
+          PREDICTION
+          <span class="muted" id="w-window-label">—</span>
+          <span class="fresh-chip" id="w-fresh">—</span>
+        </div>
+        <div class="prediction-value" id="w-prediction">—</div>
+        <div class="prediction-sub" id="w-prediction-sub">waiting for the first lock…</div>
+        <!-- Why this side: the same bullets the API returns. -->
+        <ul class="reason-list" id="w-reasoning"></ul>
+        <!-- Small inline override notice - never a full-screen overlay. -->
+        <div class="emergency-chip hidden" id="w-emergency">
+          <span class="bolt">⚡</span>
+          <span id="w-emergency-text">emergency override — exit the position</span>
+          <button class="btn tiny ghost" id="w-emergency-clear">dismiss</button>
+        </div>
+      </div>
+
+      <div class="widget-cell cell-countdown">
+        <div class="cell-label">COUNTDOWN <span class="muted">seconds to the boundary</span></div>
+        <div class="countdown-ring" id="w-ring">
+          <div class="countdown-inner">
+            <div class="countdown-number" id="w-countdown">—</div>
+            <div class="countdown-unit">sec</div>
+          </div>
+        </div>
+        <div class="cell-sub" id="w-countdown-sub">—</div>
+        <div class="pipeline-track" title="the next window is computed while this one runs">
+          <div class="pipeline-fill" id="w-pipeline-fill"></div>
+        </div>
+        <div class="cell-sub" id="w-next">—</div>
+      </div>
+
+      <div class="widget-cell cell-holdbox">
+        <div class="cell-label">SIGNAL &amp; CONVICTION</div>
+        <div class="hold-box" id="w-hold">
+          <div class="hold-title" id="w-hold-title">…</div>
+          <div class="hold-text" id="w-hold-text">—</div>
+          <div class="hold-meta" id="w-hold-meta"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="widget-row row-bottom">
+      <div class="widget-cell">
+        <div class="cell-label">TAKE PROFIT / STOP LOSS</div>
+        <div class="kv-grid">
+          <div class="kv-item"><span>Entry</span><b id="w-entry">—</b></div>
+          <div class="kv-item"><span>Take profit</span><b id="w-tp" class="pos">—</b></div>
+          <div class="kv-item"><span>Stop loss</span><b id="w-sl" class="neg">—</b></div>
+          <div class="kv-item"><span>Reward : risk (1:1)</span><b id="w-rr">—</b></div>
+          <div class="kv-item"><span>Realised vol · 1 min</span><b id="w-vol">—</b></div>
+          <div class="kv-item"><span>Levels set</span><b id="w-levels">—</b></div>
+          <div class="kv-item wide"><span>Note</span><b id="w-risk-note" class="muted">—</b></div>
+        </div>
+      </div>
+      <div class="widget-cell">
+        <div class="cell-label">PREDICTION ACCURACY</div>
+        <div class="kv-grid">
+          <div class="kv-item"><span>Win rate</span><b id="w-winrate">—</b></div>
+          <div class="kv-item"><span>Evaluated windows</span><b id="w-samples">—</b></div>
+          <div class="kv-item"><span>Current streak</span><b id="w-streak">—</b></div>
+          <div class="kv-item"><span>Last outcome</span><b id="w-last-outcome">—</b></div>
+          <div class="kv-item"><span>Hit rate · BUY</span><b id="w-buy-rate">—</b></div>
+          <div class="kv-item"><span>Hit rate · SELL</span><b id="w-sell-rate">—</b></div>
+          <div class="kv-item"><span>Evaluated after</span><b id="w-horizon">—</b></div>
+          <div class="kv-item wide"><span>Engine</span><b id="w-engine" class="muted">—</b></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="widget-strip">
+      <span class="kv"><span>cycle</span><b id="cycle-number">—</b></span>
+      <span class="kv"><span>state</span><b id="lock-state">COMPUTING</b></span>
+      <span class="kv"><span>utc</span><b id="utc">—</b></span>
+      <span class="kv"><span>window</span><b id="w-window-span">—</b></span>
+      <span style="flex:1"></span>
+      <span class="muted" id="w-clock-note"></span>
+    </div>
+  </section>
+
+  <!-- ===================== SIGNAL DETAIL (locked) ===================== -->
+  <section class="card signal-card">
+    <div class="card-head">
+      <h2>🔒 Locked signal detail</h2>
+      <span class="muted" id="signal-frozen">—</span>
+    </div>
+    <div id="signal-body">
+      <div class="signal-meta">
+        <span id="signal-icon">🔒</span>
+        <span id="signal-note">locked for this window</span>
+        <span class="badge" id="signal-cycle-badge">cycle —</span>
+      </div>
+      <div class="confidence-row">
+        <span>Confidence</span>
+        <b id="confidence-value">0%</b>
+      </div>
+      <div class="bar"><div class="bar-fill" id="confidence-bar"></div></div>
+      <div class="reasoning" id="reasoning">—</div>
+      <ul class="reason-list" id="reasoning-list"></ul>
+      <div class="weights" id="weights"></div>
+    </div>
+    <div id="conviction-note" class="hold-warning hidden">
+      <div class="hw-title">⚠️ Conviction note</div>
+      <div class="hw-text" id="hw-text"></div>
+      <div class="hw-lean" id="hw-lean"></div>
+    </div>
+  </section>
+
+  <!-- ============================ NEWS ============================ -->
+  <section class="card news-card">
+    <div class="card-head">
+      <h2>📰 Latest News Sentiment</h2>
+      <span class="muted" id="news-age">—</span>
+    </div>
+    <div class="news-headline" id="news-headline">Waiting for the news engine…</div>
+    <div class="news-meta">
+      <span id="news-source" class="muted">—</span>
+      <span class="pill" id="news-sentiment">—</span>
+      <span class="pill" id="news-niv">NIV —</span>
+      <span class="pill" id="news-smd">SMD —</span>
+      <span class="pill" id="news-coverage">coverage —</span>
+    </div>
+    <div class="news-list" id="news-list"></div>
+  </section>
+
+  <!-- ======================= AGENTS + HEDGE ======================= -->
+  <section class="grid-2">
+    <div class="card">
+      <div class="card-head"><h2>Agent Dashboard</h2><span class="muted">fusion weights</span></div>
+      <ul class="agent-list" id="agent-list"></ul>
+      <div class="divider"></div>
+      <div class="card-head"><h2>📊 Hedge Status</h2><span class="muted" id="hedge-stress">—</span></div>
+      <div class="hedge-grid">
+        <div class="hedge-item"><span>HSI</span><b id="h-hsi">—</b><div class="bar tiny"><div class="bar-fill" id="h-hsi-bar"></div></div></div>
+        <div class="hedge-item"><span>HRDD</span><b id="h-hrdd">—</b><div class="bar tiny"><div class="bar-fill" id="h-hrdd-bar"></div></div></div>
+        <div class="hedge-item"><span>SHRP</span><b id="h-shrp">—</b><div class="bar tiny"><div class="bar-fill" id="h-shrp-bar"></div></div></div>
+        <div class="hedge-item"><span>GCDV</span><b id="h-gcdv">—</b><div class="bar tiny"><div class="bar-fill" id="h-gcdv-bar"></div></div></div>
+      </div>
+      <div class="brain-status">
+        <span>🧠 Brain</span><b id="brain-status">—</b>
+        <span class="muted" id="brain-detail"></span>
+      </div>
+      <div class="brain-status">
+        <span>DRG reward</span><b id="drg-value">—</b>
+        <span class="muted" id="win-rate">—</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Signal History</h2><span class="muted">most recent first</span></div>
+      <ul class="history" id="history"></ul>
+      <div class="card-head" style="margin-top:14px"><h2>Recent Outcomes</h2><span class="muted">for the DRG learner</span></div>
+      <ul class="history" id="outcomes"></ul>
+    </div>
+  </section>
+
+  <!-- ============== WHERE THE FLY BRAIN IS USED (item 6) ============== -->
+  <section class="card brain-card">
+    <div class="card-head">
+      <h2>🪰 Where the fly brain is used</h2>
+      <span class="muted">80-neuron mushroom body · 40% of the fusion</span>
+    </div>
+    <div class="brain-grid">
+      <div class="brain-pipeline" id="brain-pipeline"></div>
+      <div class="brain-live">
+        <div class="brain-verdict" id="brain-verdict">waiting for the first completed window…</div>
+        <div class="kv-grid" id="brain-kv">
+          <div class="kv-item"><span>Dominant inputs</span><b id="b-dominant">—</b></div>
+          <div class="kv-item"><span>Kenyon cells active</span><b id="b-kc">—</b></div>
+          <div class="kv-item"><span>MBON approach / avoid</span><b id="b-mbon">—</b></div>
+          <div class="kv-item"><span>Lateral horn</span><b id="b-lh">—</b></div>
+          <div class="kv-item"><span>Dopamine gates</span><b id="b-dan">—</b></div>
+          <div class="kv-item"><span>CCSv2 → fusion</span><b id="b-ccs">—</b></div>
+          <div class="kv-item wide"><span>Connectome</span><b id="b-source" class="muted">—</b></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <a class="btn ghost" href="/matrix" style="text-decoration:none">Open the 80×80 matrix</a>
+          <button class="btn tiny ghost" id="brain-toggle">Show the wiring diagram</button>
+        </div>
+      </div>
+    </div>
+    <div id="brain-wiring" class="brain-wiring hidden"></div>
+  </section>
+
+  <!-- ======================= FORMULA EXPLORER ======================= -->
+  <section class="card">
+    <div class="card-head">
+      <h2>▼ Formula Explorer <span class="muted">(22 formulas + DRG)</span></h2>
+      <div class="explorer-tools">
+        <span class="pill" id="live-note">values refresh every 15s · signal stays locked</span>
+        <button class="btn tiny" id="toggle-explain">Show descriptions</button>
+        <button class="btn tiny ghost" id="collapse-all">Collapse all</button>
+      </div>
+    </div>
+    <div id="formula-explorer"></div>
+    <div class="timings" id="timings"></div>
+  </section>
+
+  <footer class="foot">
+    <span id="foot-status">—</span>
+    <span>Educational tool. Not financial advice.</span>
+  </footer>
+</main>
+
+<!-- ===================== API KEY MODAL ===================== -->
+<div id="keys-modal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2>🔑 API keys</h2>
+      <button class="btn tiny ghost" id="keys-close">✕</button>
+    </div>
+    <p class="muted" style="margin-top:0;font-size:12px">
+      Keys are tested before they are accepted, applied to the running engine immediately,
+      and never leave your machine. Tick “remember” to also write them to the git-ignored
+      <code>.env</code> so they survive a restart.
+    </p>
+
+    <div class="key-field">
+      <label for="k-gemini">Gemini API key <span class="muted">— aistudio.google.com/apikey</span></label>
+      <div class="row">
+        <input type="text" id="k-gemini" class="key-input" placeholder="AIza…" autocomplete="off" spellcheck="false" />
+        <button class="btn tiny ghost" data-reveal="k-gemini">👁</button>
+        <button class="btn" data-test="gemini" data-input="k-gemini">Test</button>
+      </div>
+      <div class="key-result" id="r-gemini"></div>
+    </div>
+
+    <div class="key-field">
+      <label for="k-cryptopanic">CryptoPanic token <span class="muted">— cryptopanic.com/developers/api/</span></label>
+      <div class="row">
+        <input type="text" id="k-cryptopanic" class="key-input" placeholder="token" autocomplete="off" spellcheck="false" />
+        <button class="btn tiny ghost" data-reveal="k-cryptopanic">👁</button>
+        <button class="btn" data-test="cryptopanic" data-input="k-cryptopanic">Test</button>
+      </div>
+      <div class="key-result" id="r-cryptopanic"></div>
+    </div>
+
+    <div class="key-field">
+      <label for="k-newsapi">NewsAPI key <span class="muted">— newsapi.org/register</span></label>
+      <div class="row">
+        <input type="text" id="k-newsapi" class="key-input" placeholder="key" autocomplete="off" spellcheck="false" />
+        <button class="btn tiny ghost" data-reveal="k-newsapi">👁</button>
+        <button class="btn" data-test="newsapi" data-input="k-newsapi">Test</button>
+      </div>
+      <div class="key-result" id="r-newsapi"></div>
+    </div>
+
+    <div class="key-field">
+      <label for="k-github">GitHub PAT <span class="muted">— optional, GitHub Models agent</span></label>
+      <div class="row">
+        <input type="text" id="k-github" class="key-input" placeholder="github_pat_…" autocomplete="off" spellcheck="false" />
+        <button class="btn tiny ghost" data-reveal="k-github">👁</button>
+        <button class="btn" data-test="github" data-input="k-github">Test</button>
+      </div>
+      <div class="key-result" id="r-github"></div>
+    </div>
+
+    <div class="key-field">
+      <label for="k-neuprint">neuPrint token <span class="muted">— optional, live Drosophila connectome</span></label>
+      <div class="row">
+        <input type="text" id="k-neuprint" class="key-input" placeholder="eyJ…" autocomplete="off" spellcheck="false" />
+        <button class="btn tiny ghost" data-reveal="k-neuprint">👁</button>
+        <button class="btn" data-test="neuprint" data-input="k-neuprint">Test</button>
+      </div>
+      <div class="key-result" id="r-neuprint"></div>
+    </div>
+
+    <div class="row" style="margin-top:16px">
+      <label class="checkbox" style="flex:1">
+        <input type="checkbox" id="k-persist" /> remember these (write to <code>.env</code>)
+      </label>
+      <button class="btn ghost" id="keys-cancel">Cancel</button>
+      <button class="btn" id="keys-save">Save keys</button>
+    </div>
+    <div class="key-result" id="r-save"></div>
+  </div>
+</div>
+
+<script src="/static/app.js?v=2.1.0"></script>
+</body>
+</html>

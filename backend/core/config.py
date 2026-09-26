@@ -1,0 +1,360 @@
+"""Central configuration for DROSOPHILA TRADER v2.0.
+
+Every tunable value in the specification lives here so that the rest of the
+codebase never hard-codes a magic number.  Appendix C (PAXG parameter
+overrides) is implemented as a per-asset override table rather than as inline
+conditionals scattered through the formulas.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+# --------------------------------------------------------------------------
+# Paths
+# --------------------------------------------------------------------------
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+REPO_ROOT = BACKEND_DIR.parent
+BRAIN_FALLBACK_DIR = BACKEND_DIR / "brain" / "fallback"
+WEB_DIR = BACKEND_DIR / "web"
+MODEL_STORE_DIR = Path(os.environ.get("MODEL_STORE_DIR", BACKEND_DIR / "models"))
+
+
+def _load_dotenv() -> None:
+    """Minimal .env loader (no hard dependency on python-dotenv)."""
+    for candidate in (REPO_ROOT / ".env", BACKEND_DIR / ".env"):
+        if not candidate.exists():
+            continue
+        for raw in candidate.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key, value = key.strip(), value.strip().strip('"').strip("'")
+            os.environ.setdefault(key, value)
+
+
+_load_dotenv()
+
+
+def _env(key: str, default: str = "") -> str:
+    return os.environ.get(key, default).strip()
+
+
+def _env_float(key: str, default: float) -> float:
+    try:
+        return float(_env(key) or default)
+    except ValueError:
+        return default
+
+
+def _env_int(key: str, default: int) -> int:
+    try:
+        return int(float(_env(key) or default))
+    except ValueError:
+        return default
+
+
+def _env_bool(key: str, default: bool) -> bool:
+    raw = _env(key)
+    if not raw:
+        return default
+    return raw.lower() in {"1", "true", "yes", "on"}
+
+
+# --------------------------------------------------------------------------
+# Appendix C — per-asset parameter table
+# --------------------------------------------------------------------------
+
+#: Columns are exactly the rows of Appendix C in the specification.
+ASSET_PARAMS: dict[str, dict[str, float]] = {
+    "BTC": {
+        "tai_ticks": 30,
+        "afpr_power": 3.0,
+        "vsd_baseline_window": 100,
+        "vsd_recent_window": 20,
+        "erc_tolerance_mult": 0.2,
+        "dskd_q_fast": 1.0,
+        "ccsv2_confidence_threshold": 0.55,
+        "hedge_weight": 0.5,
+        "forced_flat_ticks": 15,
+    },
+    "PAXG": {
+        "tai_ticks": 20,
+        "afpr_power": 2.0,
+        "vsd_baseline_window": 50,
+        "vsd_recent_window": 10,
+        "erc_tolerance_mult": 0.3,
+        "dskd_q_fast": 2.0,
+        "ccsv2_confidence_threshold": 0.65,
+        "hedge_weight": 0.5,
+        "forced_flat_ticks": 10,
+    },
+}
+
+ASSETS: tuple[str, ...] = ("BTC", "PAXG")
+BINANCE_SYMBOLS: dict[str, str] = {"BTC": "btcusdt", "PAXG": "paxgusdt"}
+COINGECKO_IDS: dict[str, str] = {"BTC": "bitcoin", "PAXG": "pax-gold"}
+
+#: Take-profit / stop-loss geometry (Section 10.5).  The distances are
+#: multiples of the realised 1-minute volatility, so the levels breathe with
+#: the market instead of being fixed pip targets.
+RISK_PARAMS: dict[str, dict[str, float]] = {
+    # One distance for both sides of the trade: the user asked for a 1:1
+    # reward:risk, so the take-profit and the stop-loss are the same number of
+    # bps away from the entry.  The multiplier is in units of the realised
+    # 15-second volatility (`volatility_bps`).
+    "BTC": {"sigma_mult": 1.5},
+    "PAXG": {"sigma_mult": 1.4},
+}
+
+
+def risk_params(asset: str) -> dict[str, float]:
+    return dict(RISK_PARAMS.get(asset.upper(), RISK_PARAMS["BTC"]))
+
+
+def asset_params(asset: str) -> dict[str, float]:
+    return dict(ASSET_PARAMS.get(asset.upper(), ASSET_PARAMS["BTC"]))
+
+
+# --------------------------------------------------------------------------
+# Ring-buffer sizes (Section 5.1)
+# --------------------------------------------------------------------------
+
+TICK_BUFFER_SIZE = 600
+L2_BUFFER_SNAPSHOTS = 2
+L2_DEPTH_LEVELS = 20
+CANDLE_BUFFER_SIZE = 60
+NEWS_CACHE_SIZE = 20
+OUTCOME_BUFFER_SIZE = 20
+SYNC_WINDOW_SECONDS = 60
+
+
+@dataclass(frozen=True)
+class FormulaWeights:
+    """Fusion weights for the 22nd formula's inputs (Section 8.1)."""
+
+    formula_weight: float = 1.0
+
+
+@dataclass
+class Settings:
+    """Runtime settings assembled from the environment."""
+
+    # Server
+    host: str = field(default_factory=lambda: _env("HOST", "0.0.0.0"))
+    port: int = field(default_factory=lambda: _env_int("PORT", 8000))
+    log_level: str = field(default_factory=lambda: _env("LOG_LEVEL", "info"))
+    cors_origins: list[str] = field(
+        default_factory=lambda: [o for o in _env("CORS_ORIGINS", "*").split(",") if o]
+    )
+
+    # Brain
+    neuprint_token: str = field(default_factory=lambda: _env("NEUPRINT_APPLICATION_CREDENTIALS"))
+    neuprint_server: str = field(
+        default_factory=lambda: _env("NEUPRINT_SERVER", "https://neuprint.janelia.org")
+    )
+    neuprint_dataset: str = field(
+        default_factory=lambda: _env("NEUPRINT_DATASET", "hemibrain:v1.2.1")
+    )
+    cave_token: str = field(default_factory=lambda: _env("CAVE_TOKEN"))
+    cave_server: str = field(
+        default_factory=lambda: _env("CAVE_SERVER", "https://global.daf-apis.com")
+    )
+    cave_dataset: str = field(
+        default_factory=lambda: _env("CAVE_DATASET", "flywire_fafb_production")
+    )
+    brain_force_fallback: bool = field(
+        default_factory=lambda: _env_bool("BRAIN_FORCE_FALLBACK", False)
+    )
+    brain_cache_ttl_seconds: int = 86_400
+    brain_health_interval_seconds: int = 300
+
+    # Agents
+    gemini_api_key: str = field(default_factory=lambda: _env("GEMINI_API_KEY"))
+    gemini_model: str = field(default_factory=lambda: _env("GEMINI_MODEL", "gemini-1.5-flash"))
+    gemini_timeout_seconds: float = 7.0
+    github_models_token: str = field(default_factory=lambda: _env("GITHUB_MODELS_TOKEN"))
+    github_models_model: str = field(
+        default_factory=lambda: _env("GITHUB_MODELS_MODEL", "gpt-4o-mini")
+    )
+    github_timeout_seconds: float = 7.0
+    local_timeout_seconds: float = 7.0
+
+    # Fusion weights (Section 8.1)
+    weight_drosophila: float = 0.40
+    weight_gemini: float = 0.25
+    weight_local: float = 0.20
+    weight_github: float = 0.15
+    hsi_dampen_threshold: float = 0.80
+    hsi_confidence_floor: float = 0.20
+    min_fusion_confidence: float = 0.55
+
+    # Decision thresholds (Section 10.1)
+    signal_threshold: float = 0.25
+    max_failed_formulas: int = 10  # >= 11 zeros => degraded evidence (weak side)
+
+    # News
+    cryptopanic_key: str = field(default_factory=lambda: _env("CRYPTOPANIC_API_KEY"))
+    newsapi_key: str = field(default_factory=lambda: _env("NEWSAPI_API_KEY"))
+    news_enabled: bool = field(default_factory=lambda: _env_bool("NEWS_ENABLED", True))
+    news_poll_seconds: float = field(
+        default_factory=lambda: _env_float("NEWS_POLL_SECONDS", 30.0)
+    )
+    newsapi_poll_seconds: float = field(
+        default_factory=lambda: _env_float("NEWSAPI_POLL_SECONDS", 60.0)
+    )
+    rss_poll_seconds: float = field(default_factory=lambda: _env_float("RSS_POLL_SECONDS", 60.0))
+    rss_feeds: list[str] = field(
+        default_factory=lambda: [
+            f
+            for f in _env(
+                "RSS_FEEDS",
+                "https://www.coindesk.com/arc/outboundfeeds/rss/,"
+                "https://cointelegraph.com/rss,"
+                "https://www.theblock.co/rss.xml",
+            ).split(",")
+            if f
+        ]
+    )
+    news_decay_seconds: float = 300.0
+    emergency_duration_seconds: float = 180.0
+    flash_move_pct: float = 5.0
+    flash_move_window_seconds: float = 30.0
+
+    # Market data
+    market_data_mode: str = field(default_factory=lambda: _env("MARKET_DATA_MODE", "auto").lower())
+    market_allow_simulator: bool = field(
+        default_factory=lambda: _env_bool("MARKET_ALLOW_SIMULATOR", True)
+    )
+    simulator_seed: int = field(default_factory=lambda: _env_int("SIMULATOR_SEED", 1337))
+    binance_ws_base: str = field(
+        default_factory=lambda: _env("BINANCE_WS_BASE", "wss://stream.binance.com:9443")
+    )
+    binance_rest_base: str = field(
+        default_factory=lambda: _env("BINANCE_REST_BASE", "https://api.binance.com")
+    )
+    coingecko_base: str = field(
+        default_factory=lambda: _env("COINGECKO_BASE", "https://api.coingecko.com/api/v3")
+    )
+    stale_tick_seconds: float = 30.0
+    reconnect_max_seconds: float = 60.0
+
+    # Persistence
+    redis_url: str = field(default_factory=lambda: _env("REDIS_URL", "redis://localhost:6379/0"))
+
+    # Cycle timing
+    #: Length of one prediction window, in wall-clock seconds.  This is the
+    #: countdown the user watches, and it is **60 seconds**, phase-locked to the
+    #: UTC minute (the literal v2.0 timing, Section 9).  Every feature of the
+    #: engine - the signal, the formulas, the news poll, the accuracy scoring -
+    #: is scheduled on that one grid, so the dashboard refreshes in parallel
+    #: instead of each panel ticking on a private timer.
+    #:
+    #: ``CYCLE_SECONDS`` still overrides it for compressed demos, and
+    #: ``TIME_SCALE`` compresses it further for the test suite.
+    cycle_seconds: float = field(
+        default_factory=lambda: _env_float("CYCLE_SECONDS", 60.0)
+    )
+    #: Freshness contract for a published prediction.  ``0`` (the default) means
+    #: "as long as its own window": the signal rendered on screen is the signal
+    #: that governs the window being counted down, and it is replaced at every
+    #: boundary.  Set ``PREDICTION_MAX_AGE_SECONDS`` to pin an explicit cap.
+    prediction_max_age_seconds: float = field(
+        default_factory=lambda: _env_float("PREDICTION_MAX_AGE_SECONDS", 0.0)
+    )
+    time_scale: float = field(default_factory=lambda: _env_float("TIME_SCALE", 1.0))
+    lock_deadline_seconds: float = field(
+        default_factory=lambda: _env_float("LOCK_DEADLINE_SECONDS", 8.0)
+    )
+    formula_refresh_seconds: float = field(
+        default_factory=lambda: _env_float("FORMULA_REFRESH_SECONDS", 15.0)
+    )
+    #: How long after a prediction its result is scored.  ``0`` (the default)
+    #: means "one window later", so the accuracy panel fills at the same rate
+    #: the predictions arrive: 60 s with the 60-second countdown.
+    outcome_horizon_seconds: float = field(
+        default_factory=lambda: _env_float("OUTCOME_HORIZON_SECONDS", 0.0)
+    )
+    #: Target reward:risk ratio.  1.0 = the take-profit and the stop-loss are
+    #: the same distance from the entry.
+    rr_target: float = 1.0
+
+    # --- Signal pipeline (Section 10.4) ---------------------------------
+    #: ``True`` (default): the signal that governs a countdown is *computed
+    #: during the previous countdown* and published at the boundary, so the
+    #: panel is never empty and the user never waits.  While a countdown runs,
+    #: the engine is already computing the next one's signal.
+    #: ``False`` restores the literal v2.0 draft (compute, then publish 8 s
+    #: into the same minute the signal applies to).
+    signal_pipeline: bool = field(default_factory=lambda: _env_bool("SIGNAL_PIPELINE", True))
+
+    # --- Risk levels (Section 10.5) -------------------------------------
+    min_tp_bps: float = 4.0
+    max_tp_bps: float = 150.0
+    min_sl_bps: float = 3.0
+    max_sl_bps: float = 120.0
+    default_volatility_bps: float = 12.0
+
+    @property
+    def cycle_period_seconds(self) -> float:
+        """Wall-clock length of one prediction window.
+
+        ``CYCLE_SECONDS`` (60 s by default, minute-aligned) sets the cadence; a
+        larger ``TIME_SCALE`` compresses it further for demos and tests.
+        """
+        return self.cycle_seconds / max(self.time_scale, 0.01)
+
+    @property
+    def outcome_horizon(self) -> float:
+        """Wall-clock seconds a prediction is given before it is scored."""
+        configured = self.scaled(self.outcome_horizon_seconds)
+        return configured if configured > 0 else self.cycle_period_seconds
+
+    @property
+    def freshness_grace_seconds(self) -> float:
+        """How long past its own window a prediction is still called fresh.
+
+        A prediction is *the* signal for exactly one window: it is computed
+        before the window opens and replaced at the next boundary.  The grace is
+        the small allowance for a request that lands while the next window is
+        being published, so the chip cannot flicker to STALE.
+        """
+        return max(2.0, self.scaled(5.0))
+
+    @property
+    def use_world_clock(self) -> bool:
+        """True only for the literal v2.0 draft timing: 60 s, minute-aligned."""
+        return (
+            abs(self.cycle_seconds - 60.0) < 1e-9
+            and abs(self.time_scale - 1.0) < 1e-9
+        )
+
+    @property
+    def prediction_expired(self) -> float:
+        """Age at which a prediction must be considered stale.
+
+        Default: the length of its own window plus a small grace.  The user's
+        rule is that what is on screen is always the signal for the window being
+        counted down - never an older one.
+        """
+        if self.prediction_max_age_seconds > 0:
+            return max(1.0, self.prediction_max_age_seconds)
+        return max(1.0, self.cycle_period_seconds + self.freshness_grace_seconds)
+
+    def scaled(self, seconds: float) -> float:
+        """Convert a spec (virtual, 60s-cycle) duration to wall-clock seconds."""
+        return seconds / max(self.time_scale, 0.01)
+
+
+SETTINGS = Settings()
+
+
+def reload_settings() -> Settings:
+    """Re-read the environment (used by the settings API at runtime)."""
+    global SETTINGS
+    SETTINGS = Settings()
+    return SETTINGS
