@@ -394,7 +394,14 @@ class CycleManager:
         self.stats.cycles_completed += 1
         self.stats.signal_counts[locked.signal] = self.stats.signal_counts.get(locked.signal, 0) + 1
 
-        self.published_computed_at = self.prefetch_at or deadline_wall
+        # The freshness clock starts when the prediction goes *live*, i.e. at
+        # the window boundary - not when it was prefetched.  Prefetch happens up
+        # to half a window earlier, and charging that time to the prediction's
+        # age made a 12-second window look 18 seconds old just before its
+        # boundary (which triggered an unnecessary out-of-band refresh).  How
+        # long the *computation* took is still reported separately, and the
+        # panel still says "computed Xs before this window started".
+        self.published_computed_at = deadline_wall
         self.published_compute_ms = self.prefetch_ms
         await self.broadcast({"type": "SIGNAL", "data": self.signal_payload(locked)})
         self._schedule_outcome(locked, None)
