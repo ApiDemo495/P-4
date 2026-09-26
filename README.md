@@ -1,17 +1,20 @@
 # DROSOPHILA TRADER v2.0
 
-A 1-minute scalp-trading engine for **BTC** and **PAXG** built around a
-Drosophila mushroom-body connectome. One immutable signal per minute, 22
-formulas, three AI agents, and a brain that keeps working when neuPrint, the
-exchange or your API keys do not.
+A scalp-trading engine for **BTC** and **PAXG** built around a Drosophila
+mushroom-body connectome. One immutable prediction per window - **never older
+than 15 seconds** - 22 formulas, three AI agents, and a brain that keeps working
+when neuPrint, the exchange or your API keys do not.
 
 ```
    ┌──────────────────────────────────────────────────────────────────────┐
-   │  window N-1   compute signal N   (last ~8 s of the countdown)        │
-   │  window N     🔒 LOCK ─▶ broadcast ─▶ compute signal N+1             │
-   │  t=60 s       score the outcome ─▶ reward the dopamine neurons       │
+   │  window N-1   compute prediction N  (during the countdown)           │
+   │  window N     🔒 LOCK ─▶ broadcast + reasoning ─▶ compute N+1        │
+   │  12 s         score the outcome until it is stale, reward the DANs   │
    └──────────────────────────────────────────────────────────────────────┘
 ```
+
+Every prediction carries a **side (BUY or SELL - there is no HOLD), a fresh-ness
+age, the reasoning behind it, and a 1:1 take-profit / stop-loss pair**.
 
 **The whole app runs on ONE port.** Dashboard, API, WebSocket, matrix viewer,
 settings page and the Flutter build are all served from port **8000**, so there
@@ -112,6 +115,10 @@ bash frontend/run_web.sh --dev
 | `bash run.sh --stop` | stops the engine and its supervisor |
 | `bash run.sh --setup-only` | installs everything, starts nothing |
 | `bash run.sh --port 8020` | uses a different port (then forward that one instead) |
+| `CYCLE_SECONDS=12` | length of one prediction window (the freshness contract is 15 s) |
+| `PREDICTION_MAX_AGE_SECONDS=15` | age at which a prediction is labelled STALE and recomputed |
+| `RR_TARGET=1.0` | reward:risk target; 1.0 = take-profit and stop-loss are equidistant |
+| `OUTCOME_HORIZON_SECONDS=30` | how long after a prediction its result is scored |
 | `bash run.sh --public` | flips the Codespaces port to public |
 | `bash .devcontainer/setup.sh` | the Codespaces `postCreateCommand`: system packages, venv, requirements, redis, `.env` |
 | `bash frontend/run_web.sh` | downloads the Flutter SDK if needed and builds the web client into `frontend/build/web` |
@@ -223,6 +230,7 @@ Codespace tab and let the attach command run, then reload the URL.
 | What you see | What it means | Fix |
 |---|---|---|
 | Sad-page error on port 8000 | nothing is listening | `bash run.sh --bg` then `bash run.sh --status` |
+| Page loads but stays blank / widgets never paint | a dashboard script threw on boot (e.g. a renamed function still being called) | `node --check backend/web/app.js`, then run the guard: `PYTHONPATH=. .venv/bin/python -m pytest backend/tests/test_dashboard_scripts.py -q` |
 | 502 right after opening the Codespace | the container was asleep; the attach command has not finished | wait a few seconds, reload; `bash run.sh --bg` if needed |
 | "Warming up…" banner in the dashboard | the port answers but the brain/market warm-up has not finished | wait ~5 s, the banner clears by itself |
 | A notice covering the whole screen | it cannot happen any more: notices are inline chips and a red HOLD box, never a full-screen layer | nothing to fix — if you ever see one, it is a browser cache: reload with `Ctrl+Shift+R` |
@@ -305,16 +313,31 @@ tail -f server.log
 
 ## 9. The parts that make it v2.0
 
-* **Pipelined countdown.** The 60-second countdown shows the signal computed
-  *during the previous countdown*, while the engine computes the next one. The
-  panel is never blank; `SIGNAL_PIPELINE=0` restores the literal "compute at
-  t=0, lock at t=8 s" timeline.
-* **A dashboard you can read at a glance.** Row 1: prediction · countdown 1–60 ·
-  glittering HOLD box. Row 2: take-profit & stop-loss (volatility-derived) ·
-  prediction accuracy. An emergency override is a small inline chip under the
-  prediction — never a full-screen overlay. The Flutter client adds haptics
-  (`mediumImpact` on a direction change, `heavyImpact` + `vibrate` on an
-  override, `selectionClick` on the first lock).
+* **Fresh predictions, provably.** The window is 12 seconds
+  (`CYCLE_SECONDS`, and `PREDICTION_MAX_AGE_SECONDS=15` is the hard cap), the
+  prediction is computed *during the previous countdown*, and every payload
+  carries `age_seconds` / `stale` / `expires_at`. The dashboard prints
+  "updated 4s ago · max 15s" and turns the chip red if the contract is ever
+  broken; `/api/signal/current` calls `ensure_fresh()` first, which recomputes
+  out of band rather than answering with an old call.
+* **Reasoning, not just a number.** `prediction.reasoning` holds a one-line
+  summary plus bullets: the brain read-out and its fusion weight, the formula
+  consensus (how many of the directional formulas agree), the strongest
+  supporters *and* the dissenters by name and value, the hedge state, the news
+  headline, the level geometry and the measured hit rate. The web panel and the
+  Flutter panel render the same list.
+* **1:1 take-profit / stop-loss.** One volatility-derived distance is clamped
+  once and applied to both sides, so `tp_bps == sl_bps` and the ratio is exactly
+  `1.00:1` (`RR_TARGET` changes it, the default is 1.0). Levels are re-stamped
+  at the window boundary with the live price, so they track the market instead
+  of the previous minute.
+* **A dashboard you can read at a glance.** Row 1: prediction + reasoning ·
+  countdown · side & conviction. Row 2: take-profit & stop-loss (1:1) ·
+  prediction accuracy (win rate, per-side hit rates, freshness, scoring
+  horizon). An emergency override is a small inline chip under the prediction —
+  never a full-screen overlay. The Flutter client adds haptics (`mediumImpact`
+  on a direction change, `heavyImpact` + `vibrate` on an override,
+  `selectionClick` on the first lock).
 * **The fly brain is visible, not decorative.** `/api/brain/wiring` returns the
   formula → neuron map and the five circuit stages; `/api/brain/explain` returns
   what the circuit did in the locked window — dominant projection neurons, KC

@@ -60,12 +60,23 @@ JSDOM.fromURL(BASE + "/", {
     console.log("chip text        :", doc.getElementById("w-emergency-text")?.textContent?.slice(0, 90));
 
     const cls = hold ? hold.className.split(/\s+/) : [];
-    check(cls.includes("override"), "the HOLD box carries the scoped `override` state class");
-    check(!cls.includes("emergency"), "the HOLD box does NOT carry a bare `emergency` class");
-    check(doc.getElementById("w-hold-title")?.textContent.includes("HOLD"),
-      "the HOLD box announces the forced HOLD");
+    check(cls.includes("override"), "the conviction box carries the scoped `override` state class");
+    check(!cls.includes("emergency"), "the conviction box does NOT carry a bare `emergency` class");
+    // Round E removed HOLD: an override now names the exit side, so the box
+    // must say EXIT and the side, never HOLD.
+    const holdTitle = doc.getElementById("w-hold-title")?.textContent ?? "";
+    check(/EXIT/.test(holdTitle), "the conviction box announces the EXIT side");
+    check(!/HOLD/.test(holdTitle), "the conviction box never says HOLD");
     check(doc.getElementById("w-emergency") && !doc.getElementById("w-emergency").classList.contains("hidden"),
       "the inline chip is visible");
+    // Round F: the freshness chip and the reasoning list must both be on the
+    // page for a prediction to be readable.
+    const fresh = doc.getElementById("w-fresh");
+    check(!!fresh && /updated|STALE/.test(fresh.textContent ?? ""),
+      "the prediction freshness chip shows an age");
+    const reasons = doc.getElementById("w-reasoning");
+    check(!!reasons && reasons.children.length > 0,
+      "the prediction reasoning list is populated");
 
     // ---- which rules actually pin something to the viewport? -------------
     const pinned = [];

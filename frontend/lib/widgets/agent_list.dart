@@ -136,5 +136,5 @@ class AgentList extends StatelessWidget {
 }
 
 // NOTE: the emergency notice used to be a full-screen overlay here.  It is now
-// an inline, glittering HOLD box inside the fixed-layout widget panel
+// an inline, glittering conviction box inside the fixed-layout widget panel
 // (`signal_widget_panel.dart`), so nothing ever covers the dashboard.

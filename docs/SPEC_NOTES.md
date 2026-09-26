@@ -357,3 +357,47 @@ the 0.55 confidence gate, 11-of-20 zeros ⇒ HOLD, the 60 s outcome horizon, the
 30 s CryptoPanic poll, the Tier ≤2 emergency rule, the 8 s lock deadline, the
 60 s world clock, the HOLD warning text (verbatim), the 180 s emergency
 duration, and the six degradation levels.
+
+
+---
+
+## Round F - fresh predictions, reasoning, 1:1 levels
+
+The user's rules, and where they live in the code:
+
+| Rule | Implementation |
+| --- | --- |
+| "Predictions can't be older than 15 seconds" | `Settings.cycle_seconds` (default 12 s) + `prediction_max_age_seconds` (hard cap 15 s). The prediction is computed during the previous countdown and re-stamped at the boundary. `CycleManager.prediction_payload()` publishes `age_seconds`, `state` (LIVE / STALE), `expires_at`; `CycleManager.ensure_fresh()` is called by `GET /api/signal/current` and recomputes out of band if the window was ever missed. The dashboard chip (`#w-fresh`) ticks the age locally and turns red if the contract breaks. |
+| "Add reasoning in predictions" | `backend/core/prediction.py::build_reasoning()` composes a summary plus bullets ordered the way the decision was made: brain read-out (with its fusion weight), formula consensus, named supporters, named dissenters, agents, hedge state, rotation, news, level geometry, measured hit rate. Served as `prediction.reasoning` and rendered by both clients. |
+| "Add 1:1 tp:sl" | `backend/core/risk.py::risk_levels()` computes one volatility-derived distance, clamps it once and applies it to both sides, so `tp_bps == sl_bps` and `rr == RR_TARGET == 1.0`. Verified across the clipping extremes by `backend/tests/test_prediction.py`. |
+
+### Accuracy work in the same round
+
+* **Formula consensus confirmation.** `backend/core/prediction.py::consensus()`
+  weights the directional formulas (regime indicators HSI / ERC excluded) by
+  category. `fusion.fuse()` takes the result and scales confidence by
+  0.90-1.00 when the tape agrees and down to 0.65 when it disagrees. The *side*
+  is never flipped by the consensus - the direction ladder stays the spec's.
+* **Realised-form calibration.** With 8 or more scored windows, a hit rate
+  below 50 % scales confidence down (`calibration`), because a high confidence
+  the engine has not been earning is a lie the panel should not print.
+* **Denser scoring.** `OUTCOME_HORIZON_SECONDS` is 30 s = two windows, so every
+  window is scored instead of one in four, and the accuracy panel fills at the
+  rate predictions arrive. `accuracy_block()` adds per-side hit rates.
+* **Two formulas that read a permanent zero on live data** were fixed as part of
+  this round: `HRDD` used a hard dead zone (now a soft 1-to-3-sigma ramp) and
+  `MPS` silenced every mean-reverting tape (now the spec's signed reading, so a
+  choppy tape says "fade it" instead of 0.000).
+
+### The "page is not working" bug, and the guard that now catches it
+
+`app.js` kept calling `renderHoldBox()` after Round E renamed it to
+`renderConvictionBox()`. `node --check` passed (a call to a missing name is
+valid syntax), every Python test passed, and the page rendered nothing:
+`renderAll` threw `ReferenceError` on boot.
+
+`backend/tests/test_dashboard_scripts.py` now fails the build if any script
+calls a function it never defines, or looks up an element id its page never
+renders, or fails `node --check`. The jsdom walkthrough
+(`tools/ui_override_check.js`) additionally boots the live page against a
+running server and asserts the freshness chip and the reasoning list render.

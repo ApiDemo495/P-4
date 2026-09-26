@@ -114,8 +114,10 @@ class SignalPanel extends StatelessWidget {
                 border: Border.all(color: AppTheme.emergency),
               ),
               child: Text(
-                '\u{26A1} EMERGENCY OVERRIDE → HOLD\n${signal.emergencyHeadline}\n'
-                'Superseded: ${signal.supersededBy ?? 'COMPUTING'}',
+                '\u{26A1} EMERGENCY EXIT \u{2192} ${signal.signal}\n'
+                '${signal.emergencyHeadline}\n'
+                'Closes the open position; superseded: '
+                '${signal.supersededBy ?? 'COMPUTING'}',
                 style: const TextStyle(color: AppTheme.emergency, fontSize: 12.5),
               ),
             ),
@@ -170,7 +172,7 @@ class SignalPanel extends StatelessWidget {
           ],
           if (signal.holdWarning != null) ...[
             const SizedBox(height: 12),
-            HoldWarningBox(warning: signal.holdWarning!),
+            ConvictionNoteBox(warning: signal.holdWarning!),
           ],
         ],
       ),
@@ -178,9 +180,10 @@ class SignalPanel extends StatelessWidget {
   }
 }
 
-/// The verbatim Section 10.2 HOLD box.
-class HoldWarningBox extends StatelessWidget {
-  const HoldWarningBox({super.key, required this.warning});
+/// The conviction note: how much to trust the side, and how much size to give
+/// it.  It replaced the Section 10.2 HOLD box when the protocol became binary.
+class ConvictionNoteBox extends StatelessWidget {
+  const ConvictionNoteBox({super.key, required this.warning});
 
   final HoldWarning warning;
 
@@ -196,13 +199,22 @@ class HoldWarningBox extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('⚠  HOLD signal',
+          Text('⚠  ${warning.direction.isEmpty ? 'Conviction' : warning.direction} '
+              'conviction note',
               style: TextStyle(
                   color: AppTheme.warning, fontWeight: FontWeight.w700, fontSize: 12.5)),
           const SizedBox(height: 6),
           Text(warning.text,
               style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12)),
-          if (warning.lean != null) ...[
+          if (warning.source.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              'reason: ${warning.source} · edge '
+              '${warning.leanScore.toStringAsFixed(2)} · '
+              'confidence ${(warning.confidence * 100).toStringAsFixed(0)}%',
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 11.5),
+            ),
+          ] else if (warning.lean != null) ...[
             const SizedBox(height: 8),
             Text(
               'Lean direction: ${warning.lean} '

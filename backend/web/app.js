@@ -13,7 +13,7 @@ const state = {
   pendingAsset: null,
   lockState: "COMPUTING",
   cycleNumber: 0,
-  cyclePeriod: 60,
+  cyclePeriod: 15,
   secondsIntoMinute: 0,
   lastCycleAt: null,
   signal: null,
@@ -27,6 +27,8 @@ const state = {
   selfTest: null,
   openLogic: {},
   convictionNote: null,
+  prediction: null,
+  predictionAge: null,
   emergency: null,
   emergencyUntil: 0,
   window: null,
@@ -239,7 +241,7 @@ async function syncClock() {
   const status = await getJSON("/api/signal/status");
   if (!status) return;
   renderStatus(status);
-  state.cyclePeriod = status.clock?.cycle_period_seconds || 60;
+  state.cyclePeriod = status.clock?.cycle_period_seconds || 15;
   state.secondsIntoMinute = status.clock?.seconds_into_minute || 0;
   if (status.lock) {
     state.lockState = status.lock.state;
@@ -255,6 +257,10 @@ async function syncClock() {
     if (current?.signal) {
       state.signal = current.signal;
       state.convictionNote = current.conviction_note || null;
+      if (current.prediction) {
+        state.prediction = current.prediction;
+        state.predictionAnchoredAt = Date.now();
+      }
       state.formulas = current.signal.formulas || {};
       state.formulaReadings = current.signal.readings || {};
       state.formulaTraces = current.signal.traces || {};
@@ -265,7 +271,7 @@ async function syncClock() {
 }
 
 function tickClock() {
-  const period = state.cyclePeriod || 60;
+  const period = state.cyclePeriod || 15;
   const remaining = windowRemaining();
   const elapsed = Math.max(0, period - remaining);
 
@@ -294,8 +300,65 @@ function tickClock() {
     $("utc").textContent = new Date().toISOString().substr(11, 8) + "Z";
   }
 
+  renderFreshness(state.prediction);
   renderPipelineProgress();
   renderWindowStrip();
+}
+
+/* The freshness contract: the prediction may never be older than the
+   maximum age the backend publishes.  The chip is the visible proof, and the
+   age is advanced locally between server messages so it ticks like a clock. */
+function renderFreshness(prediction) {
+  const chip = $("w-fresh");
+  if (!chip) return;
+  const p = prediction || state.prediction;
+  if (!p || !p.computed_at) {
+    chip.textContent = "—";
+    chip.className = "fresh-chip";
+    return;
+  }
+  const maxAge = p.max_age_seconds || 15;
+  let age = typeof p.age_seconds === "number" ? p.age_seconds : null;
+  if (age !== null && state.predictionAnchoredAt) {
+    age += (Date.now() - state.predictionAnchoredAt) / 1000;
+  }
+  if (age === null) {
+    chip.textContent = "—";
+    chip.className = "fresh-chip";
+    return;
+  }
+  const stale = age > maxAge;
+  chip.textContent = stale
+    ? `STALE ${Math.round(age)}s > ${Math.round(maxAge)}s`
+    : `updated ${Math.round(age)}s ago · max ${Math.round(maxAge)}s`;
+  chip.className = "fresh-chip " + (stale ? "stale" : "live");
+  chip.title = `computed ${p.computed_at} · expires ${p.expires_at || "—"}`;
+}
+
+/* The reasoning bullets: what supports the side (▸) and what argues against
+   it (▾).  Rendered verbatim from the API - the client never composes a case
+   of its own. */
+function renderReasoning(prediction, targetId) {
+  const list = $(targetId);
+  if (!list) return;
+  const reasoning = prediction?.reasoning;
+  const bullets = reasoning?.bullets || [];
+  list.innerHTML = "";
+  if (!bullets.length) {
+    const li = document.createElement("li");
+    li.textContent = "reasoning unavailable for this window";
+    list.appendChild(li);
+    return;
+  }
+  // Most important first: supporters, then the counterpoints, capped so the
+  // cell keeps its height.
+  const ordered = [...bullets].sort((a, b) => Number(b.supports) - Number(a.supports));
+  ordered.slice(0, 6).forEach((b) => {
+    const li = document.createElement("li");
+    li.className = b.supports ? "" : "against";
+    li.textContent = b.text;
+    list.appendChild(li);
+  });
 }
 
 function renderPipelineProgress() {
@@ -304,7 +367,7 @@ function renderPipelineProgress() {
   const fill = $("w-pipeline-fill");
   const ready = !!w.prefetch_ready;
   const lead = state.config?.lock_deadline_seconds || 8;
-  const period = state.cyclePeriod || 60;
+  const period = state.cyclePeriod || 15;
   // Progress of the *next* window's computation: idle until the prefetch lead
   // window opens (the engine deliberately computes late so its snapshot is
   // fresh), then 0 -> 100 %.
@@ -421,6 +484,13 @@ function renderSignal() {
     return;
   }
 
+  if (state.signal.prediction) {
+    state.prediction = state.signal.prediction;
+    state.predictionAnchoredAt = Date.now();
+  }
+  renderFreshness(state.prediction);
+  renderReasoning(state.prediction, "reasoning-list");
+
   const badge = $("signal-badge");
   if (badge) {
     badge.textContent = s.signal;
@@ -504,6 +574,13 @@ function renderWidgetPanel() {
   }
   state.lastPrediction = has ? prediction : null;
 
+  if (s && s.prediction) {
+    state.prediction = s.prediction;
+    state.predictionAnchoredAt = Date.now();
+  }
+  renderFreshness(state.prediction);
+  renderReasoning(state.prediction, "w-reasoning");
+
   const w = state.window || {};
   $("w-window-label").textContent = has ? `window #${s.cycle_number}` : "starting up";
   $("w-prediction-sub").textContent = !has
@@ -555,10 +632,28 @@ function renderWidgetPanel() {
     : "waiting for the first window to close";
   $("w-last-outcome").className = last ? (last.outcome > 0 ? "pos" : last.outcome < 0 ? "neg" : "muted") : "muted";
 
+  // Per-side hit rates: which direction the engine has actually been getting
+  // right, and how long a prediction is given before it is scored.
+  const livePrediction = state.prediction || {};
+  const accuracy = livePrediction.accuracy || {};
+  const perSide = accuracy.per_side || {};
+  const sideRate = (side) => {
+    const row = perSide[side];
+    if (!row || !row.evaluated) return "—";
+    return `${fmtPct(row.win_rate)} of ${row.evaluated}`;
+  };
+  $("w-buy-rate").textContent = sideRate("BUY");
+  $("w-sell-rate").textContent = sideRate("SELL");
+  $("w-horizon").textContent = livePrediction.horizon_seconds
+    ? `${Math.round(livePrediction.horizon_seconds)}s`
+    : (state.window?.window_seconds ? `${Math.round(state.window.window_seconds)}s` : "—");
+
   const engine = state.config?.simulated
     ? `simulated market data · ${state.config?.market_source || "simulator"}`
-    : `${state.config?.market_source || "live feed"} · ${state.config?.cycle_period_seconds || 60}s windows`;
-  $("w-engine").textContent = `${engine}${state.window?.pipeline ? " · pipelined" : ""}`;
+    : `${state.config?.market_source || "live feed"} · ${state.config?.cycle_period_seconds || 15}s windows`;
+  $("w-engine").textContent =
+    `${engine}${state.window?.pipeline ? " · pipelined" : ""}` +
+    ` · ${Math.round(state.window?.window_seconds || state.cyclePeriod || 15)}s predictions`;
 }
 
 /* The conviction box: the signal, its conviction and the size it implies.
@@ -1031,7 +1126,7 @@ function escapeHtml(text) {
 /* The emergency path no longer takes over the screen: it lights the inline
    conviction box and a small chip under the prediction, both inside the page. */
 function renderEmergency() {
-  renderHoldBox();
+  renderConvictionBox();
 }
 
 /* ------------------------------------------------------- API keys modal */
@@ -1206,7 +1301,7 @@ function renderAll() {
   renderSignal();
   renderFormulas();
   renderWidgetPanel();
-  renderHoldBox();
+  renderConvictionBox();
 }
 
 async function pollReadiness() {
@@ -1223,7 +1318,7 @@ async function pollReadiness() {
 async function boot() {
   state.config = await getJSON("/api/system/config");
   if (state.config && !state.config.error) {
-    state.cyclePeriod = state.config.cycle_period_seconds || 60;
+    state.cyclePeriod = state.config.cycle_period_seconds || 15;
     state.asset = (state.config.assets || ["BTC"])[0];
   } else {
     state.config = {};

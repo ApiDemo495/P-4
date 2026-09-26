@@ -112,13 +112,30 @@ async def signals_socket(websocket: WebSocket) -> None:
 @router.get("/api/signal/current")
 async def current_signal() -> dict:
     manager = get_manager()
+    # Freshness contract: a prediction may never be older than 15 seconds.  The
+    # cycle loop refreshes every window; this is the safety net for a window
+    # that was missed, and it is a no-op in the normal case.
+    try:
+        refreshed = await manager.ensure_fresh()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("freshness check failed: %s", exc)
+        refreshed = False
     signal = manager.lock.try_get_current()
+    prediction = manager.prediction_payload(signal)
+    if refreshed:
+        # Re-read through the payload helper so the numbers the client renders
+        # are the ones that were just computed.
+        signal = manager.lock.try_get_current()
+        prediction = manager.prediction_payload(signal)
     return {
         "lock_state": manager.lock.state.value,
         "lock_icon": manager.lock.state.icon,
         # Never ``null``: while the lock is COMPUTING this is the sentinel, so
         # clients can render the layout (and the countdown) immediately.
         "signal": signal.to_dict() if signal else manager.signal_payload(),
+        "prediction": prediction,
+        "prediction_age_seconds": prediction["age_seconds"],
+        "prediction_stale": prediction["state"] == "STALE",
         "conviction_note": manager.conviction_note,
         "window": manager.window_status(),
         "asset": manager.asset,

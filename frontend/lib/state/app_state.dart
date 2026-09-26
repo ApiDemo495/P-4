@@ -23,8 +23,8 @@ class AppState extends ChangeNotifier {
 
   // --- connection / clock --------------------------------------------------
   bool connected = false;
-  double cyclePeriodSeconds = 60;
-  double secondsRemaining = 60;
+  double cyclePeriodSeconds = 15;
+  double secondsRemaining = 15;
   int cycleNumber = 0;
   int degradationLevel = 1;
   String degradationLabel = '';
@@ -37,6 +37,24 @@ class AppState extends ChangeNotifier {
   String lockIcon = '\u{23F3}';
   FrozenSignal? signal;
   HoldWarning? holdWarning;
+
+  /// The prediction block: side, freshness, 1:1 levels and reasoning.
+  Prediction prediction = Prediction.none;
+
+  /// When [prediction] was received, so its age can tick on screen.
+  DateTime? predictionReceivedAt;
+
+  /// The prediction's age right now, advanced locally between messages.
+  double get predictionAgeSeconds {
+    final base = prediction.ageSeconds;
+    if (base == null) return 0.0;
+    final at = predictionReceivedAt;
+    if (at == null) return base;
+    return base + DateTime.now().difference(at).inMilliseconds / 1000.0;
+  }
+
+  bool get predictionStale =>
+      prediction.ageSeconds != null && predictionAgeSeconds > prediction.maxAgeSeconds;
   Map<String, double> liveFormulas = {};
   Map<String, double> lastLockedFormulas = {};
   Map<String, double> weights = const {};
@@ -79,7 +97,7 @@ class AppState extends ChangeNotifier {
   /// The Signal Lock Protocol state, phrased for the pipelined engine: while a
   /// window is locked the engine is already working on the next one.
   String get lockLabel => isEmergency
-      ? 'EMERGENCY OVERRIDE - HOLD'
+      ? 'EMERGENCY OVERRIDE'
       : isLocked
           ? (nextWindowReady
               ? 'LOCKED - next window computed and held until the boundary'
@@ -238,6 +256,8 @@ class AppState extends ChangeNotifier {
     lockState = parsed.lockState;
     lockIcon = parsed.lockIcon;
     holdWarning = parsed.holdWarning;
+    prediction = parsed.prediction;
+    predictionReceivedAt = DateTime.now();
     lastLockedFormulas = parsed.formulas;
     if (parsed.formulas.isNotEmpty && liveFormulas.isEmpty) {
       liveFormulas = parsed.formulas;

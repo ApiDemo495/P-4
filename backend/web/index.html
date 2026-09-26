@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>Drosophila Trader v2.0</title>
-<link rel="stylesheet" href="/static/styles.css?v=2.0.2" />
+<link rel="stylesheet" href="/static/styles.css?v=2.0.3" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪰</text></svg>" />
 </head>
 <body>
@@ -105,9 +105,15 @@
     <div class="widget-row row-top">
 
       <div class="widget-cell cell-prediction">
-        <div class="cell-label">PREDICTION <span class="muted" id="w-window-label">—</span></div>
+        <div class="cell-label">
+          PREDICTION
+          <span class="muted" id="w-window-label">—</span>
+          <span class="fresh-chip" id="w-fresh">—</span>
+        </div>
         <div class="prediction-value" id="w-prediction">—</div>
         <div class="prediction-sub" id="w-prediction-sub">waiting for the first lock…</div>
+        <!-- Why this side: the same bullets the API returns. -->
+        <ul class="reason-list" id="w-reasoning"></ul>
         <!-- Small inline override notice - never a full-screen overlay. -->
         <div class="emergency-chip hidden" id="w-emergency">
           <span class="bolt">⚡</span>
@@ -148,7 +154,7 @@
           <div class="kv-item"><span>Entry</span><b id="w-entry">—</b></div>
           <div class="kv-item"><span>Take profit</span><b id="w-tp" class="pos">—</b></div>
           <div class="kv-item"><span>Stop loss</span><b id="w-sl" class="neg">—</b></div>
-          <div class="kv-item"><span>Reward : risk</span><b id="w-rr">—</b></div>
+          <div class="kv-item"><span>Reward : risk (1:1)</span><b id="w-rr">—</b></div>
           <div class="kv-item"><span>Realised vol · 1 min</span><b id="w-vol">—</b></div>
           <div class="kv-item"><span>Levels set</span><b id="w-levels">—</b></div>
           <div class="kv-item wide"><span>Note</span><b id="w-risk-note" class="muted">—</b></div>
@@ -161,6 +167,9 @@
           <div class="kv-item"><span>Evaluated windows</span><b id="w-samples">—</b></div>
           <div class="kv-item"><span>Current streak</span><b id="w-streak">—</b></div>
           <div class="kv-item"><span>Last outcome</span><b id="w-last-outcome">—</b></div>
+          <div class="kv-item"><span>Hit rate · BUY</span><b id="w-buy-rate">—</b></div>
+          <div class="kv-item"><span>Hit rate · SELL</span><b id="w-sell-rate">—</b></div>
+          <div class="kv-item"><span>Evaluated after</span><b id="w-horizon">—</b></div>
           <div class="kv-item wide"><span>Engine</span><b id="w-engine" class="muted">—</b></div>
         </div>
       </div>
@@ -194,6 +203,7 @@
       </div>
       <div class="bar"><div class="bar-fill" id="confidence-bar"></div></div>
       <div class="reasoning" id="reasoning">—</div>
+      <ul class="reason-list" id="reasoning-list"></ul>
       <div class="weights" id="weights"></div>
     </div>
     <div id="conviction-note" class="hold-warning hidden">
@@ -373,6 +383,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=2.0.2"></script>
+<script src="/static/app.js?v=2.0.3"></script>
 </body>
 </html>

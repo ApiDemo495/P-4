@@ -188,7 +188,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           style: const TextStyle(color: AppTheme.textMuted, fontSize: 11)),
       child: Column(
         children: state.history.take(6).map((row) {
-          final signal = (row['signal'] ?? 'HOLD').toString();
+          final signal = (row['signal'] ?? '—').toString();
           final emergency = row['is_emergency_override'] == true;
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 3),

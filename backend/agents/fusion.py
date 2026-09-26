@@ -49,6 +49,9 @@ class FusionResult:
     hsi_adjustment: float = 1.0
     weights_used: dict = field(default_factory=dict)
     direction: DirectionDecision | None = None
+    formula_consensus: float | None = None
+    confirmation: float = 1.0
+    calibration: float = 1.0
 
     # -- binary direction fields (HOLD was removed) ----------------------
     @property
@@ -78,6 +81,11 @@ class FusionResult:
             "forced_reason": self.forced_reason,
             "hsi_adjustment": round(self.hsi_adjustment, 4),
             "weights_used": {k: round(v, 4) for k, v in self.weights_used.items()},
+            "formula_consensus": None
+            if self.formula_consensus is None
+            else round(float(self.formula_consensus), 4),
+            "confirmation": self.confirmation,
+            "calibration": self.calibration,
         }
         # Kept for the two clients: "lean" now always equals the decision,
         # because there is no third state to lean away from.
@@ -101,10 +109,19 @@ def fuse(
     insufficient_evidence: bool = False,
     emergency: bool = False,
     previous_signal: str | None = None,
+    formula_consensus: float | None = None,
+    consensus_voters: int = 0,
+    recent_accuracy: dict | None = None,
 ) -> FusionResult:
     """Combine the Drosophila brain with the available AI agents.
 
     Always returns BUY or SELL: see :mod:`backend.core.direction`.
+
+    ``formula_consensus`` is the weighted agreement of the directional formulas
+    (-1..+1) and ``recent_accuracy`` the measured hit rate of recent windows.
+    Neither moves the *side* - the direction ladder stays the spec's - but both
+    move the confidence, because a side that the tape's own formulas contradict,
+    or that has been losing recently, is not a side to size up on.
     """
     settings = settings or cfg.SETTINGS
     warnings = warnings or []
@@ -199,6 +216,39 @@ def fuse(
 
     raw_confidence = 0.65 * magnitude + 0.35 * brain_term
     raw_confidence *= 0.85 + 0.15 * agreement
+
+    # --- formula confirmation ------------------------------------------
+    # The 22 formulas are the only inputs that are verified against known
+    # tapes (backend/formulas/self_test.py).  When they disagree with the side
+    # the fusion picked, the honest move is to trust the side less rather than
+    # to flip it: the ladder has already accounted for the same inputs.
+    confirmation = 1.0
+    consensus_note = ""
+    if formula_consensus is not None and consensus_voters >= 3:
+        side_value = 1.0 if score >= 0 else -1.0
+        alignment = side_value * float(formula_consensus)
+        if alignment >= 0:
+            confirmation = 0.90 + 0.10 * min(1.0, alignment)
+            consensus_note = f"formulas agree ({formula_consensus:+.2f})"
+        else:
+            confirmation = 1.0 - 0.35 * min(1.0, abs(alignment))
+            consensus_note = f"formulas disagree ({formula_consensus:+.2f})"
+    raw_confidence *= confirmation
+
+    # --- realised-form calibration --------------------------------------
+    # If the last windows of this kind have been losing, a high confidence is a
+    # claim the engine has not been earning.  Damp it and say so.
+    calibration = 1.0
+    accuracy_note = ""
+    accuracy = recent_accuracy or {}
+    evaluated = int(accuracy.get("evaluated") or 0)
+    if evaluated >= 8:
+        win_rate = float(accuracy.get("win_rate") or 0.0)
+        if win_rate < 0.50:
+            calibration = 0.80 + 0.20 * (win_rate / 0.50)
+            accuracy_note = f"recent form {win_rate:.0%} of {evaluated}"
+    raw_confidence *= calibration
+
     confidence = raw_confidence * hsi_adjustment
     confidence = max(0.0, min(0.95, confidence))
 
@@ -234,6 +284,8 @@ def fuse(
         hsi_adjustment,
         settings,
         confidence,
+        consensus_note=consensus_note,
+        accuracy_note=accuracy_note,
     )
 
     return FusionResult(
@@ -247,6 +299,9 @@ def fuse(
         hsi_adjustment=hsi_adjustment,
         weights_used=weights_used,
         direction=direction,
+        formula_consensus=formula_consensus,
+        confirmation=round(confirmation, 4),
+        calibration=round(calibration, 4),
     )
 
 
@@ -260,6 +315,8 @@ def _explain(
     hsi_adjustment: float,
     settings,
     confidence: float,
+    consensus_note: str = "",
+    accuracy_note: str = "",
 ) -> str:
     parts: list[str] = []
 
@@ -281,6 +338,10 @@ def _explain(
         parts.append(f"Hedge stress low (HSI={hsi:.2f})")
 
     parts.append(f"brain CCSv2={ccs_value:+.2f} at {ccs_confidence:.0%} confidence")
+    if consensus_note:
+        parts.append(consensus_note)
+    if accuracy_note:
+        parts.append(f"confidence dampened on {accuracy_note}")
     parts.append(describe_direction(direction, confidence))
     if direction.tie_break and direction.tie_break not in ("emergency", "fused score"):
         parts.append(f"tie-break: {direction.tie_break}")

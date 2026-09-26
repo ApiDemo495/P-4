@@ -121,11 +121,12 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     state.last_rho = rhos
 
     weighted = sum(w * r for w, r in zip(LAG_WEIGHTS, rhos)) / sum(LAG_WEIGHTS)
-    # Only *positive* autocorrelation is trend persistence.  A mean-reverting
-    # tape (rho < 0) has no trend to continue, so its persistence is 0 rather
-    # than -0.87 (that sign then leaked into the output through the drift sign
-    # and made a choppy tape read -0.5).
-    persistence = tanh(GAIN * max(0.0, weighted))
+    # The spec's reading is signed: positive autocorrelation means the move
+    # continues, negative means it fades.  Either way the *tradeable* statement
+    # is "the recent drift, or its opposite" - so the sign comes from rho and
+    # the direction from the drift, and a mean-reverting tape says "fade it"
+    # instead of falling silent (a zero here read as a broken formula).
+    persistence = tanh(GAIN * weighted)
     state.last_mps = persistence
 
     # Persistence is a *strength*; a projection neuron needs a direction.  The
@@ -144,10 +145,11 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     trace(ctx, "returns in the horizon", returns.size, "ticks (200 s)")
     trace(ctx, "new returns this window", fresh_n, "ticks")
     trace(ctx, "rho1 / rho2 / rho3", np.asarray(rhos), "autocorrelation")
-    trace(ctx, "weighted rho", weighted, "3:2:1 weights (0 when mean-reverting)")
-    trace(ctx, "persistence strength", persistence, "tanh(3 * max(0, weighted rho))")
+    trace(ctx, "weighted rho", weighted, "3:2:1 weights")
+    trace(ctx, "persistence strength", persistence, "tanh(3 * weighted rho)")
     trace(ctx, "recent drift", drift, "mean log return")
-    trace(ctx, "drift sign", drift_sign, "direction the persistence applies to")
+    trace(ctx, "drift sign", drift_sign, "direction the persistence applies to\n"
+          "(negative x negative = continue a falling tape)")
     trace(ctx, "efficiency ratio", efficiency, "net move / total travel")
     trace(ctx, "materiality", materiality, "min(1, 2 x efficiency)")
 

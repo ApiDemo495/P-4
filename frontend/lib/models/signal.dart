@@ -19,13 +19,20 @@ int _i(dynamic value, [int fallback = 0]) {
 String _s(dynamic value, [String fallback = '']) =>
     value == null ? fallback : value.toString();
 
-/// The verbatim Section 10.2 HOLD box, plus the lean the engine kept.
+/// The conviction note (the Section 10.2 box, re-purposed).
+///
+/// It is no longer about a missing signal - every window is BUY or SELL - but
+/// about *size*: it appears when the side came from the tie-break ladder or
+/// when the engine's conviction is below HIGH.
 class HoldWarning {
   const HoldWarning({
     required this.text,
     this.lean,
     this.leanScore = 0.0,
     this.confidence = 0.0,
+    this.direction = '',
+    this.source = '',
+    this.conviction = '',
   });
 
   final String text;
@@ -33,11 +40,19 @@ class HoldWarning {
   final double leanScore;
   final double confidence;
 
+  /// The side the note is about (BUY / SELL) and the reason it fired.
+  final String direction;
+  final String source;
+  final String conviction;
+
   factory HoldWarning.fromJson(Map<String, dynamic> json) => HoldWarning(
         text: _s(json['text']),
         lean: json['lean'] == null ? null : _s(json['lean']),
-        leanScore: _d(json['lean_score']),
+        leanScore: _d(json['lean_score'] ?? json['edge']),
         confidence: _d(json['confidence']),
+        direction: _s(json['direction']),
+        source: _s(json['source']),
+        conviction: _s(json['conviction']),
       );
 }
 
@@ -80,17 +95,21 @@ class AgentDecision {
 
 /// Take-profit / stop-loss geometry attached to every locked signal
 /// (Section 10.5). Levels are derived from realised volatility, not from a
-/// fixed pip target, and a HOLD signal deliberately carries no position.
+/// fixed pip target, and the take-profit is the same distance from the entry
+/// as the stop-loss (1:1), so the ratio is always 1.00.
 class SignalRisk {
   const SignalRisk({
     this.tradeable = false,
-    this.direction = 'HOLD',
+    // No default side: the protocol is binary (BUY or SELL), so an absent
+    // direction is unknown rather than a third state.
+    this.direction = '',
     this.entry = 0.0,
     this.takeProfit,
     this.stopLoss,
     this.tpBps = 0.0,
     this.slBps = 0.0,
     this.rr = 0.0,
+    this.rrTarget = 1.0,
     this.volatilityBps = 0.0,
     this.horizonSeconds = 60.0,
     this.note = '',
@@ -104,6 +123,10 @@ class SignalRisk {
   final double tpBps;
   final double slBps;
   final double rr;
+
+  /// The reward:risk the engine is aiming for.  1.0 = take-profit and
+  /// stop-loss are the same distance from the entry.
+  final double rrTarget;
   final double volatilityBps;
   final double horizonSeconds;
   final String note;
@@ -112,7 +135,7 @@ class SignalRisk {
 
   factory SignalRisk.fromJson(Map<String, dynamic> json) => SignalRisk(
         tradeable: json['tradeable'] == true,
-        direction: _s(json['direction'], 'HOLD'),
+        direction: _s(json['direction']),
         entry: _d(json['entry']),
         takeProfit:
             json['take_profit'] == null ? null : _d(json['take_profit']),
@@ -120,9 +143,140 @@ class SignalRisk {
         tpBps: _d(json['tp_bps']),
         slBps: _d(json['sl_bps']),
         rr: _d(json['rr']),
+        rrTarget: _d(json['rr_target'], 1.0),
         volatilityBps: _d(json['volatility_bps']),
         horizonSeconds: _d(json['horizon_seconds'], 60),
         note: _s(json['note']),
+      );
+}
+
+/// One line of the case for (or against) the side.
+class ReasoningBullet {
+  const ReasoningBullet({
+    this.kind = '',
+    this.text = '',
+    this.supports = true,
+  });
+
+  final String kind;
+  final String text;
+  final bool supports;
+
+  factory ReasoningBullet.fromJson(Map<String, dynamic> json) => ReasoningBullet(
+        kind: _s(json['kind']),
+        text: _s(json['text']),
+        supports: json['supports'] != false,
+      );
+}
+
+/// Why the side was chosen: a one-line summary plus the evidence both ways.
+class PredictionReasoning {
+  const PredictionReasoning({
+    this.summary = '',
+    this.bullets = const [],
+    this.supports = const [],
+    this.against = const [],
+  });
+
+  final String summary;
+  final List<ReasoningBullet> bullets;
+  final List<String> supports;
+  final List<String> against;
+
+  static const PredictionReasoning none = PredictionReasoning();
+
+  factory PredictionReasoning.fromJson(Map<String, dynamic> json) {
+    final raw = (json['bullets'] as List?) ?? const [];
+    return PredictionReasoning(
+      summary: _s(json['summary']),
+      bullets: raw
+          .whereType<Map>()
+          .map((row) => ReasoningBullet.fromJson(Map<String, dynamic>.from(row)))
+          .toList(),
+      supports: ((json['supports'] as List?) ?? const [])
+          .map((value) => value.toString())
+          .toList(),
+      against: ((json['against'] as List?) ?? const [])
+          .map((value) => value.toString())
+          .toList(),
+    );
+  }
+}
+
+/// The prediction the panel renders: the side, its fresh-ness, the 1:1 levels
+/// and the reasoning behind it.
+///
+/// `ageSeconds` is the age as of the moment the payload was received; the UI
+/// adds the time it has been on screen.  A prediction older than
+/// `maxAgeSeconds` is stale by contract (15 s by default), and the chip says so.
+class Prediction {
+  const Prediction({
+    this.side = '',
+    this.confidence = 0.0,
+    this.conviction = 'LOW',
+    this.entry,
+    this.takeProfit,
+    this.stopLoss,
+    this.tpBps = 0.0,
+    this.slBps = 0.0,
+    this.rr = 0.0,
+    this.rrTarget = 1.0,
+    this.volatilityBps = 0.0,
+    this.horizonSeconds = 15.0,
+    this.ageSeconds,
+    this.maxAgeSeconds = 15.0,
+    this.state = 'LIVE',
+    this.computedAt = '',
+    this.expiresAt = '',
+    this.reasoning = PredictionReasoning.none,
+  });
+
+  final String side;
+  final double confidence;
+  final String conviction;
+  final double? entry;
+  final double? takeProfit;
+  final double? stopLoss;
+  final double tpBps;
+  final double slBps;
+  final double rr;
+  final double rrTarget;
+  final double volatilityBps;
+  final double horizonSeconds;
+  final double? ageSeconds;
+  final double maxAgeSeconds;
+  final String state; // LIVE | STALE
+  final String computedAt;
+  final String expiresAt;
+  final PredictionReasoning reasoning;
+
+  bool get isStale => state != 'LIVE';
+
+  static const Prediction none = Prediction();
+
+  factory Prediction.fromJson(Map<String, dynamic> json) => Prediction(
+        side: _s(json['side']),
+        confidence: _d(json['confidence']),
+        conviction: _s(json['conviction'], 'LOW'),
+        entry: json['entry'] == null ? null : _d(json['entry']),
+        takeProfit:
+            json['take_profit'] == null ? null : _d(json['take_profit']),
+        stopLoss: json['stop_loss'] == null ? null : _d(json['stop_loss']),
+        tpBps: _d(json['tp_bps']),
+        slBps: _d(json['sl_bps']),
+        rr: _d(json['rr']),
+        rrTarget: _d(json['rr_target'], 1.0),
+        volatilityBps: _d(json['volatility_bps']),
+        horizonSeconds: _d(json['horizon_seconds'], 15),
+        ageSeconds: json['age_seconds'] == null ? null : _d(json['age_seconds']),
+        maxAgeSeconds: _d(json['max_age_seconds'], 15),
+        state: _s(json['state'], 'LIVE'),
+        computedAt: _s(json['computed_at']),
+        expiresAt: _s(json['expires_at']),
+        reasoning: json['reasoning'] == null
+            ? PredictionReasoning.none
+            : PredictionReasoning.fromJson(
+                Map<String, dynamic>.from(json['reasoning'] as Map)),
       );
 }
 
@@ -206,6 +360,7 @@ class FrozenSignal {
     this.holdWarning,
     this.weightsUsed = const {},
     this.risk = SignalRisk.none,
+    this.prediction = Prediction.none,
     this.window,
     this.preview = false,
     this.computedAt = '',
@@ -217,7 +372,7 @@ class FrozenSignal {
   final int cycleNumber;
   final String timestamp;
   final String asset;
-  final String signal; // BUY | SELL | HOLD
+  final String signal; // BUY | SELL - the protocol is binary
   final double confidence;
   final String reasoning;
   final String lockState; // COMPUTING | LOCKED | EMERGENCY_OVERRIDE
@@ -241,8 +396,11 @@ class FrozenSignal {
   final HoldWarning? holdWarning;
   final Map<String, double> weightsUsed;
 
-  /// Take-profit / stop-loss block - empty for a HOLD (no position).
+  /// Take-profit / stop-loss block, 1:1 by contract.
   final SignalRisk risk;
+
+  /// The prediction block: side, freshness, levels, reasoning and accuracy.
+  final Prediction prediction;
 
   /// The window this signal governs (pipeline metadata).
   final WindowInfo? window;
@@ -254,7 +412,10 @@ class FrozenSignal {
 
   bool get isBuy => signal == 'BUY';
   bool get isSell => signal == 'SELL';
-  bool get isHold => signal == 'HOLD';
+  /// Always false: HOLD was removed from the protocol.  Kept as a
+  /// deprecated shim so an older widget cannot resurrect the third state.
+  @Deprecated('HOLD was removed: every window is BUY or SELL')
+  bool get isHold => false;
 
   double hedgeValue(String key) => _d(hedge[key]);
 
@@ -270,7 +431,7 @@ class FrozenSignal {
       cycleNumber: _i(json['cycle_number']),
       timestamp: _s(json['timestamp']),
       asset: _s(json['asset'], 'BTC'),
-      signal: _s(json['signal'], 'HOLD'),
+      signal: _s(json['signal'], 'SELL'),
       confidence: _d(json['confidence']),
       reasoning: _s(json['reasoning']),
       lockState: _s(json['lock_state'], 'LOCKED'),
@@ -300,12 +461,16 @@ class FrozenSignal {
               k.toString(), Map<String, dynamic>.from(v as Map)),
         ),
       ),
-      holdWarning: json['hold_warning'] == null
+      holdWarning: json['conviction_note'] == null
           ? null
           : HoldWarning.fromJson(
-              Map<String, dynamic>.from(json['hold_warning'] as Map)),
+              Map<String, dynamic>.from(json['conviction_note'] as Map)),
       weightsUsed:
           rawWeights.map((k, v) => MapEntry(k.toString(), _d(v))),
+      prediction: json['prediction'] == null
+          ? Prediction.none
+          : Prediction.fromJson(
+              Map<String, dynamic>.from(json['prediction'] as Map)),
       risk: json['risk'] == null
           ? SignalRisk.none
           : SignalRisk.fromJson(Map<String, dynamic>.from(json['risk'] as Map)),

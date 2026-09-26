@@ -9,7 +9,7 @@ import '../theme.dart';
 
 /// The fixed-layout signal widget (feedback round, items 2, 3, 4 and 5).
 ///
-///     row 1:  [ buy/sell prediction ] [ countdown 1-60 ] [ HOLD / wait box ]
+///     row 1:  [ prediction + reasoning ] [ countdown 1-15 ] [ side & conviction ]
 ///     row 2:  [ take profit & stop loss ]      [ prediction accuracy ]
 ///
 /// Two rules are structural, not cosmetic:
@@ -31,7 +31,7 @@ class SignalWidgetPanel extends StatelessWidget {
         final narrow = constraints.maxWidth < 760;
         // ``fill`` keeps every cell the same height in the wide (widget) layout
         // and lets it size to its content on a phone, where a fixed height
-        // would clip the long HOLD text.
+        // would clip the reasoning list.
         final fill = !narrow;
         final top = narrow
             ? Column(
@@ -135,10 +135,18 @@ class SignalWidgetPanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-          Text(
-            _predictionSubtitle(signal),
-            style: const TextStyle(color: AppTheme.textMuted, fontSize: 11.5),
+          Row(
+            children: [
+              Text(
+                _predictionSubtitle(signal),
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 11.5),
+              ),
+              const SizedBox(width: 6),
+              _FreshnessChip(state: state),
+            ],
           ),
+          const SizedBox(height: 6),
+          _ReasonList(state: state),
           // Inline emergency chip: small, glittering, inside the page.
           if (state.emergency != null || (signal?.isEmergencyOverride ?? false))
             Padding(
@@ -159,7 +167,7 @@ class SignalWidgetPanel extends StatelessWidget {
   }
 
   Widget _countdownCell(bool fill) {
-    final period = state.cyclePeriodSeconds <= 0 ? 60.0 : state.cyclePeriodSeconds;
+    final period = state.cyclePeriodSeconds <= 0 ? 15.0 : state.cyclePeriodSeconds;
     final remaining = state.secondsRemaining.clamp(0.0, period);
     final seconds = remaining.ceil();
     final progress = (remaining / period).clamp(0.0, 1.0);
@@ -255,34 +263,34 @@ class SignalWidgetPanel extends StatelessWidget {
   Widget _holdCell(bool fill) {
     final signal = state.signal;
     final emergency = state.emergency != null || (signal?.isEmergencyOverride ?? false);
-    final hold = signal?.isHold ?? false;
+    final conviction = signal?.prediction.conviction ??
+        (signal == null ? '—' : (signal.confidence > 0.7 ? 'HIGH' : 'MEDIUM'));
+    final note = state.holdWarning;
     return _Cell(
       fill: fill,
-      label: 'HOLD / WAIT',
+      label: 'SIGNAL & CONVICTION',
       child: GlitterBox(
-        active: emergency || hold,
+        active: emergency,
         emergency: emergency,
-        title: emergency ? '\u{26A1} HOLD' : (hold ? 'HOLD' : (signal?.signal ?? '…')),
+        title: emergency
+            ? '\u{26A1} EXIT \u{2192} ${signal?.signal ?? '—'}'
+            : signal == null
+                ? '…'
+                : '${signal.signal} · $conviction',
         body: emergency
-            ? 'Emergency override — the signal is forced to HOLD. '
-                'Exit any open position.'
-            : hold
-                ? (state.holdWarning?.text ??
-                    signal?.reasoning ??
-                    'No directional edge strong enough to trade.')
-                : signal == null
-                    ? 'waiting for the first window'
-                    : '${signal.signal} is live — take profit and stop loss '
-                        'are in the row below.',
+            ? 'Emergency override: exit any open position now.'
+            : signal == null
+                ? 'waiting for the first window'
+                : (note?.text ??
+                    '${signal.signal} is live (${conviction.toLowerCase()} '
+                        'conviction) — take profit and stop loss are in the '
+                        'row below.'),
         meta: emergency
             ? (state.emergency?['headline']?.toString() ?? signal?.emergencyHeadline ?? '')
-            : hold
-                ? (state.holdWarning?.lean == null
-                    ? 'wait for the next window'
-                    : 'lean ${state.holdWarning!.lean} '
-                        '${state.holdWarning!.leanScore.toStringAsFixed(3)} · '
-                        'conf ${(state.holdWarning!.confidence * 100).toStringAsFixed(0)}%')
-                : 'the hold box lights up when the engine is flat',
+            : signal == null
+                ? ''
+                : 'confidence ${(signal.confidence * 100).toStringAsFixed(0)}% · '
+                    '1:1 levels · updated ${(state.prediction.ageSeconds).toStringAsFixed(0)}s ago',
       ),
     );
   }
@@ -309,7 +317,10 @@ class SignalWidgetPanel extends StatelessWidget {
           tradeable ? _money(risk.stopLoss) : '—',
           color: tradeable ? AppTheme.sell : AppTheme.textMuted,
         ),
-        _Kv('Reward : risk', risk.rr > 0 ? '${risk.rr.toStringAsFixed(2)} : 1' : '—'),
+        _Kv(
+          'Reward : risk (1:1)',
+          risk.rr > 0 ? '${risk.rr.toStringAsFixed(2)} : 1' : '—',
+        ),
         _Kv(
           'Realised vol · 1 min',
           risk.volatilityBps > 0
@@ -342,6 +353,20 @@ class SignalWidgetPanel extends StatelessWidget {
       child: _KvGrid(items: [
         _Kv('Win rate', '${(state.winRate * 100).toStringAsFixed(0)}%'),
         _Kv('Evaluated windows', '${state.outcomeCount}'),
+        _Kv(
+          'Prediction age',
+          state.prediction.ageSeconds == null
+              ? '—'
+              : '${state.predictionAgeSeconds.toStringAsFixed(0)}s '
+                  '/ ${state.prediction.maxAgeSeconds.toStringAsFixed(0)}s',
+          color: state.predictionStale ? AppTheme.sell : AppTheme.textMuted,
+          small: true,
+        ),
+        _Kv(
+          'Scored after',
+          '${state.prediction.horizonSeconds.toStringAsFixed(0)}s',
+          small: true,
+        ),
         _Kv(
           'Current streak',
           streak == 0
@@ -662,8 +687,8 @@ class _EmergencyChip extends StatelessWidget {
           Flexible(
             child: Text(
               headline.isEmpty
-                  ? 'emergency override — forced HOLD'
-                  : 'forced HOLD: “$headline”',
+                  ? 'emergency override — exit the position'
+                  : 'emergency exit: “$headline”',
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
@@ -779,4 +804,93 @@ class _RingPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _RingPainter old) =>
       old.fraction != fraction || old.color != color || old.urgent != urgent;
+}
+
+
+/// The freshness chip: how old the prediction is against the 15-second rule.
+class _FreshnessChip extends StatelessWidget {
+  const _FreshnessChip({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final prediction = state.prediction;
+    if (prediction.ageSeconds == null) {
+      return const SizedBox.shrink();
+    }
+    final stale = state.predictionStale;
+    final label = stale
+        ? 'STALE ${state.predictionAgeSeconds.toStringAsFixed(0)}s'
+        : 'updated ${state.predictionAgeSeconds.toStringAsFixed(0)}s ago';
+    final color = stale ? AppTheme.sell : AppTheme.buy;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        border: Border.all(color: color.withAlpha(140)),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(color: color, fontSize: 9.5, letterSpacing: 0.4),
+      ),
+    );
+  }
+}
+
+/// The reasoning bullets: what supports the side, then what argues against it.
+class _ReasonList extends StatelessWidget {
+  const _ReasonList({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final bullets = state.prediction.reasoning.bullets;
+    if (bullets.isEmpty) {
+      return const Text(
+        'reasoning unavailable for this window',
+        style: TextStyle(color: AppTheme.textMuted, fontSize: 10.5),
+      );
+    }
+    final ordered = [...bullets]..sort(
+        (a, b) => (b.supports ? 1 : 0).compareTo(a.supports ? 1 : 0),
+      );
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 92),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final bullet in ordered.take(6))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 3),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      bullet.supports ? '\u{25B8} ' : '\u{25BE} ',
+                      style: TextStyle(
+                        color: bullet.supports ? AppTheme.accent : AppTheme.sell,
+                        fontSize: 11,
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        bullet.text,
+                        style: const TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: 10.5,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }

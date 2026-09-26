@@ -103,8 +103,12 @@ COINGECKO_IDS: dict[str, str] = {"BTC": "bitcoin", "PAXG": "pax-gold"}
 #: multiples of the realised 1-minute volatility, so the levels breathe with
 #: the market instead of being fixed pip targets.
 RISK_PARAMS: dict[str, dict[str, float]] = {
-    "BTC": {"tp_sigma_mult": 1.6, "sl_sigma_mult": 1.0},
-    "PAXG": {"tp_sigma_mult": 1.4, "sl_sigma_mult": 1.0},
+    # One distance for both sides of the trade: the user asked for a 1:1
+    # reward:risk, so the take-profit and the stop-loss are the same number of
+    # bps away from the entry.  The multiplier is in units of the realised
+    # 15-second volatility (`volatility_bps`).
+    "BTC": {"sigma_mult": 1.5},
+    "PAXG": {"sigma_mult": 1.4},
 }
 
 
@@ -243,6 +247,19 @@ class Settings:
     redis_url: str = field(default_factory=lambda: _env("REDIS_URL", "redis://localhost:6379/0"))
 
     # Cycle timing
+    #: Length of one prediction window, in wall-clock seconds.  The user's rule
+    #: is that a prediction may never be older than 15 seconds, so the engine
+    #: recomputes and republishes every window at this cadence.  The v2.0 draft
+    #: used the full 60-second minute; 12 s leaves 20 % headroom under the hard
+    #: 15-second cap, so the freshness chip cannot flicker to STALE on a slow
+    #: request, and the agents (7 s budget) still fit inside the window.
+    cycle_seconds: float = field(
+        default_factory=lambda: _env_float("CYCLE_SECONDS", 12.0)
+    )
+    #: Hard freshness contract for a published prediction.
+    prediction_max_age_seconds: float = field(
+        default_factory=lambda: _env_float("PREDICTION_MAX_AGE_SECONDS", 15.0)
+    )
     time_scale: float = field(default_factory=lambda: _env_float("TIME_SCALE", 1.0))
     lock_deadline_seconds: float = field(
         default_factory=lambda: _env_float("LOCK_DEADLINE_SECONDS", 8.0)
@@ -250,7 +267,15 @@ class Settings:
     formula_refresh_seconds: float = field(
         default_factory=lambda: _env_float("FORMULA_REFRESH_SECONDS", 15.0)
     )
-    outcome_horizon_seconds: float = 60.0
+    #: How long after a prediction its result is scored.  Two windows: with a
+    #: 15 s cycle that is 30 s, so every window is evaluated and the accuracy
+    #: panel fills at the same rate the predictions arrive.
+    outcome_horizon_seconds: float = field(
+        default_factory=lambda: _env_float("OUTCOME_HORIZON_SECONDS", 30.0)
+    )
+    #: Target reward:risk ratio.  1.0 = the take-profit and the stop-loss are
+    #: the same distance from the entry.
+    rr_target: float = 1.0
 
     # --- Signal pipeline (Section 10.4) ---------------------------------
     #: ``True`` (default): the signal that governs a countdown is *computed
@@ -270,17 +295,25 @@ class Settings:
 
     @property
     def cycle_period_seconds(self) -> float:
-        """Wall-clock length of one signal cycle.
+        """Wall-clock length of one prediction window.
 
-        ``TIME_SCALE == 1`` gives the true 60-second world-clock cycle that is
-        phase-locked to the UTC minute (Section 9).  Larger values compress the
-        cycle for demos and automated tests.
+        ``CYCLE_SECONDS`` (15 s by default) sets the cadence; a larger
+        ``TIME_SCALE`` compresses it further for demos and automated tests.
         """
-        return 60.0 / max(self.time_scale, 0.01)
+        return self.cycle_seconds / max(self.time_scale, 0.01)
 
     @property
     def use_world_clock(self) -> bool:
-        return abs(self.time_scale - 1.0) < 1e-9
+        """True only for the literal v2.0 draft timing: 60 s, minute-aligned."""
+        return (
+            abs(self.cycle_seconds - 60.0) < 1e-9
+            and abs(self.time_scale - 1.0) < 1e-9
+        )
+
+    @property
+    def prediction_expired(self) -> float:
+        """Age at which a prediction must be considered stale."""
+        return max(1.0, self.prediction_max_age_seconds)
 
     def scaled(self, seconds: float) -> float:
         """Convert a spec (virtual, 60s-cycle) duration to wall-clock seconds."""

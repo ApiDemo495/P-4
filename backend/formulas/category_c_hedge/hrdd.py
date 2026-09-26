@@ -101,12 +101,15 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
         return 0.0
     se_beta = sigma_g / (sigma_b * float(np.sqrt(n_eff)) + EPS)
 
+    # Soft signal-to-noise gate: the score fades to zero as the move
+    # approaches the estimator's own noise (1 sigma) and reaches full strength
+    # at NOISE_SIGMA.  A hard dead zone (v2.0.1) made the formula read exactly
+    # 0.000 on every live window, which looks broken rather than calm.
     d_beta = beta_w - baseline
-    noise_band = NOISE_SIGMA * se_beta
-    if abs(d_beta) <= noise_band:
-        return 0.0
-    scale = max(hist_std, noise_band, 1e-6)
-    score = tanh(np.sign(d_beta) * (abs(d_beta) - noise_band) / (scale + EPS))
+    scale = max(hist_std, se_beta, 1e-6)
+    snr = abs(d_beta) / (se_beta + EPS)
+    gate = float(np.clip((snr - 1.0) / max(1e-6, NOISE_SIGMA - 1.0), 0.0, 1.0))
+    score = tanh(d_beta / (scale + EPS)) * gate
 
     state.beta_baseline.update(beta_w)
     state.beta_history.append(beta_w)

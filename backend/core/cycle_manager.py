@@ -28,6 +28,7 @@ import asyncio
 import logging
 import math
 import time
+from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -38,6 +39,8 @@ from backend.core import config as cfg
 from backend.core.clock import WorldClock
 from backend.core.direction import describe as describe_direction
 from backend.core.errors import ComponentStatus, DegradationLevel
+from backend.core.prediction import build as build_prediction
+from backend.core.prediction import build_reasoning, consensus
 from backend.core.frozen_snapshot import FrozenMarketSnapshot
 from backend.core.redis_bus import Store
 from backend.core.risk import realized_volatility_bps, risk_levels
@@ -112,6 +115,9 @@ class CycleManager:
         self.lock = SignalLockController()
 
         self.outcomes = OutcomeBuffer()
+        #: (side, outcome) pairs, so the accuracy panel can say which side the
+        #: engine has actually been getting right rather than only the total.
+        self._side_outcomes: deque[tuple[str, float]] = deque(maxlen=40)
         self.stats = CycleStats()
 
         self.asset = "BTC"
@@ -504,6 +510,7 @@ class CycleManager:
 
         from backend.agents import fusion as fusion_module
 
+        agreement = consensus(formula_result.values, self._directional_map())
         fusion = fusion_module.fuse(
             agents=agent_results,
             ccs_value=float(formula_result.values.get("CCSv2", 0.0)),
@@ -514,6 +521,9 @@ class CycleManager:
             insufficient_evidence=formula_result.insufficient_evidence,
             emergency=self.lock.emergency_active(),
             previous_signal=self._previous_direction(),
+            formula_consensus=agreement["score"],
+            consensus_voters=agreement["voters"],
+            recent_accuracy=self.accuracy_block(),
         )
         self.last_fusion = fusion.to_dict()
         self.conviction_note = fusion_module.conviction_note(fusion.direction, fusion.confidence)
@@ -626,6 +636,7 @@ class CycleManager:
             if result.status.value == "TIMEOUT":
                 self.warnings.append(f"{name} timed out this cycle.")
 
+        agreement = consensus(formula_result.values, self._directional_map())
         fusion = fusion_module.fuse(
             agents=agent_results,
             ccs_value=float(formula_result.values.get("CCSv2", 0.0)),
@@ -636,6 +647,9 @@ class CycleManager:
             insufficient_evidence=formula_result.insufficient_evidence,
             emergency=self.lock.emergency_active(),
             previous_signal=self._previous_direction(),
+            formula_consensus=agreement["score"],
+            consensus_voters=agreement["voters"],
+            recent_accuracy=self.accuracy_block(),
         )
         self.last_fusion = fusion.to_dict()
         self.conviction_note = fusion_module.conviction_note(fusion.direction, fusion.confidence)
@@ -656,6 +670,10 @@ class CycleManager:
             until_wall = math.floor(from_wall / 60.0) * 60.0 + 60.0
             if until_wall - from_wall < 1.0:
                 until_wall += 60.0
+        elif bootstrap:
+            # 15-second cadence: the first window is simply a full period long,
+            # so the countdown the user sees is the one they will keep seeing.
+            until_wall = from_wall + self.settings.cycle_period_seconds
         self.window_valid_from = from_wall
         self.window_valid_until = until_wall
         signal = self._stamp_window(signal, self.stats.cycle_number, from_wall)
@@ -805,9 +823,20 @@ class CycleManager:
     # Live formula refresh (15 s) - Rule 2: the signal panel does NOT update
     # ------------------------------------------------------------------
     async def _live_refresh_loop(self, cycle_number: int, cycle_started: float) -> None:
+        # The Formula Explorer must refresh *inside* the window it belongs to.
+        # With the 15-second cadence the nominal 15-second refresh would land
+        # exactly on the next boundary, so the interval is capped at a third of
+        # the window: the panel always shows numbers from the current window.
+        cadence = max(
+            0.2,
+            min(
+                self.settings.scaled(self.settings.formula_refresh_seconds),
+                self.settings.cycle_period_seconds / 3.0,
+            ),
+        )
         try:
             while True:
-                await asyncio.sleep(self.settings.scaled(self.settings.formula_refresh_seconds))
+                await asyncio.sleep(cadence)
                 if self._stop.is_set() or self.stats.cycle_number != cycle_number:
                     return
                 snapshot = self.market.freeze(
@@ -933,6 +962,7 @@ class CycleManager:
         else:
             outcome = 1.0 if exit_price < entry else -1.0
         self.outcomes.append(outcome, abs(change_bps))
+        self._side_outcomes.append((signal.signal, outcome))
         log.info(
             "outcome %s on %s: %+.1f bps (%s)",
             signal.signal,
@@ -952,6 +982,8 @@ class CycleManager:
                     "win_rate": round(self.outcomes.win_rate(), 4),
                     "entry": entry,
                     "exit": exit_price,
+                    "accuracy": self.accuracy_block(),
+                    "horizon_seconds": round(horizon, 1),
                 },
             }
         )
@@ -981,6 +1013,7 @@ class CycleManager:
                 "lock_state": LockState.COMPUTING.value,
                 "lock_icon": LockState.COMPUTING.icon,
                 "signal": None,
+                "prediction": self.prediction_payload(None),
                 "cycle_number": self.stats.cycle_number,
                 "asset": self.asset,
                 "confidence": 0.0,
@@ -999,6 +1032,12 @@ class CycleManager:
             }
         payload = current.to_dict()
         payload["conviction_note"] = self.conviction_note
+        # The prediction block is what the widget panel renders: the side, the
+        # 1:1 levels, how old the call is, and why it was made.
+        prediction = self.prediction_payload(current)
+        payload["prediction"] = prediction
+        payload["prediction_age_seconds"] = prediction["age_seconds"]
+        payload["prediction_stale"] = prediction["state"] == "STALE"
         # The per-formula provenance of the *locked* values: what each number
         # means (reading) and the intermediate arithmetic behind it (trace).
         # `last_formula_result` is documented as the pass behind the locked
@@ -1058,6 +1097,185 @@ class CycleManager:
                 "win_rate": round(self.outcomes.win_rate(), 4),
             },
         }
+
+    # ==================================================================
+    # Prediction block (freshness + reasoning + 1:1 levels)
+    # ==================================================================
+    @staticmethod
+    def _directional_map() -> dict[str, str]:
+        """name -> category, for the formulas that carry a direction.
+
+        HSI and ERC are regime indicators: they modulate the others and never
+        vote, so they must not be counted as dissent in the consensus.
+        """
+        from backend.formulas.engine import ALL_FORMULAS
+
+        return {
+            spec.name: spec.category
+            for spec in ALL_FORMULAS
+            if getattr(spec, "directional", True)
+        }
+
+    def accuracy_block(self) -> dict:
+        """Measured form of recent windows, overall and per side."""
+        rows = self.outcomes.array()
+        evaluated = int(rows.shape[0])
+        wins = int((rows[:, 0] > 0).sum()) if evaluated else 0
+        streak = 0
+        for outcome in reversed(rows[:, 0].tolist() if evaluated else []):
+            if outcome == 0:
+                break
+            sign = 1 if outcome > 0 else -1
+            if streak == 0:
+                streak = sign
+            elif (streak > 0) == (sign > 0):
+                streak += sign
+            else:
+                break
+        per_side = {}
+        for side in ("BUY", "SELL"):
+            history = [row for row in self._side_outcomes if row[0] == side]
+            if history:
+                hits = sum(1 for _, outcome in history if outcome > 0)
+                per_side[side] = {
+                    "evaluated": len(history),
+                    "win_rate": round(hits / len(history), 4),
+                }
+        return {
+            "evaluated": evaluated,
+            "win_rate": round(wins / evaluated, 4) if evaluated else None,
+            "streak": streak,
+            "last_outcome": (
+                None
+                if not evaluated
+                else ("WIN" if rows[-1, 0] > 0 else "LOSS" if rows[-1, 0] < 0 else "FLAT")
+            ),
+            "last_pnl_bps": None if not evaluated else round(float(rows[-1, 1]), 2),
+            "target_seconds": round(self.settings.outcome_horizon_seconds, 1),
+            "per_side": per_side,
+        }
+
+    def _reasoning_for(self, signal: FrozenSignal | None, formula_result: FormulaResult | None) -> dict:
+        """The plain-English case for the current side."""
+        fusion = self.last_fusion or {}
+        hedge = dict(signal.hedge) if signal else {}
+        news = dict(signal.news) if signal else {}
+        risk = dict(signal.risk) if signal else {}
+        values = dict(formula_result.values) if formula_result is not None else {}
+        brain = {}
+        if signal is not None:
+            brain = {"ccs": signal.ccs_value}
+        extra_against: list[str] = []
+        if signal is not None and signal.weak:
+            extra_against.append(
+                f"The side came from the tie-break ladder ({signal.direction_reason or 'thin edge'}) "
+                "rather than from a strong score — treat the conviction, not the side, as the signal."
+            )
+        if formula_result is not None and formula_result.insufficient_evidence:
+            extra_against.append(
+                "Evidence is thin: 11 or more of the 22 formulas returned zero this window."
+            )
+        if signal is not None and signal.is_emergency_override:
+            extra_against.append(
+                "An emergency override is active: the level is an exit, not a fresh entry."
+            )
+        return build_reasoning(
+            side=(signal.signal if signal else "BUY"),
+            confidence=(signal.confidence if signal else 0.0),
+            conviction=(signal.conviction if signal else "LOW"),
+            fusion=fusion,
+            formula_values=values,
+            directional=self._directional_map(),
+            hedge=hedge,
+            news=news,
+            risk=risk,
+            brain=brain,
+            accuracy=self.accuracy_block(),
+            window_seconds=self.settings.cycle_period_seconds,
+            extra_against=extra_against,
+        )
+
+    def prediction_payload(self, signal: FrozenSignal | None = None,
+                           formula_result: FormulaResult | None = None,
+                           now: float | None = None) -> dict:
+        """The prediction block: side, levels, freshness, reasoning, accuracy."""
+        current = signal or self.lock.try_get_current()
+        result = formula_result if formula_result is not None else self.last_formula_result
+        risk = dict(current.risk) if current else {}
+        computed_wall = self._computed_wall(current)
+        return build_prediction(
+            side=(current.signal if current else "·  ·  ·"),
+            confidence=(current.confidence if current else 0.0),
+            conviction=(current.conviction if current else "LOW"),
+            computed_wall=computed_wall,
+            max_age=self.settings.prediction_expired,
+            risk=risk,
+            reasoning=self._reasoning_for(current, result),
+            accuracy=self.accuracy_block(),
+            window_seconds=self.settings.cycle_period_seconds,
+            weak=bool(current.weak) if current else False,
+            emergency=bool(current.is_emergency_override) if current else False,
+            now=now,
+        )
+
+    def _computed_wall(self, signal: FrozenSignal | None) -> float:
+        """When the published signal was computed, as a unix timestamp."""
+        if self.published_computed_at:
+            return self.published_computed_at
+        stamp = getattr(signal, "computed_at", "") or ""
+        if not stamp:
+            return 0.0
+        try:
+            import calendar
+
+            return float(calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ")))
+        except Exception:  # noqa: BLE001
+            return 0.0
+
+    def prediction_is_stale(self, now: float | None = None) -> bool:
+        now = time.time() if now is None else now
+        computed = self._computed_wall(self.lock.try_get_current())
+        if computed <= 0:
+            return True
+        return (now - computed) > self.settings.prediction_expired
+
+    async def ensure_fresh(self, now: float | None = None) -> bool:
+        """Recompute and republish if the live prediction has aged out.
+
+        The cycle loop already refreshes every window, so this is the belt to
+        that pair of braces: if a window was ever missed (a stalled event loop,
+        a suspended process), the API calls this before it answers, and the
+        user never sees a prediction older than the contract.  Returns True
+        when a refresh was performed.
+        """
+        if not self.prediction_is_stale(now=now):
+            return False
+        snapshot = self.market.freeze(
+            news_items=self.news.cache.latest(5),
+            drg_outcomes=self.outcomes.array(),
+        )
+        result = self.formulas.run(snapshot, self.asset)
+        self.last_live_result = result
+        self.last_live_formulas = {k: round(v, 6) for k, v in result.values.items()}
+        self.last_formula_result = result
+        self.published_computed_at = time.time()
+        self.published_compute_ms = float(result.total_ms)
+        self._pending_vol_bps = realized_volatility_bps(snapshot, self.asset)
+        await self.broadcast(
+            {
+                "type": "PREDICTION_REFRESH",
+                "data": {
+                    "cycle_number": self.stats.cycle_number,
+                    "reason": f"prediction older than {self.settings.prediction_expired:.0f}s",
+                    "computed_at": _iso(self.published_computed_at),
+                },
+            }
+        )
+        log.warning(
+            "prediction refreshed out of band: the last window was older than %.0fs",
+            self.settings.prediction_expired,
+        )
+        return True
 
     def window_status(self) -> dict:
         """The countdown the UI renders, plus what the engine is doing in it.
