@@ -112,8 +112,6 @@ def connect_neuprint(token: str, server: str, dataset: str):
 
 def fetch_circuit(client, dataset: str = "") -> CircuitQuery:
     """Run queries C.1 - C.4 and return the raw groups."""
-    from neuprint import fetch_neurons  # noqa: F401 - validates the client API
-
     result = CircuitQuery(dataset=dataset, server=getattr(client, "server", ""))
     queries = {
         "kenyon_cells": CYPHER_KENYON_CELLS,

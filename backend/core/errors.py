@@ -57,13 +57,5 @@ class TraderError(Exception):
     """Base class for recoverable subsystem errors."""
 
 
-class DataUnavailable(TraderError):
-    """Raised when no market data source can produce a usable snapshot."""
-
-
-class BrainUnavailable(TraderError):
-    """Raised when even the committed fallback matrix cannot be loaded."""
-
-
 class SignalNotReady(TraderError):
     """Raised by SignalLockController.get_current() while COMPUTING."""

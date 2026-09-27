@@ -12,7 +12,6 @@ The result is surfaced verbatim in the Agent Dashboard.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 import time
@@ -178,18 +177,6 @@ async def check_brain(
 
 def _checksum(matrix: np.ndarray) -> str:
     return hashlib.md5(np.ascontiguousarray(matrix).tobytes()).hexdigest()[:8]
-
-
-async def health_loop(brain, interval_seconds: float = 300.0) -> None:
-    """Background loop started by the application lifespan."""
-    while True:
-        try:
-            await brain.refresh_health()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            log.warning("brain health check failed: %s", exc)
-        await asyncio.sleep(interval_seconds)
 
 
 def graph_convolution(test_input: np.ndarray, adjacency: np.ndarray) -> np.ndarray:

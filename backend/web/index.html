@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>Drosophila Trader v2.0</title>
-<link rel="stylesheet" href="/static/styles.css?v=2.1.0" />
+<link rel="stylesheet" href="/static/styles.css?v=2.2.0" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪰</text></svg>" />
 </head>
 <body>
@@ -112,6 +112,13 @@
         </div>
         <div class="prediction-value" id="w-prediction">—</div>
         <div class="prediction-sub" id="w-prediction-sub">waiting for the first lock…</div>
+        <!-- Round I: what the prediction is *for*.  Every prediction covers the
+             60 seconds that follow its release; this line states the release
+             instant in microseconds, the target instant and what is left. -->
+        <div class="horizon-line" id="w-horizon-line">forecast: the next 60 seconds — waiting for the first release</div>
+        <div class="micro-line" id="w-micro-line">tape resolution — waiting for the first tick</div>
+        <button class="btn tiny ghost detail-toggle" id="w-detail-toggle" type="button">▸ prediction detail</button>
+        <div class="prediction-detail hidden" id="w-detail"></div>
         <!-- Why this side: the same bullets the API returns. -->
         <ul class="reason-list" id="w-reasoning"></ul>
         <!-- Small inline override notice - never a full-screen overlay. -->
@@ -383,6 +390,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=2.1.0"></script>
+<script src="/static/app.js?v=2.2.0"></script>
 </body>
 </html>

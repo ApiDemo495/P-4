@@ -21,6 +21,10 @@ const state = {
   liveFormulas: {},
   liveReadings: {},
   liveTraces: {},
+  liveStats: {},        // per-formula history statistics (Round I)
+  liveMicro: {},        // the tape measured in microseconds (Round I)
+  liveTimingsUs: {},    // per-formula cost in µs from the last live pass
+  liveHistoryWindow: 0,
   formulaTraces: {},
   formulaReadings: {},
   formulaMeta: [],
@@ -275,10 +279,6 @@ function windowRemaining() {
   return Math.max(0, (state.clock.endsAtMs - serverNowMs()) / 1000);
 }
 
-function windowElapsed() {
-  return Math.max(0, (state.cyclePeriod || 60) - windowRemaining());
-}
-
 function anchorWindow(window) {
   // Window blocks carry the clock too; this keeps the old call sites working.
   if (!window) return false;
@@ -298,26 +298,17 @@ function frame() {
     ring.classList.toggle("ready", !!state.window?.prefetch_ready);
     ring.classList.toggle("urgent", secs <= 5);
   }
-  if ($("progress")) {
-    $("progress").style.width = `${clamp(100 - (remaining / period) * 100, 0, 100)}%`;
-  }
   if (secs !== state.lastSecondShown) {
     state.lastSecondShown = secs;
     const el = $("w-countdown");
     if (el) el.textContent = String(secs);
-    if ($("timer")) {
-      const mm = String(Math.floor(remaining / 60)).padStart(2, "0");
-      const ss = String(Math.floor(remaining % 60)).padStart(2, "0");
-      const icon = state.lockState === "COMPUTING" ? "\u23f3"
-        : state.lockState === "EMERGENCY_OVERRIDE" ? "\u26a1" : "\ud83d\udd12";
-      $("timer").innerHTML = `${mm}:${ss} <span id="lock-icon">${icon}</span>`;
-      $("timer").className = "timer" + (state.lockState === "EMERGENCY_OVERRIDE" ? " override" : "");
-      $("lock-state").textContent = state.lockState;
-      $("progress").className = "progress-fill" + (state.lockState === "EMERGENCY_OVERRIDE" ? " override" : "");
-      $("utc").textContent = new Date(serverNowMs()).toISOString().substr(11, 8) + "Z";
-    }
+    // state + utc used to be written inside a guard on the long-gone #timer
+    // panel, so they only moved when that element existed - which it never did.
+    if ($("lock-state")) $("lock-state").textContent = state.lockState;
+    if ($("utc")) $("utc").textContent = new Date(serverNowMs()).toISOString().substr(11, 8) + "Z";
     if ($("w-countdown-sub")) $("w-countdown-sub").innerHTML = countdownSubLine();
     renderFreshness(state.prediction);
+    renderHorizon(state.prediction);
     renderPipelineProgress();
     renderWindowStrip();
     if (state.emergencyUntil > Date.now()) renderConvictionBox();
@@ -379,6 +370,145 @@ async function syncClock() {
   }
   renderAssetToggle();
   renderAll();
+}
+
+/* Microseconds, printed the way the engine measures them.  A pass costs tens
+   of microseconds and a tick arrives every few hundred - showing "0.0 ms"
+   everywhere would hide both. */
+function fmtUs(us) {
+  const n = Number(us);
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  if (n < 1000) return `${Math.round(n)} µs`;
+  if (n < 1e6) return `${(n / 1000).toFixed(n < 1e4 ? 2 : 1)} ms`;
+  return `${(n / 1e6).toFixed(3)} s`;
+}
+
+function fmtClockUs(iso) {
+  // 2026-09-27T09:14:02.123456Z -> 09:14:02.123456
+  if (!iso) return "—";
+  const match = String(iso).match(/T(\d\d:\d\d:\d\d(?:\.\d+)?)Z?/);
+  return match ? match[1] : String(iso);
+}
+
+/* What the prediction is *for*: the 60 seconds that start when it is released.
+   This is the Round-I contract made visible - release instant to the
+   microsecond, the instant it targets, and how much of the window is left. */
+function renderHorizon(prediction) {
+  const el = $("w-horizon-line");
+  if (!el) return;
+  const h = prediction?.horizon;
+  if (!h || !h.released_at_us) {
+    el.textContent = "forecast: the next 60 seconds — waiting for the first release";
+    el.className = "horizon-line muted";
+    return;
+  }
+  // Counted down locally against the shared server clock, not frozen at the
+  // value the payload carried: the window closes on a fixed instant, and the
+  // line has to walk toward it exactly like the ring does.
+  const nowUs = serverNowMs() * 1000;
+  const left = h.target_at_us
+    ? Math.max(0, (h.target_at_us - nowUs) / 1e6)
+    : (h.seconds_to_target ?? Math.max(0, (h.microseconds_to_target || 0) / 1e6));
+  const scored = h.scored_at
+    ? Math.max(0, (h.scored_at_us ? (h.scored_at_us - nowUs) / 1e6 : h.scored_in_seconds))
+    : h.scored_in_seconds;
+  el.className = "horizon-line";
+  el.innerHTML =
+    `forecast <b>${escapeHtml(h.forecast_for || h.label || "the next 60 seconds")}</b>` +
+    ` · released <b>${fmtClockUs(h.released_at_precise || h.released_at)}</b>` +
+    ` · targets <b>${fmtClockUs(h.target_at_precise || h.target_at)}</b>` +
+    ` · <b>${Number(left).toFixed(1)}s</b> left` +
+    (scored !== undefined ? ` · scored in <b>${Number(scored).toFixed(1)}s</b>` : "");
+}
+
+/* The tape itself: how fast quotes arrive and how finely the engine can see.
+   Shown from the live formula pass (or the prediction detail when the socket
+   is still warming). */
+function renderMicro(prediction) {
+  const el = $("w-micro-line");
+  if (!el) return;
+  const micro = state.liveMicro?.resolution_us
+    ? state.liveMicro
+    : (prediction?.detail?.micro || null);
+  if (!micro || !micro.resolution_us) {
+    el.textContent = "tape resolution — waiting for the first tick";
+    el.className = "micro-line muted";
+    return;
+  }
+  el.className = "micro-line";
+  el.innerHTML =
+    `tape <b>${escapeHtml(micro.resolution_label || fmtUs(micro.resolution_us))}</b> per tick` +
+    ` · <b>${Number(micro.tick_rate_hz || 0).toFixed(1)}</b> Hz` +
+    ` · jitter <b>${fmtUs(micro.jitter_us)}</b>` +
+    ` · quote life <b>${fmtUs(micro.quote_lifetime_us)}</b>` +
+    ` · aggression <b>${fmtSigned(micro.aggression || 0, 2)}</b>`;
+}
+
+function detailList(label, rows, cls) {
+  const items = (rows || []).map((row) => {
+    const name = escapeHtml(row.name || row.key || "?");
+    const value = typeof row.value === "number" ? fmtSigned(row.value, 3) : escapeHtml(row.value ?? "");
+    return `<li><span class="trace-label">${name}</span><b class="${cls}">${value}</b></li>`;
+  }).join("");
+  return items
+    ? `<div><div class="logic-h">${escapeHtml(label)}</div><ul class="logic-trace">${items}</ul></div>`
+    : "";
+}
+
+/* The prediction detail block: which formulas argued for the side, which
+   against, what each category scored, how the confidence was assembled, and
+   what the engine cost in microseconds. */
+function renderPredictionDetail(prediction) {
+  const box = $("w-detail");
+  if (!box) return;
+  const detail = prediction?.detail;
+  if (!detail) {
+    box.innerHTML = `<div class="muted">no detail yet — it arrives with the first live prediction</div>`;
+    return;
+  }
+  const cats = Object.entries(detail.category_scores || {})
+    .map(([key, value]) => `<span class="kv"><span>${key}</span><b class="${value >= 0 ? "pos" : "neg"}">${fmtSigned(value, 3)}</b></span>`)
+    .join(" ");
+  const parts = Object.entries(detail.confidence_parts || {})
+    .map(([key, value]) => `<li><span class="trace-label">${escapeHtml(key.replace(/_/g, " "))}</span><b>${fmtSigned(value, 3)}</b></li>`)
+    .join("");
+  const engine = detail.agreement?.engine || {};
+  const levels = detail.levels || {};
+  const micro = detail.micro || {};
+
+  box.innerHTML =
+    `<div class="logic-h">${escapeHtml(String(detail.side || prediction.signal || ""))} · ` +
+    `${detail.formulas_evaluated || 0} formulas evaluated · ` +
+    `agreement ${fmtSigned(detail.agreement?.score ?? 0, 3)}` +
+    `${detail.agreement?.weighted ? ` (weighted ${fmtSigned(detail.agreement.weighted, 3)})` : ""}</div>` +
+    (cats ? `<div class="detail-cats">categories ${cats}</div>` : "") +
+    `<div class="logic-cols">` +
+    detailList("Supporting the side", detail.supporters, "pos") +
+    detailList("Arguing against", detail.opponents, "neg") +
+    `</div>` +
+    (parts ? `<div><div class="logic-h">Confidence parts</div><ul class="logic-trace">${parts}</ul></div>` : "") +
+    `<div><div class="logic-h">Risk levels</div><div class="detail-line">` +
+    `tp ${fmtSigned(levels.tp_bps ?? 0, 1)} bps · sl ${fmtSigned(levels.sl_bps ?? 0, 1)} bps · ` +
+    `rr ${Number(levels.rr ?? 1).toFixed(2)} : 1` +
+    (levels.distance_price !== undefined ? ` · distance ${fmtMoney(levels.distance_price)}` : "") +
+    `</div></div>` +
+    `<div><div class="logic-h">Engine microsecond budget</div><div class="detail-line">` +
+    `pass <b>${fmtUs(engine.compute_us)}</b> · publish latency <b>${fmtUs(engine.publish_latency_us)}</b> · ` +
+    `tick interval <b>${fmtUs(engine.tick_interval_us)}</b> · tape resolution <b>${fmtUs(engine.resolution_us)}</b> · ` +
+    `history <b>${engine.history_samples ?? 0}</b> samples` +
+    (micro.tick_rate_hz ? ` · <b>${Number(micro.tick_rate_hz).toFixed(1)}</b> Hz tape` : "") +
+    `</div></div>` +
+    (Object.keys(detail.agents || {}).length
+      ? `<div class="detail-line">agents: ${Object.entries(detail.agents).map(([name, payload]) =>
+          `${escapeHtml(name)} ${escapeHtml(String(payload.decision ?? payload.status ?? "—"))}`
+            + (payload.confidence !== undefined && payload.confidence !== null ? ` (${fmtPct(payload.confidence)})` : "")).join(" · ")}</div>`
+      : "") +
+    (detail.brain
+      ? `<div class="detail-line">brain: ${escapeHtml(String(detail.brain.status ?? "—"))} · gain ${fmtSigned(detail.brain.gain ?? 0, 3)} · ${escapeHtml(String(detail.brain.message || ""))}</div>`
+      : "") +
+    (detail.formula_stats
+      ? `<div class="muted" style="font-size:11px">per-formula history: ${Object.keys(detail.formula_stats).length} formulas tracked</div>`
+      : "");
 }
 
 /* The freshness contract: the prediction may never be older than the
@@ -664,6 +794,9 @@ function renderWidgetPanel() {
     state.predictionAnchoredAt = Date.now();
   }
   renderFreshness(state.prediction);
+  renderHorizon(state.prediction);
+  renderMicro(state.prediction);
+  renderPredictionDetail(state.prediction);
   renderReasoning(state.prediction, "w-reasoning");
 
   const w = state.window || {};
@@ -1018,16 +1151,33 @@ function renderOutcomes(data) {
   });
 }
 
+function wirePredictionDetailToggle() {
+  const button = $("w-detail-toggle");
+  const box = $("w-detail");
+  if (!button || !box) return;
+  button.onclick = () => {
+    const open = box.classList.toggle("hidden") === false;
+    button.textContent = `${open ? "▾" : "▸"} prediction detail`;
+  };
+}
+
 async function refreshOutcomes() {
   renderOutcomes(await getJSON("/api/signal/outcomes"));
 }
 
 function renderTimings(data) {
-  if (!data || !data.timings_ms) return;
-  const top = Object.entries(data.timings_ms).slice(0, 5)
-    .map(([k, v]) => `${k} ${v.toFixed(3)}ms`).join(" · ");
+  if (!data || (!data.timings_ms && !data.timings_us)) return;
+  // Microseconds are the real unit: a formula takes tens of µs, and rounding to
+  // milliseconds turns most of the 23 into the same number.
+  const source = data.timings_us && Object.keys(data.timings_us).length
+    ? Object.entries(data.timings_us).map(([k, v]) => `${k} ${fmtUs(v)}`)
+    : Object.entries(data.timings_ms).map(([k, v]) => `${k} ${Number(v).toFixed(3)}ms`);
+  const top = source.slice(0, 5).join(" · ");
+  const total = data.total_us ? fmtUs(data.total_us)
+    : (data.total_ms !== undefined ? `${Number(data.total_ms).toFixed(2)}ms` : "?");
+  const resolution = data.resolution_us ? ` · tape resolution ${fmtUs(data.resolution_us)}` : "";
   $("timings").textContent =
-    `total formula pass ${data.total_ms?.toFixed(2) ?? "?"}ms (budget ${data.budget_ms}ms) · slowest: ${top}`;
+    `total formula pass ${total} (budget ${data.budget_ms}ms)${resolution} · slowest: ${top}`;
 }
 
 async function refreshTimings() {
@@ -1063,11 +1213,16 @@ function renderLiveFormulas(data) {
   state.liveFormulas = data.formulas || {};
   state.liveReadings = data.readings || {};
   state.liveTraces = data.traces || {};
+  state.liveStats = data.stats || {};
+  state.liveTimingsUs = data.timings_us || {};
+  state.liveMicro = data.micro || {};
+  state.liveHistoryWindow = data.history_window || 0;
   if (data.note) {
     const note = $("live-note");
     if (note) note.textContent = "live values " + data.note;
   }
-  if (data.timings_ms) renderTimings(data);
+  if (data.timings_ms || data.timings_us) renderTimings(data);
+  renderMicro(state.prediction);
   renderFormulas();
 }
 
@@ -1140,6 +1295,8 @@ function formulaRow(name, value, description, meta, readings = {}, traces = {}) 
   const verdict = selfTestVerdict(name);
   const open = !!state.openLogic[name];
   const reading = readings[name] || logic?.reading || "";
+  const stats = state.liveStats[name] || null;
+  const timingUs = state.liveTimingsUs?.[name];
 
   const verdictChip = verdict
     ? `<span class="verdict ${verdict.passed ? "pass" : "fail"}" ` +
@@ -1156,6 +1313,13 @@ function formulaRow(name, value, description, meta, readings = {}, traces = {}) 
     `  <div class="formula-value ${posClass}">${known ? fmtSigned(v, 3) : "—"}</div>` +
     `  <div class="formula-head">` +
     `    <span class="formula-reading">${escapeHtml(reading)}</span>` +
+    (stats
+      ? `<span class="formula-stats" title="this value against its own history">` +
+        `${fmtSigned(stats.zscore || 0, 2)}σ · p${Math.round(stats.percentile || 0)} · ` +
+        `${stats.samples || 0} windows` +
+        (timingUs ? ` · ${fmtUs(timingUs)}` : "") +
+        `</span>`
+      : (timingUs ? `<span class="formula-stats">${fmtUs(timingUs)}</span>` : "")) +
     `    ${verdictChip}` +
     `    <button class="logic-toggle" type="button">${open ? "▾ hide logic" : "▸ logic"}</button>` +
     `  </div>` +
@@ -1199,9 +1363,18 @@ function logicBlock(name, logic, verdict, trace) {
     .join("");
   const reads = (logic.reads || []).map((r) => `<code>${escapeHtml(r)}</code>`).join(" ");
 
+  const factChips = [
+    logic.range ? `<span class="pill">range ${escapeHtml(logic.range)}</span>` : null,
+    logic.units ? `<span class="pill">units ${escapeHtml(logic.units)}</span>` : null,
+    logic.sensitivity ? `<span class="pill">sensitivity ${escapeHtml(logic.sensitivity)}</span>` : null,
+  ].filter(Boolean).join(" ");
+  const misleads = (logic.misleads || []).map((line) => `<li>${escapeHtml(line)}</li>`).join("");
+  const corroborates = (logic.corroborates || []).map((c) => `<code>${escapeHtml(c)}</code>`).join(" ");
+
   return (
     `<div class="logic-block">` +
     `  <div class="logic-expression"><code>${escapeHtml(logic.expression)}</code></div>` +
+    (factChips ? `  <div class="logic-facts">${factChips}</div>` : "") +
     `  <div class="logic-reads muted">reads: ${reads}</div>` +
     `  <div class="logic-cols">` +
     `    <div><div class="logic-h">How it is computed</div><ol class="logic-steps">${steps}</ol></div>` +
@@ -1214,6 +1387,12 @@ function logicBlock(name, logic, verdict, trace) {
       ? `<div class="logic-h">Numbers behind this window</div><ul class="logic-trace">${traceRows}</ul>`
       : `<div class="logic-h">Numbers behind this window</div>` +
         `<div class="muted">not computed yet — they appear after the first live pass</div>`) +
+    (misleads || corroborates
+      ? `<div class="logic-facts-detail">` +
+        (misleads ? `<div><div class="logic-h">When it misleads</div><ul class="logic-bands">${misleads}</ul></div>` : "") +
+        (corroborates ? `<div class="logic-h">Corroborated by ${corroborates}</div>` : "") +
+        `</div>`
+      : "") +
     (verdict
       ? `<div class="logic-verdict ${verdict.passed ? "pass" : "fail"}">` +
         `<b>Self-test:</b> ${verdict.passed ? "PASS" : "FAIL"} — ${escapeHtml(verdict.claim)}. ` +
@@ -1503,6 +1682,7 @@ async function boot() {
   }
   renderKeyStates();
   maybeShowSetupBanner();
+  wirePredictionDetailToggle();
 
   /* Static material: fetched once, it does not change while the page is open. */
   await loadFormulaMeta();

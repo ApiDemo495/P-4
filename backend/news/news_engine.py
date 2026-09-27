@@ -224,10 +224,6 @@ class NewsEngine:
         if event is not None:
             await self._dispatch(event)
 
-    async def report_price_event(self, event: CriticalEvent) -> None:
-        """Entry point for the price-based triggers (flash crash / spike)."""
-        await self._dispatch(event)
-
     async def _dispatch(self, event: CriticalEvent) -> None:
         if self.on_critical is None:
             return

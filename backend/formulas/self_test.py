@@ -29,7 +29,6 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import numpy as np
 
 from backend.formulas import synthetic
 from backend.formulas.engine import ALL_FORMULAS, FormulaEngine

@@ -334,6 +334,22 @@ curl -s localhost:8000/api/health | python3 -m json.tool
 curl -s localhost:8000/api/brain/explain | python3 -m json.tool
 ```
 
+The microsecond contract, checked against the running engine: the forecast
+window, its six-digit instants, the per-formula µs timings and the tape's real
+resolution (no browser needed).
+
+```bash
+BASE=http://127.0.0.1:8000 node tools/dashboard_payload_check.js
+```
+
+Nothing in the tree may be unused. The sweep covers Python, the browser bundle,
+the stylesheet and the Dart client, and `backend/tests/test_dead_code.py` fails
+the build if it finds anything.
+
+```bash
+PYTHONPATH=. .venv/bin/python tools/dead_code.py --list
+```
+
 ```bash
 tail -f server.log
 ```
@@ -390,6 +406,17 @@ tail -f server.log
   `1.00:1` (`RR_TARGET` changes it, the default is 1.0). Levels are re-stamped
   at the window boundary with the live price, so they track the market instead
   of the previous minute.
+* **Microseconds, not seconds.** The engine times every formula and the whole
+  pass in µs (`timings_us`), measures the tape between quotes (interval mean /
+  p95, jitter, tick rate, quote lifetime, aggression), and publishes its own
+  clock as epoch microseconds. The dashboard prints `812 µs`, `4.31 ms`,
+  `1.204 s` — never a rounded "0.0 ms".
+* **Every prediction covers the minute that follows its release.** The payload
+  carries `horizon` with `released_at` / `target_at` (six-digit ISO *and* epoch
+  µs), `microseconds_to_target`, `scored_in_seconds`, and the words "the next
+  60 seconds" — so a side is never mistaken for "now". The dashboard shows that
+  line under the prediction, plus a `▸ prediction detail` block naming the
+  formulas that backed the side and the µs the pass cost.
 * **A dashboard you can read at a glance.** Row 1: prediction + reasoning ·
   countdown · side & conviction. Row 2: take-profit & stop-loss (1:1) ·
   prediction accuracy (win rate, per-side hit rates, freshness, scoring
@@ -397,6 +424,10 @@ tail -f server.log
   never a full-screen overlay. The Flutter client adds haptics (`mediumImpact`
   on a direction change, `heavyImpact` + `vibrate` on an override,
   `selectionClick` on the first lock).
+* **Six times the data.** `DATA_MULTIPLIER = 6` scales every buffer: 3 600
+  ticks, 120 book levels per side, 360 candles, 120 headlines, 120 scored
+  outcomes, 5 400 spread observations, a 360-window formula history, and 72
+  windows per history/outcome call.
 * **The fly brain is visible, not decorative.** `/api/brain/wiring` returns the
   formula → neuron map and the five circuit stages; `/api/brain/explain` returns
   what the circuit did in the locked window — dominant projection neurons, KC

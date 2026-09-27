@@ -18,8 +18,6 @@ import numpy as np
 
 from collections import deque
 
-import numpy as np
-
 from backend.formulas._util import EPS, RunningVariance, finite, tanh, trace
 
 NAME = "TAI"
@@ -78,22 +76,6 @@ class State:
             if len(row) == 4:
                 obj.buffer.append((float(row[0]), float(row[1]), float(row[2]), float(row[3])))
         return obj
-
-
-def _derivatives(prices: np.ndarray, times_ms: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    dt = np.diff(times_ms)
-    dt = np.maximum(dt, 1e-3)  # ms - never divide by a zero gap
-
-    velocity = np.diff(prices) / dt
-    if velocity.size >= 2:
-        acceleration = np.diff(velocity) / (0.5 * (dt[:-1] + dt[1:]))
-    else:
-        acceleration = np.zeros(0)
-    if acceleration.size >= 2:
-        jerk = np.diff(acceleration) / ((dt[:-2] + dt[1:-1] + dt[2:]) / 3.0)
-    else:
-        jerk = np.zeros(0)
-    return velocity, acceleration, jerk
 
 
 def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None = None) -> float:

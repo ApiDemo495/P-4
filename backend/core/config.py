@@ -122,14 +122,23 @@ def asset_params(asset: str) -> dict[str, float]:
 
 # --------------------------------------------------------------------------
 # Ring-buffer sizes (Section 5.1)
+#
+# The specification's minimum sizes are 600 ticks / 60 candles / 20 news / 20
+# outcomes.  The user asked for six times the data in the app, so each buffer is
+# scaled 6x: the formulas keep their specification windows (VSD still uses its
+# 120 ticks, the DRG baseline its 60 candles), and everything the *dashboard*
+# shows - history, statistics, coverage - now has six times as much to draw on.
 # --------------------------------------------------------------------------
 
-TICK_BUFFER_SIZE = 600
-L2_BUFFER_SNAPSHOTS = 2
-L2_DEPTH_LEVELS = 20
-CANDLE_BUFFER_SIZE = 60
-NEWS_CACHE_SIZE = 20
-OUTCOME_BUFFER_SIZE = 20
+DATA_MULTIPLIER = 6
+
+TICK_BUFFER_SIZE = 600 * DATA_MULTIPLIER          # 3 600 ticks (~1-2 h of tape)
+#: Depth kept per side of the book.  BAR, DGW and LCS read all of it, so a
+#: deeper book is a genuinely richer reading of the same snapshot, not padding.
+L2_DEPTH_LEVELS = 20 * DATA_MULTIPLIER            # 120 levels per side
+CANDLE_BUFFER_SIZE = 60 * DATA_MULTIPLIER         # 360 candles
+NEWS_CACHE_SIZE = 20 * DATA_MULTIPLIER            # 120 headlines
+OUTCOME_BUFFER_SIZE = 20 * DATA_MULTIPLIER        # 120 scored windows
 SYNC_WINDOW_SECONDS = 60
 
 
@@ -351,10 +360,3 @@ class Settings:
 
 
 SETTINGS = Settings()
-
-
-def reload_settings() -> Settings:
-    """Re-read the environment (used by the settings API at runtime)."""
-    global SETTINGS
-    SETTINGS = Settings()
-    return SETTINGS

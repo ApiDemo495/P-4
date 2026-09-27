@@ -75,7 +75,7 @@ class ActivationTrace:
     dan: dict = field(default_factory=dict)
     """Dopamine + octopamine gating actually applied this cycle."""
 
-    def dominant_pns(self, limit: int = 6) -> list[dict]:
+    def dominant_pns(self, limit: int = 20) -> list[dict]:
         if self.pn_activations is None:
             return []
         order = np.argsort(-np.abs(self.pn_activations))[:limit]
@@ -88,7 +88,7 @@ class ActivationTrace:
             for i in order
         ]
 
-    def top_kcs(self, limit: int = 5) -> list[dict]:
+    def top_kcs(self, limit: int = 30) -> list[dict]:
         if self.kc_activations is None or self.kc_activations.size == 0:
             return []
         order = np.argsort(-np.abs(self.kc_activations))[:limit]
@@ -136,7 +136,6 @@ class ActivationTrace:
 
 def normalize_adjacency(weights: np.ndarray) -> np.ndarray:
     """Symmetric normalisation ``D^-1/2 W D^-1/2`` (Section 3.8, step 2)."""
-    n = weights.shape[0]
     degree = np.sum(np.abs(weights), axis=1)
     degree = np.where(degree > 1e-12, degree, 1.0)
     inv_sqrt = 1.0 / np.sqrt(degree)

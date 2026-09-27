@@ -83,12 +83,6 @@ body {
 .pending { color: var(--amber); font-size: 12px; }
 .badge { background: #1b2a44; border: 1px solid #2a3d5e; color: #9fb4d8; border-radius: 999px; padding: 3px 10px; font-size: 11px; }
 
-/* ------------------------------- timer --------------------------------- */
-.timer-card { padding-bottom: 16px; }
-.timer-row { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
-.timer { font-family: var(--mono); font-size: 52px; font-weight: 700; letter-spacing: .02em; line-height: 1; }
-.timer.override { color: var(--red); animation: pulse 1s infinite; }
-.timer-side { display: flex; gap: 18px; margin-left: auto; flex-wrap: wrap; }
 .kv { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); }
 .kv b { font-family: var(--mono); font-size: 13px; color: var(--text); font-weight: 600; }
 .progress { height: 8px; border-radius: 999px; background: #131c2c; margin-top: 14px; overflow: hidden; }
@@ -97,14 +91,6 @@ body {
 
 /* ------------------------------- signal -------------------------------- */
 .signal-card { text-align: center; padding: 22px 16px; }
-.computing { padding: 22px 0; }
-.spinner {
-  width: 34px; height: 34px; margin: 0 auto 12px;
-  border: 3px solid #22314b; border-top-color: var(--violet);
-  border-radius: 50%; animation: spin .8s linear infinite;
-}
-.computing-text { font-size: 22px; font-weight: 700; color: #9fb4d8; }
-.computing-sub { color: var(--muted); font-size: 12px; margin-top: 8px; }
 
 .signal-badge {
   display: inline-block; font-size: 46px; font-weight: 800; letter-spacing: .12em;
@@ -113,7 +99,6 @@ body {
 }
 .signal-badge.buy { color: var(--green); background: #052e1633; text-shadow: 0 0 30px #22c55e55; }
 .signal-badge.sell { color: var(--red); background: #4c1d1d33; text-shadow: 0 0 30px #ef444455; }
-.signal-badge.hold { color: var(--amber); background: #45300b33; text-shadow: 0 0 30px #f59e0b55; }
 .signal-meta { margin: 12px 0 16px; color: var(--muted); font-size: 12px; }
 .confidence-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
 .confidence-row b { color: var(--text); font-family: var(--mono); }
@@ -286,7 +271,6 @@ label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 5px
 
 
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .62; } }
-@keyframes spin { to { transform: rotate(360deg); } }
 
 /* -------------------------------- misc --------------------------------- */
 .foot { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 11px; margin-top: 18px; flex-wrap: wrap; }
@@ -301,8 +285,6 @@ label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 5px
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); font-family: var(--mono); }
 th { color: var(--muted); font-weight: 600; }
-.steps { list-style: none; padding: 0; margin: 0; }
-.steps li { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px solid #16203242; font-size: 12px; }
 
 /* ======================================================================
    API key modal + first-run setup banner  (adding keys without a terminal)
@@ -433,9 +415,27 @@ th { color: var(--muted); font-weight: 600; }
 }
 .prediction-value.buy  { color: var(--green); text-shadow: 0 0 26px #22c55e55; }
 .prediction-value.sell { color: var(--red);   text-shadow: 0 0 26px #ef444455; }
-.prediction-value.hold { color: var(--amber); text-shadow: 0 0 22px #f59e0b44; }
 .prediction-value.pending { color: var(--muted); text-shadow: none; }
 .prediction-sub { font-size: 12px; color: var(--muted); }
+/* Round I: the forecast window, the tape's real resolution, and the detail
+   block behind them - all inside the prediction cell, never an overlay. */
+.horizon-line { font-size: 12px; margin-top: 6px; font-family: var(--mono); }
+.horizon-line b { color: var(--text); }
+.micro-line { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 3px; }
+.micro-line b { color: #9fb4d8; }
+.detail-toggle { margin-top: 8px; }
+.prediction-detail {
+  margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px;
+  font-size: 11px; text-align: left; max-height: 340px; overflow-y: auto;
+}
+.prediction-detail .logic-h { margin-top: 8px; }
+.prediction-detail .logic-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.detail-cats { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; font-family: var(--mono); }
+.detail-line { color: #9fb4d8; font-family: var(--mono); line-height: 1.6; }
+.formula-stats { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-left: 8px; }
+.logic-facts { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.logic-facts .pill { font-size: 10px; }
+.logic-facts-detail { margin-top: 8px; }
 
 /* Signal change flash: a short, cheap animation instead of a redraw. */
 @keyframes signal-pop {
@@ -575,7 +575,6 @@ th { color: var(--muted); font-weight: 600; }
 .bar-fill, .progress-fill { transition: width .35s ease; }
 .news-item, .history li { animation: fade-in .35s ease both; }
 @keyframes fade-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
-.pill.updated { animation: signal-pop .4s ease; }
 
 @media (max-width: 900px) {
   .widget-row.row-top { grid-template-columns: 1fr; }

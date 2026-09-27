@@ -104,6 +104,48 @@ class _FormulaExplorerScreenState extends State<FormulaExplorerScreen> {
     );
   }
 
+  /// The microsecond cost of this formula on the last pass, plus how normal
+  /// its current value is against its own recent history.
+  String _contextLine(FormulaSpec spec) {
+    final parts = <String>[];
+    final micro = widget.state.timingsUs[spec.name];
+    if (micro is num && micro > 0) parts.add(_formatUs(micro.toInt()));
+    final stats = widget.state.formulaStats[spec.name];
+    if (stats is Map) {
+      final sigma = (stats['zscore'] as num?)?.toDouble() ?? 0;
+      final percentile = (stats['percentile'] as num?)?.toDouble() ?? 0;
+      final samples = (stats['samples'] as num?)?.toInt() ?? 0;
+      parts.add('${sigma >= 0 ? '+' : ''}${sigma.toStringAsFixed(2)}σ');
+      parts.add('p${percentile.round()}');
+      parts.add('$samples windows');
+    } else if (widget.state.formulaHistoryWindow > 0) {
+      parts.add('history ${widget.state.formulaHistoryWindow} windows');
+    }
+    return parts.isEmpty ? '—' : parts.join(' · ');
+  }
+
+  /// Units, sensitivity, range and when the reading misleads - the detail the
+  /// web dashboard shows in the logic panel.
+  String _logicDetail(FormulaSpec spec) {
+    final lines = <String>[];
+    if (spec.range.isNotEmpty) lines.add('range ${spec.range}');
+    if (spec.units.isNotEmpty) lines.add('units: ${spec.units}');
+    if (spec.sensitivity.isNotEmpty) lines.add('sensitivity: ${spec.sensitivity}');
+    if (spec.misleads.isNotEmpty) {
+      lines.add('misleads when: ${spec.misleads.join('; ')}');
+    }
+    if (spec.corroborates.isNotEmpty) {
+      lines.add('corroborated by ${spec.corroborates.join(', ')}');
+    }
+    return lines.join('\n');
+  }
+
+  static String _formatUs(int us) {
+    if (us < 1000) return '$us µs';
+    if (us < 1000000) return '${(us / 1000).toStringAsFixed(2)} ms';
+    return '${(us / 1000000).toStringAsFixed(3)} s';
+  }
+
   Widget _row(FormulaSpec spec, double value) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -134,6 +176,19 @@ class _FormulaExplorerScreenState extends State<FormulaExplorerScreen> {
               ),
             ],
           ),
+          // Round I: the cost and the history line are always visible - they
+          // are the numbers that say whether the value above can be trusted.
+          Padding(
+            padding: const EdgeInsets.only(left: 62, top: 3),
+            child: Text(
+              _contextLine(spec),
+              style: const TextStyle(
+                color: AppTheme.textMuted,
+                fontSize: 10.5,
+                fontFamily: 'mono',
+              ),
+            ),
+          ),
           if (_showDescriptions) ...[
             const SizedBox(height: 4),
             Padding(
@@ -141,7 +196,8 @@ class _FormulaExplorerScreenState extends State<FormulaExplorerScreen> {
               child: Text(
                 '${spec.title} · brain node: ${spec.brainNode}\n'
                 '${spec.description}  (budget ${spec.budgetMs} ms, '
-                '${spec.directional ? 'directional' : 'regime/confidence'})',
+                '${spec.directional ? 'directional' : 'regime/confidence'})\n'
+                '${_logicDetail(spec)}',
                 style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
               ),
             ),

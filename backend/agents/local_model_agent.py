@@ -348,7 +348,6 @@ class LocalModelAgent:
         if self.stub:
             return await self._load_stub()
 
-        started = time.perf_counter()
         try:
             if path.suffix.lower() == ".gguf":
                 self.model = await asyncio.wait_for(

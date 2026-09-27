@@ -208,7 +208,8 @@ class PredictionReasoning {
 ///
 /// `ageSeconds` is the age as of the moment the payload was received; the UI
 /// adds the time it has been on screen.  A prediction older than
-/// `maxAgeSeconds` is stale by contract (15 s by default), and the chip says so.
+/// `maxAgeSeconds` is stale by contract - its own 60 s window plus the 5 s
+/// publishing grace - and the chip says so.
 class Prediction {
   const Prediction({
     this.side = '',
@@ -222,13 +223,19 @@ class Prediction {
     this.rr = 0.0,
     this.rrTarget = 1.0,
     this.volatilityBps = 0.0,
-    this.horizonSeconds = 15.0,
+    this.horizonSeconds = 60.0,
     this.ageSeconds,
-    this.maxAgeSeconds = 15.0,
+    this.maxAgeSeconds = 65.0,
     this.state = 'LIVE',
     this.computedAt = '',
     this.expiresAt = '',
     this.reasoning = PredictionReasoning.none,
+    this.horizon = PredictionHorizon.none,
+    this.detail = PredictionDetail.none,
+    this.micro = MicroReading.none,
+    this.forecastFor = '',
+    this.ageMicroseconds = 0,
+    this.ageLabel = '',
   });
 
   final String side;
@@ -250,6 +257,14 @@ class Prediction {
   final String expiresAt;
   final PredictionReasoning reasoning;
 
+  /// The forecast window this prediction covers (Round I).
+  final PredictionHorizon horizon;
+  final PredictionDetail detail;
+  final MicroReading micro;
+  final String forecastFor;
+  final int ageMicroseconds;
+  final String ageLabel;
+
   bool get isStale => state != 'LIVE';
 
   static const Prediction none = Prediction();
@@ -267,9 +282,9 @@ class Prediction {
         rr: _d(json['rr']),
         rrTarget: _d(json['rr_target'], 1.0),
         volatilityBps: _d(json['volatility_bps']),
-        horizonSeconds: _d(json['horizon_seconds'], 15),
+        horizonSeconds: _d(json['horizon_seconds'], 60),
         ageSeconds: json['age_seconds'] == null ? null : _d(json['age_seconds']),
-        maxAgeSeconds: _d(json['max_age_seconds'], 15),
+        maxAgeSeconds: _d(json['max_age_seconds'], 65),
         state: _s(json['state'], 'LIVE'),
         computedAt: _s(json['computed_at']),
         expiresAt: _s(json['expires_at']),
@@ -277,7 +292,225 @@ class Prediction {
             ? PredictionReasoning.none
             : PredictionReasoning.fromJson(
                 Map<String, dynamic>.from(json['reasoning'] as Map)),
+        horizon: json['horizon'] == null
+            ? PredictionHorizon.none
+            : PredictionHorizon.fromJson(
+                Map<String, dynamic>.from(json['horizon'] as Map)),
+        detail: json['detail'] == null
+            ? PredictionDetail.none
+            : PredictionDetail.fromJson(
+                Map<String, dynamic>.from(json['detail'] as Map)),
+        micro: json['detail'] is Map && (json['detail'] as Map)['micro'] is Map
+            ? MicroReading.fromJson(Map<String, dynamic>.from(
+                (json['detail'] as Map)['micro'] as Map))
+            : MicroReading.none,
+        forecastFor: _s(json['forecast_for']),
+        ageMicroseconds: (json['age_microseconds'] as num?)?.toInt() ?? 0,
+        ageLabel: _s(json['age_label']),
       );
+}
+
+/// What the prediction is *for*: the forecast window it covers.
+///
+/// Round I makes this explicit.  A prediction is released at one instant and
+/// covers the 60 seconds that follow it - not "now", and not "the window that
+/// happens to be on screen".  The instants are epoch microseconds, so the panel
+/// can print the release to the microsecond and count down to the target.
+class PredictionHorizon {
+  const PredictionHorizon({
+    this.seconds = 60.0,
+    this.label = 'the next 60 seconds',
+    this.releasedAtPrecise = '',
+    this.targetAtPrecise = '',
+    this.releasedAtUs = 0,
+    this.targetAtUs = 0,
+    this.secondsToTarget = 0.0,
+    this.microsecondsToTarget = 0,
+    this.scoringSeconds = 60.0,
+    this.scoredInSeconds = 0.0,
+    this.scoredAtUs = 0,
+    this.covers = '',
+  });
+
+  final double seconds;
+  final String label;
+  final String releasedAtPrecise;
+
+  /// `HH:MM:SS.ffffff` - the release instant at the resolution the engine runs at.
+  final String targetAtPrecise;
+  final int releasedAtUs;
+  final int targetAtUs;
+  final double secondsToTarget;
+  final int microsecondsToTarget;
+  final double scoringSeconds;
+  final double scoredInSeconds;
+
+  /// When the outcome is measured, in epoch microseconds, so the panel can
+  /// count down to it on the shared clock instead of printing a frozen number.
+  final int scoredAtUs;
+  final String covers;
+
+  static const PredictionHorizon none = PredictionHorizon();
+
+  /// `00:00:00.000000` -> `00:00:00.000` for the narrow panel line.
+  String get releaseClock => releasedAtPrecise.isEmpty
+      ? '—'
+      : releasedAtPrecise.substring(releasedAtPrecise.indexOf('T') + 1,
+          releasedAtPrecise.length).replaceAll('Z', '');
+
+  factory PredictionHorizon.fromJson(Map<String, dynamic> json) =>
+      PredictionHorizon(
+        seconds: _d(json['seconds'], 60),
+        label: _s(json['label'], 'the next 60 seconds'),
+        releasedAtPrecise: _s(json['released_at_precise']),
+        targetAtPrecise: _s(json['target_at_precise']),
+        releasedAtUs: (json['released_at_us'] as num?)?.toInt() ?? 0,
+        targetAtUs: (json['target_at_us'] as num?)?.toInt() ?? 0,
+        secondsToTarget: _d(json['seconds_to_target']),
+        microsecondsToTarget:
+            (json['microseconds_to_target'] as num?)?.toInt() ?? 0,
+        scoringSeconds: _d(json['scoring_seconds'], 60),
+        scoredInSeconds: _d(json['scored_in_seconds']),
+        scoredAtUs: (json['scored_at_us'] as num?)?.toInt() ?? 0,
+        covers: _s(json['covers']),
+      );
+}
+
+/// The tape measured in microseconds: how fast quotes arrive, how jittery that
+/// arrival is, how long a quote survives and which side is being aggressive.
+class MicroReading {
+  const MicroReading({
+    this.available = false,
+    this.reason = '',
+    this.ticks = 0,
+    this.resolutionUs = 0,
+    this.resolutionLabel = '',
+    this.meanIntervalUs = 0,
+    this.jitterUs = 0,
+    this.tickRateHz = 0.0,
+    this.quoteLifetimeUs = 0,
+    this.aggression = 0.0,
+    this.microVolBps = 0.0,
+    this.lastTickAgeUs = 0,
+  });
+
+  final bool available;
+  final String reason;
+  final int ticks;
+  final int resolutionUs;
+  final String resolutionLabel;
+  final int meanIntervalUs;
+  final int jitterUs;
+  final double tickRateHz;
+  final int quoteLifetimeUs;
+  final double aggression;
+  final double microVolBps;
+  final int lastTickAgeUs;
+
+  bool get hasData => available && resolutionUs > 0;
+
+  static const MicroReading none = MicroReading();
+
+  factory MicroReading.fromJson(Map<String, dynamic> json) => MicroReading(
+        available: json['available'] == true,
+        reason: _s(json['reason']),
+        ticks: (json['ticks'] as num?)?.toInt() ?? 0,
+        resolutionUs: (json['resolution_us'] as num?)?.toInt() ?? 0,
+        resolutionLabel: _s(json['resolution_label']),
+        meanIntervalUs: (json['mean_interval_us'] as num?)?.toInt() ?? 0,
+        jitterUs: (json['jitter_us'] as num?)?.toInt() ?? 0,
+        tickRateHz: _d(json['tick_rate_hz']),
+        quoteLifetimeUs: (json['quote_lifetime_us'] as num?)?.toInt() ?? 0,
+        aggression: _d(json['aggression']),
+        microVolBps: _d(json['micro_vol_bps']),
+        lastTickAgeUs: (json['last_tick_age_us'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// One named number inside the detail block (a supporting formula, a category
+/// score, a confidence component).
+class PredictionDetailRow {
+  const PredictionDetailRow({this.name = '', this.value = 0.0, this.kind = ''});
+
+  final String name;
+  final double value;
+  final String kind;
+
+  factory PredictionDetailRow.fromJson(Map<String, dynamic> json) =>
+      PredictionDetailRow(
+        name: _s(json['name'], _s(json['key'])),
+        value: _d(json['value']),
+        kind: _s(json['kind']),
+      );
+}
+
+/// The numbers behind the prediction, so the panel can explain it rather than
+/// assert it: which formulas supported the side, which argued against, what
+/// each category scored, how long the pass took in microseconds.
+class PredictionDetail {
+  const PredictionDetail({
+    this.side = '',
+    this.formulasEvaluated = 0,
+    this.categoryScores = const {},
+    this.supporters = const [],
+    this.opponents = const [],
+    this.confidenceParts = const {},
+    this.computeUs = 0,
+    this.publishLatencyUs = 0,
+    this.tickIntervalUs = 0,
+    this.resolutionUs = 0,
+    this.historySamples = 0,
+    this.micro = MicroReading.none,
+  });
+
+  final String side;
+  final int formulasEvaluated;
+  final Map<String, double> categoryScores;
+  final List<PredictionDetailRow> supporters;
+  final List<PredictionDetailRow> opponents;
+  final Map<String, double> confidenceParts;
+  final int computeUs;
+  final int publishLatencyUs;
+  final int tickIntervalUs;
+  final int resolutionUs;
+  final int historySamples;
+  final MicroReading micro;
+
+  bool get hasData => side.isNotEmpty || supporters.isNotEmpty;
+
+  static const PredictionDetail none = PredictionDetail();
+
+  static List<PredictionDetailRow> _rows(dynamic raw) =>
+      ((raw as List?) ?? const [])
+          .whereType<Map>()
+          .map((row) => PredictionDetailRow.fromJson(Map<String, dynamic>.from(row)))
+          .toList();
+
+  static Map<String, double> _scores(dynamic raw) =>
+      ((raw as Map?) ?? const {})
+          .map((key, value) => MapEntry(key.toString(), _d(value)));
+
+  factory PredictionDetail.fromJson(Map<String, dynamic> json) {
+    final engine = (json['agreement'] as Map?)?['engine'] as Map?;
+    final micro = json['micro'];
+    return PredictionDetail(
+      side: _s(json['side']),
+      formulasEvaluated:
+          (json['formulas_evaluated'] as num?)?.toInt() ?? 0,
+      categoryScores: _scores(json['category_scores']),
+      supporters: _rows(json['supporters']),
+      opponents: _rows(json['opponents']),
+      confidenceParts: _scores(json['confidence_parts']),
+      computeUs: (engine?['compute_us'] as num?)?.toInt() ?? 0,
+      publishLatencyUs: (engine?['publish_latency_us'] as num?)?.toInt() ?? 0,
+      tickIntervalUs: (engine?['tick_interval_us'] as num?)?.toInt() ?? 0,
+      resolutionUs: (engine?['resolution_us'] as num?)?.toInt() ?? 0,
+      historySamples: (engine?['history_samples'] as num?)?.toInt() ?? 0,
+      micro: micro is Map
+          ? MicroReading.fromJson(Map<String, dynamic>.from(micro))
+          : MicroReading.none,
+    );
+  }
 }
 
 /// Which window the locked signal governs, and what the engine is doing in it.
@@ -615,6 +848,11 @@ class FormulaSpec {
     required this.description,
     required this.directional,
     required this.budgetMs,
+    this.units = '',
+    this.sensitivity = '',
+    this.range = '',
+    this.misleads = const [],
+    this.corroborates = const [],
   });
 
   final int index;
@@ -626,16 +864,44 @@ class FormulaSpec {
   final bool directional;
   final double budgetMs;
 
-  factory FormulaSpec.fromJson(Map<String, dynamic> json) => FormulaSpec(
-        index: _i(json['index']),
-        name: _s(json['name']),
-        title: _s(json['title']),
-        category: _s(json['category']),
-        brainNode: _s(json['brain_node']),
-        description: _s(json['description']),
-        directional: json['directional'] != false,
-        budgetMs: _d(json['latency_ms']),
-      );
+  // --- Round I: the logic detail behind the number -------------------------
+  /// What the value is measured in ("-1 … +1 share of aggressive volume").
+  final String units;
+
+  /// How much market movement one unit of the value represents.
+  final String sensitivity;
+
+  /// The band the value normally lives in.
+  final String range;
+
+  /// The situations in which this formula's reading is actively misleading.
+  final List<String> misleads;
+
+  /// Formulas measuring the same phenomenon from another angle.
+  final List<String> corroborates;
+
+  factory FormulaSpec.fromJson(Map<String, dynamic> json) {
+    final logic = (json['logic'] as Map?) ?? const {};
+    return FormulaSpec(
+      index: _i(json['index']),
+      name: _s(json['name']),
+      title: _s(json['title']),
+      category: _s(json['category']),
+      brainNode: _s(json['brain_node']),
+      description: _s(json['description']),
+      directional: json['directional'] != false,
+      budgetMs: _d(json['latency_ms']),
+      units: _s(logic['units']),
+      sensitivity: _s(logic['sensitivity']),
+      range: _s(logic['range']),
+      misleads: ((logic['misleads'] as List?) ?? const [])
+          .map((value) => value.toString())
+          .toList(),
+      corroborates: ((logic['corroborates'] as List?) ?? const [])
+          .map((value) => value.toString())
+          .toList(),
+    );
+  }
 }
 
 class FormulaCategory {

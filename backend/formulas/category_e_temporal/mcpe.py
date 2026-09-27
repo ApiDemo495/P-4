@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from backend.formulas._util import EPS, Ema, finite, tanh, trace
+from backend.formulas._util import EPS, Ema, finite, trace
 
 NAME = "MCPE"
 CATEGORY = "E"
@@ -119,7 +119,6 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
             crossings += 1
             changes.append(i - 1 if i else i)
     changes_arr = np.asarray(changes, dtype=np.int64)
-    signs = np.sign(detrended)
     state.last_crossings = crossings
     trace(ctx, "zero crossings", crossings, "hysteresis crossings in the smoothed window")
 

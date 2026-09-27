@@ -21,6 +21,13 @@ from __future__ import annotations
 
 import time
 
+from backend.core.timebase import now_us, us_to_iso
+
+#: The forecast window the specification asks for: every prediction covers the
+#: 60 seconds that follow its release.  ``Settings(time_scale=...)`` can compress
+#: that for tests; this constant is the *intended* window and is always published.
+BASE_HORIZON_SECONDS = 60.0
+
 #: How a prediction is labelled once its age passes the contract.
 LIVE = "LIVE"
 STALE = "STALE"
@@ -95,14 +102,23 @@ def consensus(formula_values: dict, directional: dict[str, str] | None = None) -
 
 
 def freshness(computed_wall: float, max_age: float, now: float | None = None) -> dict:
-    """Age of the prediction against the staleness contract."""
+    """Age of the prediction against the staleness contract.
+
+    Reported in microseconds as well as seconds: the engine decides inside a
+    60-second window but it *computes* in tens of microseconds, so rounding the
+    age to 0.1 s would hide the resolution the system actually runs at.
+    """
     now = time.time() if now is None else now
     computed = float(computed_wall or 0.0)
     if computed <= 0:
         return {
             "state": STALE,
             "computed_at": "",
+            "computed_at_us": 0,
+            "now_us": now_us(),
             "age_seconds": None,
+            "age_microseconds": None,
+            "age_label": "—",
             "max_age_seconds": round(float(max_age), 1),
             "seconds_until_stale": 0.0,
             "expires_at": "",
@@ -113,12 +129,28 @@ def freshness(computed_wall: float, max_age: float, now: float | None = None) ->
     return {
         "state": LIVE if age <= float(max_age) else STALE,
         "computed_at": _iso(computed),
+        "computed_at_us": int(round(computed * 1e6)),
+        "computed_at_precise": us_to_iso(computed * 1e6),
+        "now_us": int(round(now * 1e6)),
         "age_seconds": round(age, 1),
+        # The resolution the engine works at: whole microseconds, not seconds.
+        "age_microseconds": int(round(age * 1e6)),
+        "age_label": _age_label(age),
         "max_age_seconds": round(float(max_age), 1),
         "seconds_until_stale": round(remaining, 1),
         "expires_at": _iso(computed + float(max_age)),
         "on_time": age <= float(max_age),
     }
+
+
+def _age_label(age_seconds: float) -> str:
+    """'812 µs', '4.31 ms', '12.004 s' - never a rounded-away zero."""
+    micro = age_seconds * 1e6
+    if micro < 1000:
+        return f"{micro:.0f} µs"
+    if micro < 1_000_000:
+        return f"{micro / 1000:.2f} ms"
+    return f"{age_seconds:.3f} s"
 
 
 def _fmt(value: float, digits: int = 2) -> str:
@@ -360,6 +392,91 @@ def build_reasoning(
     }
 
 
+def horizon(
+    *,
+    released_wall: float,
+    seconds: float,
+    scoring_seconds: float | None = None,
+    now: float | None = None,
+) -> dict:
+    """The forecast window: what this prediction is *for*.
+
+    A prediction is released at one instant and covers the 60 seconds that
+    follow.  This block says so explicitly - the instant of release, the instant
+    the forecast targets, and how long is left before it is scored - in whole
+    microseconds and in words.  A reader should never have to guess whether a
+    side applies "now" or "for the next minute": it is the next minute, from the
+    moment it was released.
+    """
+    released = float(released_wall or 0.0)
+    now = time.time() if now is None else now
+    target = released + float(seconds)
+    scoring = released + float(scoring_seconds if scoring_seconds else seconds)
+    return {
+        "seconds": round(float(seconds), 3),
+        #: The specification's window.  Production runs 60-second windows, so
+        #: ``seconds == base_seconds`` there; the accelerated test harness keeps
+        #: ``base_seconds`` at 60 and reports its own compressed window in
+        #: ``seconds``, with ``accelerated`` saying which one is which.
+        "base_seconds": BASE_HORIZON_SECONDS,
+        "accelerated": abs(float(seconds) - BASE_HORIZON_SECONDS) > 1e-9,
+        "label": f"the next {round(float(seconds))} seconds",
+        "released_at": _iso(released) if released else "",
+        "released_at_us": int(round(released * 1e6)) if released else 0,
+        "released_at_precise": us_to_iso(released * 1e6) if released else "",
+        "target_at": _iso(target) if released else "",
+        "target_at_us": int(round(target * 1e6)) if released else 0,
+        "target_at_precise": us_to_iso(target * 1e6) if released else "",
+        "seconds_to_target": round(max(0.0, target - now), 3),
+        "microseconds_to_target": int(round(max(0.0, target - now) * 1e6)),
+        "scored_at": _iso(scoring) if released else "",
+        "scored_at_us": int(round(scoring * 1e6)) if released else 0,
+        "scoring_seconds": round(float(scoring_seconds if scoring_seconds else seconds), 3),
+        "scored_in_seconds": round(max(0.0, scoring - now), 3),
+        "covers": "the window that starts at release",
+    }
+
+
+def detail(
+    *,
+    side: str,
+    category_scores: dict | None = None,
+    supporters: list | None = None,
+    opponents: list | None = None,
+    confidence_parts: dict | None = None,
+    levels: dict | None = None,
+    micro: dict | None = None,
+    stats: dict | None = None,
+    agreement: dict | None = None,
+    agents: dict | None = None,
+    brain: dict | None = None,
+    formula_count: int = 0,
+) -> dict:
+    """Everything behind the side, at the resolution the engine produced it.
+
+    The user's ask was for more detail, so this is deliberately generous: the
+    per-category scores, the strongest supporters *and* opponents with their
+    values and categories, the arithmetic that produced the confidence
+    (base x consensus x calibration x hedge), the level geometry in bps and in
+    currency, the microsecond picture of the tape, and the per-formula
+    statistics of the window.
+    """
+    return {
+        "side": side,
+        "formulas_evaluated": int(formula_count),
+        "category_scores": dict(category_scores or {}),
+        "supporters": list(supporters or []),
+        "opponents": list(opponents or []),
+        "confidence_parts": dict(confidence_parts or {}),
+        "levels": dict(levels or {}),
+        "micro": dict(micro or {}),
+        "formula_stats": dict(stats or {}),
+        "agreement": dict(agreement or {}),
+        "agents": dict(agents or {}),
+        "brain": dict(brain or {}),
+    }
+
+
 def build(
     *,
     side: str,
@@ -374,9 +491,27 @@ def build(
     weak: bool = False,
     emergency: bool = False,
     now: float | None = None,
+    horizon_seconds: float | None = None,
+    scoring_seconds: float | None = None,
+    detail_block: dict | None = None,
 ) -> dict:
-    """The complete prediction object embedded in every payload."""
+    """The complete prediction object embedded in every payload.
+
+    ``horizon_seconds`` is the forecast window - 60 seconds by default, i.e. the
+    prediction released now covers the next minute.  ``scoring_seconds`` is when
+    its result is measured, which defaults to the same instant.
+    """
     age = freshness(computed_wall, max_age, now=now)
+    forecast_seconds = float(horizon_seconds or risk.get("horizon_seconds") or window_seconds)
+    forecast = horizon(
+        released_wall=computed_wall,
+        seconds=forecast_seconds,
+        scoring_seconds=scoring_seconds,
+        now=now,
+    )
+    block = dict(detail_block or {})
+    block.setdefault("side", side)
+    block.setdefault("levels", {})
     return {
         "side": side,
         "confidence": round(float(confidence or 0.0), 4),
@@ -391,8 +526,14 @@ def build(
         "rr": risk.get("rr"),
         "rr_target": risk.get("rr_target", 1.0),
         "volatility_bps": risk.get("volatility_bps"),
-        "horizon_seconds": risk.get("horizon_seconds", window_seconds),
+        "horizon_seconds": forecast_seconds,
+        # The forward-looking contract, in words and in microseconds.
+        "horizon": forecast,
+        "forecast_for": forecast["label"],
+        "target_at": forecast["target_at"],
+        # The reasoning and the numbers behind it.
         "reasoning": reasoning,
         "accuracy": accuracy,
+        "detail": block,
         **age,
     }

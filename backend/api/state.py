@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 
-from backend.agents.local_model_agent import LocalModelAgent
 from backend.core.cycle_manager import CycleManager
 
 log = logging.getLogger("drosophila.api")
@@ -29,7 +28,3 @@ def get_manager() -> CycleManager:
 
 def manager_or_none() -> CycleManager | None:
     return _manager
-
-
-def local_agent() -> LocalModelAgent:
-    return get_manager().agents.local

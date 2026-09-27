@@ -71,7 +71,24 @@ class AppState extends ChangeNotifier {
   Map<String, dynamic> brainStatus = const {};
   Map<String, dynamic> timings = const {};
   Map<String, dynamic> timingsMap = const {};
+
+  /// Round I: the same pass at microsecond resolution.  [timingsUs] is the cost
+  /// of each formula, [formulaStats] is each value against its own history, and
+  /// [totalFormulaUs] is the whole pass.  Microseconds are the unit the engine
+  /// actually works in - milliseconds rounded 23 formulas into the same number.
+  Map<String, dynamic> timingsUs = const {};
+  Map<String, dynamic> formulaStats = const {};
+  int totalFormulaUs = 0;
+  int formulaHistoryWindow = 0;
+  MicroReading lastMicro = MicroReading.none;
   double totalFormulaMs = 0.0;
+
+  /// The tape as the engine measured it: the live formula pass if one has run,
+  /// otherwise whatever the prediction carried.
+  MicroReading get micro =>
+      lastMicro.hasData ? lastMicro : (prediction.detail.micro.hasData
+          ? prediction.detail.micro
+          : prediction.micro);
   Map<String, dynamic> buyAccuracy = const {};
   Map<String, dynamic> sellAccuracy = const {};
   double winRate = 0.0;
@@ -296,6 +313,21 @@ class AppState extends ChangeNotifier {
       if (timings is Map) {
         timingsMap = Map<String, dynamic>.from(timings);
         totalFormulaMs = _num(live['total_ms']);
+      }
+      final timingsMicro = live['timings_us'];
+      if (timingsMicro is Map) {
+        timingsUs = Map<String, dynamic>.from(timingsMicro);
+        totalFormulaUs = (live['total_us'] as num?)?.toInt() ?? 0;
+      }
+      final stats = live['stats'];
+      if (stats is Map) {
+        formulaStats = Map<String, dynamic>.from(stats);
+      }
+      formulaHistoryWindow = (live['history_window'] as num?)?.toInt() ??
+          formulaHistoryWindow;
+      final micro = live['micro'];
+      if (micro is Map && micro.isNotEmpty) {
+        lastMicro = MicroReading.fromJson(Map<String, dynamic>.from(micro));
       }
     }
     _applySnapshot(data, includeHistory: false);
@@ -651,8 +683,12 @@ class AppState extends ChangeNotifier {
     await refreshAgents();
   }
 
-  static double _num(dynamic value) {
+  /// Reads a number out of a payload, with a fallback for the values the
+  /// backend may not have produced yet (the first window has no accuracy, the
+  /// first prediction has no freshness).
+  static double _num(dynamic value, [double fallback = 0.0]) {
     if (value is num) return value.toDouble();
-    return double.tryParse('$value') ?? 0.0;
+    final parsed = double.tryParse('$value');
+    return parsed ?? fallback;
   }
 }

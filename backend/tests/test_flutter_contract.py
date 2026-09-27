@@ -92,5 +92,44 @@ def test_the_countdown_copy_promises_the_shared_tick() -> None:
     assert "next refresh" in note and "minute-aligned" in note
 
 
+# ---------------------------------------------------------------------------
+# Round I: microseconds, the 60-second horizon, and the detail blocks
+# ---------------------------------------------------------------------------
+def test_the_flutter_client_reads_the_horizon_and_the_micro_block() -> None:
+    source = SIGNAL_MODEL.read_text()
+    assert "class PredictionHorizon" in source
+    assert "class MicroReading" in source
+    assert "class PredictionDetail" in source
+    for key in ("released_at_us", "target_at_us", "microseconds_to_target",
+                "scored_in_seconds"):
+        assert key in source, f"the horizon block must carry {key}"
+    for key in ("resolution_us", "jitter_us", "quote_lifetime_us", "tick_rate_hz"):
+        assert key in source, f"the micro block must carry {key}"
+
+
+def test_the_flutter_panel_prints_the_forecast_window() -> None:
+    panel = (ROOT / "frontend" / "lib" / "widgets" / "signal_widget_panel.dart").read_text()
+    assert "_HorizonLine" in panel and "_MicroLine" in panel
+    assert "_PredictionDetailToggle" in panel
+    assert "forecast" in panel and "released" in panel
+    assert "per tick" in panel and "aggression" in panel
+
+
+def test_the_flutter_state_keeps_microseconds_separate_from_milliseconds() -> None:
+    source = APP_STATE.read_text()
+    assert "timingsUs" in source and "totalFormulaUs" in source
+    assert "formulaStats" in source and "MicroReading lastMicro" in source
+    assert "MicroReading get micro" in source
+    # the two-argument _num call sites (accuracy fallbacks) must stay valid
+    assert "static double _num(dynamic value, [double fallback = 0.0])" in source
+
+
+def test_the_flutter_formula_screen_shows_the_logic_detail() -> None:
+    screen = (ROOT / "frontend" / "lib" / "screens" / "formula_explorer_screen.dart").read_text()
+    for needle in ("_contextLine", "_logicDetail", "misleads", "corroborates",
+                   "sensitivity", "zscore"):
+        assert needle in screen, f"the explorer must show {needle}"
+
+
 if __name__ == "__main__":  # pragma: no cover - manual entry point
     sys.exit(pytest.main([__file__]))

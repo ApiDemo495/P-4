@@ -30,7 +30,6 @@ from backend.core.direction import (
     SELL,
     DirectionDecision,
     describe as describe_direction,
-    opposite,
     resolve as resolve_direction,
 )
 

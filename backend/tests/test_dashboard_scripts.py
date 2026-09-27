@@ -31,6 +31,38 @@ PAGES = {
     "settings.js": "settings.html",
 }
 
+# ---------------------------------------------------------------------------
+# Round I: the dashboard must *show* the microsecond work, not just fetch it
+# ---------------------------------------------------------------------------
+def test_the_dashboard_prints_the_forecast_window() -> None:
+    """Every prediction covers the 60 s after its release, and says so."""
+    app = (WEB / "app.js").read_text()
+    page = (WEB / "index.html").read_text()
+    for element in ("w-horizon-line", "w-micro-line", "w-detail", "w-detail-toggle"):
+        assert f'id="{element}"' in page, f"{element} is missing from index.html"
+        assert f'"{element}"' in app, f"{element} is never written by app.js"
+    assert "renderHorizon" in app and "renderPredictionDetail" in app
+    assert "released_at_precise" in app and "target_at_precise" in app
+    assert "microseconds_to_target" in app
+
+
+def test_the_dashboard_shows_microseconds_not_just_milliseconds() -> None:
+    app = (WEB / "app.js").read_text()
+    assert "function fmtUs(" in app
+    assert "timings_us" in app, "the timings line must prefer the µs numbers"
+    assert "resolution_us" in app or "resolution_label" in app
+    assert "liveMicro" in app and "liveStats" in app
+    # the old millisecond-only readout is gone
+    assert "v.toFixed(3)}ms" not in app
+
+
+def test_the_formula_explorer_shows_the_new_logic_fields() -> None:
+    app = (WEB / "app.js").read_text()
+    for needle in ("logic.units", "logic.sensitivity", "logic.misleads",
+                   "logic.corroborates", "logic.range", "formula-stats"):
+        assert needle in app, f"the explorer must render {needle}"
+
+
 #: JS + browser globals that may legitimately appear in call position.
 GLOBALS = {
     "if", "for", "while", "switch", "catch", "return", "typeof", "function",

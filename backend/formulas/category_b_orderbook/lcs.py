@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from backend.core import config as cfg
+
 from backend.formulas._util import EPS, finite, tanh, trace
 
 NAME = "LCS"
@@ -51,7 +53,7 @@ class State:
 
 def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None = None) -> float:
     book = snapshot.book(asset)
-    if book is None or book.shape != (2, 20, 2):
+    if book is None or book.shape != (2, cfg.L2_DEPTH_LEVELS, 2):
         return 0.0
 
     ask_qty = book[1, :, 1]

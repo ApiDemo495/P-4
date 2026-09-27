@@ -25,7 +25,7 @@ is not enough to trust a number - or to debug one.  Every formula now publishes:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,27 @@ class Logic:
     sign: str
     trace: tuple[str, ...] = ()
     why: str = ""
+    #: What the number *is*, physically: "-1 … +1 score", "basis points", "µs".
+    units: str = ""
+    #: What moves it and by how much - so a reader can tell a big number from a
+    #: small one without looking at the source.
+    sensitivity: str = ""
+    #: When the formula lies.  Every one of them can; saying so here is what
+    #: makes the reading honest.
+    misleads: tuple[str, ...] = ()
+    #: Formulas that measure the same thing from a different angle.  Agreement
+    #: with these is corroboration; disagreement is information either way.
+    corroborates: tuple[str, ...] = ()
+
+    def range_label(self) -> str:
+        """The published range, in the formula's own units."""
+        if self.bands:
+            lo = min(band[0] for band in self.bands)
+            hi = max(band[1] for band in self.bands)
+            if self.units.startswith("-1"):
+                return f"score {lo:.1f} … {hi:.1f}"
+            return f"{lo:g} … {hi:g}"
+        return "raw"
 
     def reading(self, value: float) -> str:
         """Turn the current value into a sentence using the band table."""
@@ -60,6 +81,11 @@ class Logic:
             "sign": self.sign,
             "trace_names": list(self.trace),
             "why": self.why,
+            "units": self.units,
+            "sensitivity": self.sensitivity,
+            "misleads": list(self.misleads),
+            "corroborates": list(self.corroborates),
+            "range": self.range_label(),
         }
         if value is not None:
             payload["value"] = round(float(value), 6)
@@ -610,11 +636,232 @@ def get(name: str) -> Logic | None:
     return LOGIC.get(name)
 
 
-def readings(values: dict[str, float]) -> dict[str, str]:
-    """``{name: one-line reading}`` for every formula that has a value."""
-    out: dict[str, str] = {}
-    for name, value in values.items():
-        logic = LOGIC.get(name)
-        if logic is not None:
-            out[name] = logic.reading(float(value))
-    return out
+# ---------------------------------------------------------------------------
+# Detail layer: units, sensitivity, when each formula misleads, and which
+# formulas corroborate it.
+#
+# The registry above says what each formula *computes*.  This table says how to
+# read the number: what it is measured in, how much of it one unit of market
+# movement buys, when it is actively misleading, and which other formulas are
+# measuring the same phenomenon from a different angle.  The Formula Explorer
+# prints all of it next to the live value, and the prediction block uses
+# ``corroborates`` to describe *why* the side won, not just that it did.
+# ---------------------------------------------------------------------------
+
+DETAIL: dict[str, dict] = {
+    "TAI": {
+        "units": "-1 … +1 score (µs-scaled jerk)",
+        "sensitivity": "one unit is a jerk of 2.6e-6 /s³, about 4 bps of displacement in 10 s",
+        "misleads": (
+            "a single large print with an old timestamp drags the cubic fit",
+            "a quiet tape produces a near-zero fit and the score goes flat, not 'neutral'",
+        ),
+        "corroborates": ("TWRS", "DSKD", "CCSv2"),
+    },
+    "AFPR": {
+        "units": "-1 … +1 share of aggressive volume",
+        "sensitivity": "+0.5 means 75 % of weighted volume crossed on the buy side at power 3",
+        "misleads": (
+            "one whale print outweighs 200 small ones by design",
+            "venue-reported aggressor sides are approximate on aggregated trades",
+        ),
+        "corroborates": ("SED", "VSD", "TWRS"),
+    },
+    "SED": {
+        "units": "-1 … +1 elasticity-weighted flow",
+        "sensitivity": "beta of 1e-6 price-units per unit flow saturates the score",
+        "misleads": (
+            "with fewer than ~12 spread changes the regression is unstable",
+            "a synchronised L2 snapshot stream flattens the spread history",
+        ),
+        "corroborates": ("AFPR", "LCS", "DGW"),
+    },
+    "VSD": {
+        "units": "-1 … +1 robust volume-shock score",
+        "sensitivity": "z = 3 (a three-sigma volume shift) reaches ±0.76 after tanh(z/3)",
+        "misleads": (
+            "a scheduled auction or funding print looks like information",
+            "MAD collapses on a tape with clipped volumes, inflating z",
+        ),
+        "corroborates": ("AFPR", "VSS", "MCPE"),
+    },
+    "DGW": {
+        "units": "-1 … +1 book-imbalance score",
+        "sensitivity": "a 1 % deeper far side on a 1 %-wide book saturates it",
+        "misleads": (
+            "spoofed depth sits far from the touch and still moves the centre of mass",
+            "thin books make the ratio jump between snapshots",
+        ),
+        "corroborates": ("LCS", "BAR", "CCSv2"),
+    },
+    "LCS": {
+        "units": "-1 … +1 liquidity-cliff asymmetry",
+        "sensitivity": "a 2:1 drop-off ratio reads about +0.33",
+        "misleads": (
+            "deep-but-far liquidity is invisible in the first 20 levels",
+            "a book mid-replenishment looks like a cliff",
+        ),
+        "corroborates": ("DGW", "BAR"),
+    },
+    "BAR": {
+        "units": "-1 … +1 absorbed-resting-quantity ratio",
+        "sensitivity": "all resting size consumed on one side reads ±1",
+        "misleads": (
+            "a cancel is indistinguishable from a fill in L2 data",
+            "between two snapshots of a fast book the comparison is noisy",
+        ),
+        "corroborates": ("DGW", "SED", "AFPR"),
+    },
+    "HRDD": {
+        "units": "-1 … +1 relative-value score (BTC leg)",
+        "sensitivity": "a beta one scale-unit from its 60-window EMA reads ±0.76",
+        "misleads": (
+            "a single-leg news event moves beta without any relative-value story",
+            "the EMA needs ~60 windows before the baseline is trustworthy",
+        ),
+        "corroborates": ("SHRP", "GCDV", "HSI"),
+    },
+    "SHRP": {
+        "units": "-1 … +1 flow-rotation score",
+        "sensitivity": "a 20 % flow rotation toward the traded leg reads about ±0.2",
+        "misleads": (
+            "different notional scales between the legs distort the ratio",
+            "a one-sided outage on either feed reads as rotation",
+        ),
+        "corroborates": ("GCDV", "HRDD"),
+    },
+    "GCDV": {
+        "units": "-1 … +1 normalised divergence",
+        "sensitivity": "a 10 bps relative move sustained over 10 windows reads ±0.7",
+        "misleads": (
+            "uncorrelated stale legs produce divergence with no economic content",
+            "a PAXG-specific liquidity gap is not a risk-on signal",
+        ),
+        "corroborates": ("SHRP", "HRDD", "NIV"),
+    },
+    "HSI": {
+        "units": "0 … 1 stress index (not directional)",
+        "sensitivity": "0.80 is the dampening threshold; above it fusion confidence is cut",
+        "misleads": (
+            "a funding or expiry window raises correlation without a regime change",
+            "with fewer than 60 synced points the index is a small-sample artefact",
+        ),
+        "corroborates": ("ERC", "VSS"),
+    },
+    "RSV": {
+        "units": "-1 … +1; the Hurst exponent change, signed by drift",
+        "sensitivity": "a 0.05 change in H reads about ±0.5",
+        "misleads": (
+            "H estimates are biased upward on short windows",
+            "trending and mean-reverting tapes can share the same H",
+        ),
+        "corroborates": ("MPS", "ERC", "MCPE"),
+    },
+    "VSS": {
+        "units": "-1 … +1 volatility-regime score",
+        "sensitivity": "a doubling of short-window sigma reads about ±0.76",
+        "misleads": (
+            "the sign says where price was drifting, not where volatility points",
+            "a single gap bar inflates short-window sigma",
+        ),
+        "corroborates": ("VSD", "ERC", "HSI"),
+    },
+    "ERC": {
+        "units": "regime index in [-1, +1] (not directional)",
+        "sensitivity": "near +1 = order rejection (breakout), near -1 = mean reverting",
+        "misleads": (
+            "sample entropy needs ~100 observations to stabilise",
+            "a pure sine wave and a clean trend both score low on entropy",
+        ),
+        "corroborates": ("RSV", "MPS", "HSI"),
+    },
+    "MCPE": {
+        "units": "-1 … +1 phase position",
+        "sensitivity": "cos(2π·frac): +1 at the start of the rising half, -1 at the peak",
+        "misleads": (
+            "with fewer than three crossings the phase is extrapolated, not measured",
+            "a phase-locked loop on a trend locks onto noise",
+        ),
+        "corroborates": ("RSV", "TWRS", "MPS"),
+    },
+    "MPS": {
+        "units": "-1 … +1 momentum-persistence score",
+        "sensitivity": "rho 0.3 with efficiency 0.5 reads about ±0.35",
+        "misleads": (
+            "strong autocorrelation on a flat tape is chop, not a move",
+            "the efficiency ratio needs a clean path; gaps distort it",
+        ),
+        "corroborates": ("RSV", "MCPE", "TWRS"),
+    },
+    "TWRS": {
+        "units": "-1 … +1 recency-weighted skew",
+        "sensitivity": "a 0.1 skew on a unit-variance tape reads about ±0.1 (tanh-bounded)",
+        "misleads": (
+            "one outlier print sets the third moment for the whole window",
+            "on a flat tape the skew is noise around zero",
+        ),
+        "corroborates": ("TAI", "MCPE", "DSKD"),
+    },
+    "DSKD": {
+        "units": "-1 … +1 level-shift score (sigma units)",
+        "sensitivity": "a fresh divergence of 1 sigma reads ±0.76",
+        "misleads": (
+            "a step change in the slow filter is a lag artefact, not a signal",
+            "the scale floor (3e-5) suppresses genuine low-volatility shifts",
+        ),
+        "corroborates": ("TAI", "TWRS", "VSS"),
+    },
+    "NIV": {
+        "units": "-1 … +1 decayed news sentiment",
+        "sensitivity": "a tier-1 headline at confidence 1.0 reads ±0.4 within 30 s of publication",
+        "misleads": (
+            "repeated syndication of one story multiplies its weight",
+            "a headline about a different asset still lands on the traded one",
+        ),
+        "corroborates": ("SMD", "GCDV", "CCSv2"),
+    },
+    "SMD": {
+        "units": "-1 … +1 sentiment-versus-price divergence",
+        "sensitivity": "NIV 0.5 with TAI 0.0 reads about +0.46",
+        "misleads": (
+            "stale news keeps a divergence alive after price has already caught up",
+            "TAI on a quiet tape makes any headline look like a divergence",
+        ),
+        "corroborates": ("NIV", "TAI"),
+    },
+    "KCAE": {
+        "units": "0 … 1 sparsity score (not directional)",
+        "sensitivity": "a uniform 50-cluster code scores 0; a single active cluster scores 1",
+        "misleads": (
+            "the code is sparse by construction, so high values are normal",
+            "it measures the representation, not the decision quality",
+        ),
+        "corroborates": ("CCSv2",),
+    },
+    "CCSv2": {
+        "units": "-1 … +1 circuit vote",
+        "sensitivity": "an approach/avoid difference of 1.0 before damping reads about ±0.76",
+        "misleads": (
+            "the resting-balance subtraction assumes a stable baseline",
+            "it inherits every bias of the 20 projection-neuron inputs",
+        ),
+        "corroborates": ("DGW", "BAR", "NIV", "TAI"),
+    },
+    "DRG": {
+        "units": "-1 … +1 reward trace (not directional)",
+        "sensitivity": "a +10 bps win reads about +0.095; a -10 bps loss about -0.16 (asymmetric by design)",
+        "misleads": (
+            "it lags: the last outcome is already priced into the DAN gate",
+            "a lucky streak on a random tape looks like edge",
+        ),
+        "corroborates": (),
+    },
+}
+
+for _name, _detail in DETAIL.items():
+    _entry = LOGIC.get(_name)
+    if _entry is None:  # a formula was renamed without updating this table
+        continue
+    LOGIC[_name] = replace(_entry, **_detail)
+
+del _name, _detail, _entry

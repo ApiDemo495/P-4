@@ -10,19 +10,6 @@ from backend.formulas.engine import CATEGORY_NAMES, FormulaEngine
 router = APIRouter()
 
 
-def _live_payload(result, manager) -> dict:
-    """Values + readings + traces for the pass that produced them."""
-    if result is None:
-        return {"formulas": {}, "readings": {}, "traces": {}}
-    return {
-        "formulas": {k: round(float(v), 6) for k, v in result.values.items()},
-        "readings": result.to_dict().get("readings", {}),
-        "traces": result.traces,
-        "timings_ms": {k: round(float(v), 4) for k, v in result.timings_ms.items()},
-        "total_ms": round(result.total_ms, 4),
-    }
-
-
 @router.get("/api/formulas")
 async def formula_catalogue() -> dict:
     """All 22 formulas with metadata + the logic registry (used by the explorer)."""
@@ -83,11 +70,18 @@ async def timings(limit: int = Query(1, ge=1, le=50)) -> dict:
     manager = get_manager()
     result = manager.last_formula_result
     if result is None:
-        return {"timings_ms": {}, "total_ms": 0.0}
-    ranked = sorted(result.timings_ms.items(), key=lambda kv: kv[1], reverse=True)
+        return {"timings_ms": {}, "timings_us": {}, "total_ms": 0.0, "total_us": 0}
+    ranked_ms = sorted(result.timings_ms.items(), key=lambda kv: kv[1], reverse=True)
+    ranked_us = sorted(result.timings_us.items(), key=lambda kv: kv[1], reverse=True)
     return {
         "cycle_number": manager.stats.cycle_number,
-        "timings_ms": {k: round(v, 4) for k, v in ranked},
+        "timings_ms": {k: round(v, 4) for k, v in ranked_ms},
+        # Microsecond resolution: the pass costs tens of microseconds per
+        # formula, and rounding that to milliseconds would hide the difference
+        # between two formulas entirely.
+        "timings_us": {k: int(v) for k, v in ranked_us},
         "total_ms": round(result.total_ms, 4),
+        "total_us": int(result.total_us),
+        "resolution_us": int(result.micro.get("resolution_us", 0)) if result.micro else 0,
         "budget_ms": 3.0,
     }

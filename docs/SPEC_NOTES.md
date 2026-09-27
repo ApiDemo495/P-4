@@ -478,3 +478,93 @@ in.
 **Escape hatch.** `CYCLE_SECONDS=12` (or any value) restores a shorter window;
 `TIME_SCALE` compresses the whole schedule for demos and tests without touching
 the ratios. `SIGNAL_PIPELINE=0` restores the literal draft timing.
+
+## I — Microseconds, a one-minute horizon, and six times the data
+
+**Asked for, verbatim.** *"Currently out system is analysing 1 minute prediction
+in seconds, it would be better if it analyses in micro seconds and predictions
+should be 1 min future when they released. increase details in formulas and
+prediction.. You should remove unnecessary code that isn't in use but present.
+Also increase data in app, do 6 times then current data app is getting."* Five
+requirements, and the round is only done when all five are true at once.
+
+**1. The analysis is microsecond-resolution now.**
+* `backend/core/timebase.py` is the one clock: `now_us()` (epoch microseconds),
+  `perf_us()` (monotonic, for timings), `us_to_iso()` (six-digit ISO),
+  `format_us()` (µs / ms / s), and `span_us()` / `interval_us()` for the tick
+  arrays. The market arrays keep millisecond stamps on purpose - a float64 can
+  hold an epoch-ms value to ~0.24 µs, which is finer than any exchange
+  timestamp - and the module documents that.
+* `backend/core/micro.py` measures the tape itself: interval mean / median / p95
+  / min / max in µs, jitter (MAD x 1.4826), tick rate and ticks per second,
+  burstiness, last-tick age, micro momentum and trend, micro volatility and
+  range, volatility per microsecond, aggression, and how long a quote survives.
+* `FormulaEngine.run()` records `timings_us` for every formula and for the whole
+  pass, `total_ms` remains for compatibility, and each trace now ends with the
+  value's range, its cost in µs, the data window it saw (span + ticks), its
+  z-score against the retained history, and its units. `FormulaResult.stats`
+  carries mean / sigma / min / max / last / z-score / percentile / trend /
+  non-zero rate per formula, over a 360-window history.
+
+**2. Every prediction covers the 60 seconds after its release.**
+`prediction.horizon()` publishes `released_at` / `target_at` as six-digit ISO
+*and* as epoch microseconds, `seconds_to_target`, `microseconds_to_target`,
+`scored_in_seconds`, the wording (`"the next 60 seconds"`), and `base_seconds`
+(the specification's 60 s) with `accelerated` saying whether this engine is
+running a compressed window. `scored_at` is the instant the outcome is
+measured, so "what is this signal for" has exactly one answer: the minute that
+starts when it is released.
+
+**3. More detail, in the formulas and in the prediction.**
+* `logic.DETAIL` gives all 23 formulas their `units`, `sensitivity`, `range`,
+  `misleads` and `corroborates`, on top of the expression / steps / bands / sign
+  / why that were already there. The Formula Explorer prints them as chips and a
+  "when it misleads" list.
+* `prediction.detail()` names the side, the number of formulas evaluated, every
+  category score, the top supporters and opponents with their values, the
+  confidence parts, the levels with their price distance, the engine block
+  (compute µs, publish latency µs, tick interval µs, tape resolution, history
+  samples), the agents and the brain read-out. The dashboard renders it inside
+  the prediction cell behind a toggle.
+
+**4. Unused code is gone, and stays gone.**
+`tools/dead_code.py` walks Python (functions, methods, classes), the browser
+bundle (functions, element ids), the stylesheet (classes, comments stripped,
+compound selectors split, dynamic compositions such as ``sig-${kind}``
+understood) and the Dart client. It reports **0** unused definitions, and
+`backend/tests/test_dead_code.py` fails the build if that changes. This round
+removed: `api/state.local_agent`, `api/routes_formulas._live_payload`,
+`brain.load_matrix` / `save_to`, `health_check.health_loop`,
+`matrix_builder.set_edge`, `config.reload_settings`,
+`cycle_manager.run_cycle_manager`, `errors.DataUnavailable` /
+`BrainUnavailable`, `signal_lock.formula_dict`,
+`cross_asset_sync.interpolate_ticks`, `simulator.synthetic_flash_move`,
+`_util.safe_div` / `hurst_rs`, `engine.directional_values`,
+`synthetic.all_scenarios`, `tai._derivatives`, `news.report_price_event`,
+`app.js windowElapsed` and the `#timer` / `#progress` / spinner leftovers, plus
+every unused import pyflakes could see.
+
+**5. Six times the data.**
+`cfg.DATA_MULTIPLIER = 6`: 3 600 ticks, 120 order-book levels per side, 360
+candles, 120 news headlines, 120 scored outcomes, 5 400 spread observations, and
+a 360-window formula history. The API surface grew with it: 72 outcomes and 72
+history windows per call instead of 20, a 30-headline news block instead of 5,
+and the signal lock keeps 1 440 locked windows (a day at the 60-second cadence).
+
+**A bug this round found and fixed.** `#lock-state` and `#utc` in the widget
+strip were written *inside* a guard on `#timer`, an element no page has rendered
+since the ring replaced the old countdown. The two readouts therefore never
+updated after the first render - the dead code was hiding live state. The guard
+is gone, both are written on every whole second, and
+`tests/test_dead_code.py` keeps the dead panels from returning.
+
+**Verification.** `backend/tests/test_microseconds.py` (18 tests: clock, label
+units, the analyser on synthetic tapes, logic detail on all 23 formulas, engine
+µs timings, the horizon arithmetic, freshness in µs, the detail block, the x6
+multipliers and buffers), the extended `test_prediction.py`,
+`test_dashboard_scripts.py`, `test_flutter_contract.py` and `test_dead_code.py`,
+plus `tools/dead_code.py` itself as the standing gate.
+
+**Escape hatch.** `DATA_MULTIPLIER` is one constant - set it to 1 for the
+draft's original buffer sizes. `BASE_HORIZON_SECONDS` is the forecast window;
+`CYCLE_SECONDS` still sets the real window.

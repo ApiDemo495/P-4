@@ -146,6 +146,14 @@ class SignalWidgetPanel extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 6),
+          // Round I: what the prediction is *for*, and how finely the tape is
+          // resolved.  Both lines are inside the cell - never an overlay.
+          _HorizonLine(state: state),
+          const SizedBox(height: 3),
+          _MicroLine(state: state),
+          const SizedBox(height: 4),
+          _PredictionDetailToggle(state: state),
+          const SizedBox(height: 6),
           _ReasonList(state: state),
           // Inline emergency chip: small, glittering, inside the page.
           if (state.emergency != null || (signal?.isEmergencyOverride ?? false))
@@ -816,6 +824,202 @@ class _RingPainter extends CustomPainter {
 
 
 /// The freshness chip: how old the prediction is against the 15-second rule.
+/// The forecast window, in words and to the microsecond.
+///
+/// "SELL" on its own does not say *when* it applies.  Every prediction covers
+/// the 60 seconds that start at its release, and this line says which instant
+/// that was, which instant it targets, and how much of the window is left.
+class _HorizonLine extends StatelessWidget {
+  const _HorizonLine({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final horizon = state.prediction.horizon;
+    if (horizon.releasedAtUs == 0) {
+      return const Text(
+        'forecast: the next 60 seconds — waiting for the first release',
+        style: TextStyle(color: AppTheme.textMuted, fontSize: 11, fontFamily: 'mono'),
+      );
+    }
+    // Counted down against the shared server clock (the same one the ring
+    // uses), never frozen at the value the payload carried.
+    final nowUs = state.serverNowMs() * 1000;
+    final left = horizon.targetAtUs > 0
+        ? (horizon.targetAtUs - nowUs) / 1000000
+        : horizon.secondsToTarget;
+    final scored = horizon.scoredAtUs > 0
+        ? (horizon.scoredAtUs - nowUs) / 1000000
+        : horizon.scoredInSeconds;
+    return Text(
+      'forecast ${horizon.label} · released ${horizon.releaseClock} · '
+      '${left.clamp(0, horizon.seconds).toStringAsFixed(1)}s left · '
+      'scored in ${scored.clamp(0, horizon.scoringSeconds).toStringAsFixed(1)}s',
+      style: const TextStyle(color: AppTheme.textMuted, fontSize: 11, fontFamily: 'mono'),
+    );
+  }
+}
+
+/// The tape's own resolution: µs between quotes, jitter, quote lifetime and
+/// which side is being aggressive.
+class _MicroLine extends StatelessWidget {
+  const _MicroLine({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final micro = state.micro;
+    if (!micro.hasData) {
+      return const Text(
+        'tape resolution — waiting for the first tick',
+        style: TextStyle(color: AppTheme.textMuted, fontSize: 11, fontFamily: 'mono'),
+      );
+    }
+    final label = micro.resolutionLabel.isEmpty
+        ? _formatUs(micro.resolutionUs)
+        : micro.resolutionLabel;
+    return Text(
+      'tape $label per tick · ${micro.tickRateHz.toStringAsFixed(1)} Hz · '
+      'jitter ${_formatUs(micro.jitterUs)} · quote life ${_formatUs(micro.quoteLifetimeUs)} · '
+      'aggression ${micro.aggression.toStringAsFixed(2)}',
+      style: const TextStyle(color: AppTheme.textMuted, fontSize: 11, fontFamily: 'mono'),
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+}
+
+String _formatUs(int us) {
+  if (us <= 0) return '—';
+  if (us < 1000) return '$us µs';
+  if (us < 1000000) return '${(us / 1000).toStringAsFixed(2)} ms';
+  return '${(us / 1000000).toStringAsFixed(3)} s';
+}
+
+/// The detail block: which formulas backed the side, what they scored, and what
+/// the pass cost in microseconds.  Collapsed by default so the cell stays the
+/// same size - it expands *inside* the cell, never over the page.
+class _PredictionDetailToggle extends StatefulWidget {
+  const _PredictionDetailToggle({required this.state});
+
+  final AppState state;
+
+  @override
+  State<_PredictionDetailToggle> createState() => _PredictionDetailToggleState();
+}
+
+class _PredictionDetailToggleState extends State<_PredictionDetailToggle> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final detail = widget.state.prediction.detail;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        GestureDetector(
+          onTap: () => setState(() => _open = !_open),
+          child: Text(
+            _open ? '\u25be prediction detail' : '\u25b8 prediction detail',
+            style: const TextStyle(color: AppTheme.accent, fontSize: 11),
+          ),
+        ),
+        if (_open) ...[
+          const SizedBox(height: 6),
+          if (!detail.hasData)
+            const Text(
+              'no detail yet — it arrives with the first live prediction',
+              style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
+            )
+          else ...[
+            Text(
+              '${detail.side} · ${detail.formulasEvaluated} formulas evaluated',
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+            ),
+            if (detail.categoryScores.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Wrap(
+                  spacing: 8,
+                  children: detail.categoryScores.entries
+                      .map((entry) => Text(
+                            '${entry.key} ${entry.value >= 0 ? '+' : ''}'
+                            '${entry.value.toStringAsFixed(3)}',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontFamily: 'mono',
+                              color: entry.value >= 0 ? AppTheme.buy : AppTheme.sell,
+                            ),
+                          ))
+                      .toList(),
+                ),
+              ),
+            if (detail.supporters.isNotEmpty)
+              _DetailRows(title: 'Supporting the side', rows: detail.supporters, positive: true),
+            if (detail.opponents.isNotEmpty)
+              _DetailRows(title: 'Arguing against', rows: detail.opponents, positive: false),
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                'pass ${_formatUs(detail.computeUs)} · publish '
+                '${_formatUs(detail.publishLatencyUs)} · tick interval '
+                '${_formatUs(detail.tickIntervalUs)} · history '
+                '${detail.historySamples} samples',
+                style: const TextStyle(
+                  color: AppTheme.textMuted,
+                  fontSize: 10.5,
+                  fontFamily: 'mono',
+                ),
+              ),
+            ),
+          ],
+        ],
+      ],
+    );
+  }
+}
+
+class _DetailRows extends StatelessWidget {
+  const _DetailRows({required this.title, required this.rows, required this.positive});
+
+  final String title;
+  final List<PredictionDetailRow> rows;
+  final bool positive;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+          ...rows.take(6).map((row) => Row(
+                children: [
+                  SizedBox(
+                    width: 64,
+                    child: Text(
+                      row.name,
+                      style: const TextStyle(fontSize: 10.5, fontFamily: 'mono'),
+                    ),
+                  ),
+                  Text(
+                    '${row.value >= 0 ? '+' : ''}${row.value.toStringAsFixed(3)}',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontFamily: 'mono',
+                      color: positive ? AppTheme.buy : AppTheme.sell,
+                    ),
+                  ),
+                ],
+              )),
+        ],
+      ),
+    );
+  }
+}
+
 class _FreshnessChip extends StatelessWidget {
   const _FreshnessChip({required this.state});
 

@@ -153,15 +153,15 @@ async def current_signal() -> dict:
 
 
 @router.get("/api/signal/history")
-async def signal_history(limit: int = 20) -> dict:
+async def signal_history(limit: int = 72) -> dict:
     manager = get_manager()
     return manager.history_payload(limit)
 
 
 @router.get("/api/signal/outcomes")
-async def outcomes() -> dict:
+async def outcomes(limit: int = 72) -> dict:
     manager = get_manager()
-    return manager.outcomes_payload()
+    return manager.outcomes_payload(limit)
 
 
 @router.post("/api/assets/switch")

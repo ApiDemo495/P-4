@@ -43,9 +43,11 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from backend.core import config as cfg
+
 from backend.core.frozen_snapshot import FrozenMarketSnapshot
 
-LEVELS = 20
+LEVELS = cfg.L2_DEPTH_LEVELS
 TICKS_PER_WINDOW = 600
 WINDOWS = 48
 #: Micro-cycle period, in ticks: 30 ticks = 3 s at 10 ticks/s.
@@ -577,7 +579,6 @@ def _build_scenario(key: str) -> Scenario:
     paxg_prices = paxg_start * np.exp(np.concatenate([[0.0], np.cumsum(paxg_returns)]))
 
 
-
     btc_volumes, btc_sides = _volumes_and_sides(
         direction=direction,
         n=n,
@@ -678,5 +679,3 @@ def scenario(key: str) -> Scenario:
     return _cache[key]
 
 
-def all_scenarios() -> dict[str, Scenario]:
-    return {key: scenario(key) for key in SCENARIOS}

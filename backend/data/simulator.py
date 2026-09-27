@@ -215,13 +215,6 @@ class MarketSimulator:
             "book": books,
         }
 
-    def synthetic_flash_move(self, asset: str, pct: float = -6.0) -> None:
-        """Inject a flash move - drives the price-based emergency detector."""
-        state = self.assets[asset]
-        state.price = max(1.0, state.price * (1.0 + pct / 100.0))
-        log.info("Simulator injected %.1f%% flash move on %s", pct, asset)
-
-
 async def run_simulator(sim: MarketSimulator, on_step) -> None:
     """Drive the simulator in real time, calling ``on_step(asset, ticks, book)``."""
     tick_interval = 0.05  # 20 Hz wire cadence

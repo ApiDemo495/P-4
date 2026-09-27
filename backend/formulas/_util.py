@@ -21,10 +21,6 @@ def clip(x: float, lo: float = -1.0, hi: float = 1.0) -> float:
     return float(np.clip(float(x), lo, hi))
 
 
-def safe_div(num: float, den: float, eps: float = EPS) -> float:
-    return float(num) / (float(den) + eps)
-
-
 def finite(x: float, default: float = 0.0) -> float:
     """Replace NaN/Inf with a neutral value - a broken formula must not poison CCSv2."""
     return float(x) if np.isfinite(x) else float(default)
@@ -165,38 +161,6 @@ def mad(values: np.ndarray) -> float:
         return 0.0
     med = float(np.median(values))
     return 1.4826 * float(np.median(np.abs(values - med)))
-
-
-def hurst_rs(series: np.ndarray, min_chunk: int = 2) -> float:
-    """Rescaled-range estimate of the Hurst exponent for one window (RSV).
-
-    Splits the window into two halves and averages the rescaled range, which is
-    the fast O(n) variant the specification asks for (8 windows x 20 points).
-    """
-    n = series.size
-    if n < 2 * min_chunk:
-        return 0.5
-    chunk = max(min_chunk, n // 2)
-    ratios: list[float] = []
-    for start in range(0, n - chunk + 1, chunk):
-        seg = series[start : start + chunk].astype(np.float64)
-        if seg.size < 2:
-            continue
-        mean = seg.mean()
-        dev = np.cumsum(seg - mean)
-        spread = float(dev.max() - dev.min())
-        std = float(seg.std(ddof=1)) if seg.size > 1 else 0.0
-        if std <= EPS or spread <= EPS:
-            continue
-        ratios.append(spread / std)
-    if not ratios:
-        return 0.5
-    rs = float(np.mean(ratios))
-    if rs <= 0:
-        return 0.5
-    # H = ln(R/S) / ln(chunk); clamp to a sane band - tiny windows are noisy.
-    h = float(np.log(rs) / np.log(chunk))
-    return float(np.clip(h, 0.0, 1.0))
 
 
 # ---------------------------------------------------------------------------

@@ -17,11 +17,15 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from backend.core import config as cfg
+from backend.core.micro import analyze as micro_analyze
+from backend.core.micro import MicroState
+from backend.core.timebase import format_us, perf_us
 from backend.formulas import drg as drg_module
 from backend.formulas.category_a_microstructure import afpr, sed, tai, vsd
 from backend.formulas.category_b_orderbook import bar, dgw, lcs
@@ -119,6 +123,28 @@ BRAIN_FORMULAS: tuple[FormulaSpec, ...] = (
 ALL_FORMULAS: tuple[FormulaSpec, ...] = INPUT_FORMULAS + BRAIN_FORMULAS
 
 
+def logic_entry(name: str):
+    """The logic registry entry for a formula, or None (never raises)."""
+    try:
+        from backend.formulas import logic as logic_module
+
+        return logic_module.get(name)
+    except Exception:  # pragma: no cover - defensive
+        return None
+
+
+def _tick_times(engine, result: FormulaResult, asset: str):
+    """The tick timestamps of the last frozen snapshot, for the span note."""
+    snapshot = getattr(engine, "last_snapshot", None)
+    if snapshot is None:
+        return np.zeros(0)
+    try:
+        ticks = snapshot.ticks(asset)
+    except Exception:  # noqa: BLE001 - never let tracing break a pass
+        return np.zeros(0)
+    return ticks[:, 0] if ticks is not None and len(ticks) else np.zeros(0)
+
+
 def _readings(values: dict) -> dict:
     """Readings lookup that never raises - the UI must always get a payload."""
     try:
@@ -129,6 +155,43 @@ def _readings(values: dict) -> dict:
         return {}
 
 
+#: How many samples of each formula the engine remembers, per asset.
+#: 360 windows is six minutes at the 60-second cadence - exactly the 6x the
+#: dashboard used to show - and it is what makes the per-formula statistics
+#: (mean, sigma, z-score, trend, zero rate) meaningful instead of decorative.
+FORMULA_HISTORY = 360
+
+
+@dataclass
+class FormulaStats:
+    """What one formula has been reading, and where this window sits in it."""
+
+    samples: int = 0
+    mean: float = 0.0
+    std: float = 0.0
+    minimum: float = 0.0
+    maximum: float = 0.0
+    last: float = 0.0
+    zscore: float = 0.0
+    nonzero_rate: float = 0.0
+    trend: float = 0.0
+    percentile: float = 0.0
+
+    def to_dict(self) -> dict:
+        return {
+            "samples": self.samples,
+            "mean": round(self.mean, 6),
+            "std": round(self.std, 6),
+            "min": round(self.minimum, 6),
+            "max": round(self.maximum, 6),
+            "last": round(self.last, 6),
+            "zscore": round(self.zscore, 4),
+            "nonzero_rate": round(self.nonzero_rate, 4),
+            "trend": round(self.trend, 6),
+            "percentile": round(self.percentile, 4),
+        }
+
+
 @dataclass
 class FormulaResult:
     """The output of one full formula pass."""
@@ -136,6 +199,13 @@ class FormulaResult:
     values: dict[str, float] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
     timings_ms: dict[str, float] = field(default_factory=dict)
+    #: The same timings at the resolution the engine actually works at.  A
+    #: formula costs tens of microseconds, so ``timings_ms`` rounds most of them
+    #: to 0.03 or 0.00; these are exact.
+    timings_us: dict[str, int] = field(default_factory=dict)
+    #: Per-formula statistics over the retained history (mean, sigma, z-score,
+    #: trend, zero rate, percentile) - the "is this number normal?" context.
+    stats: dict[str, dict] = field(default_factory=dict)
     #: ``{formula: [{"label", "value", "unit"}, ...]}`` - the intermediate
     #: numbers each formula recorded while it ran.  This is what turns the
     #: Formula Explorer from a list of numbers into an audit trail.
@@ -144,9 +214,14 @@ class FormulaResult:
     kcae: float = 0.0
     brain_trace: dict = field(default_factory=dict)
     total_ms: float = 0.0
+    total_us: int = 0
     asset: str = "BTC"
     timestamp: float = 0.0
     fatal: str = ""
+    #: The microsecond picture of the tape this pass was computed on.
+    micro: dict = field(default_factory=dict)
+    #: How many past windows the statistics above are computed over.
+    history_window: int = 0
 
     @property
     def zero_count(self) -> int:
@@ -161,13 +236,6 @@ class FormulaResult:
         """Section 10.1: >= 11 of the 20 input formulas are zero -> forced HOLD."""
         return self.zero_count >= (cfg.SETTINGS.max_failed_formulas + 1)
 
-    def directional_values(self) -> dict[str, float]:
-        return {
-            spec.name: self.values.get(spec.name, 0.0)
-            for spec in INPUT_FORMULAS
-            if spec.directional
-        }
-
     def to_dict(self) -> dict:
         return {
             "asset": self.asset,
@@ -179,6 +247,9 @@ class FormulaResult:
             # read the raw number.
             "readings": _readings(self.values),
             "timings_ms": {k: round(v, 4) for k, v in self.timings_ms.items()},
+            "timings_us": {k: int(v) for k, v in self.timings_us.items()},
+            "stats": {k: v for k, v in self.stats.items()},
+            "micro": dict(self.micro),
             "traces": {k: v for k, v in self.traces.items()},
             "zero_count": self.zero_count,
             "failed_count": self.failed_count,
@@ -186,6 +257,8 @@ class FormulaResult:
             "kcae": round(self.kcae, 6),
             "brain_trace": self.brain_trace,
             "total_ms": round(self.total_ms, 4),
+            "total_us": int(self.total_us),
+            "history_window": FORMULA_HISTORY,
         }
 
 
@@ -195,8 +268,46 @@ class FormulaEngine:
     def __init__(self, brain=None) -> None:
         self.brain = brain
         self._state: dict[tuple[str, str], object] = {}
+        #: Rolling sample history per (formula, asset): the context that turns a
+        #: bare number into "normal for this tape, or not".
+        self._history: dict[tuple[str, str], deque[float]] = {}
+        self._micro = MicroState()
         self.runs = 0
         self.last: FormulaResult | None = None
+
+    # ------------------------------------------------------------------
+    def history(self, name: str, asset: str) -> deque[float]:
+        key = (name, asset.upper())
+        series = self._history.get(key)
+        if series is None:
+            series = deque(maxlen=FORMULA_HISTORY)
+            self._history[key] = series
+        return series
+
+    def _record(self, name: str, asset: str, value: float) -> FormulaStats:
+        """Append the value and describe where it sits in its own history."""
+        series = self.history(name, asset)
+        series.append(float(value))
+        samples = np.fromiter(series, dtype=float, count=len(series))
+        stats = FormulaStats(samples=int(samples.size), last=round(float(value), 9))
+        if samples.size:
+            stats.mean = float(np.mean(samples))
+            stats.std = float(np.std(samples))
+            stats.minimum = float(np.min(samples))
+            stats.maximum = float(np.max(samples))
+            stats.nonzero_rate = float(np.count_nonzero(np.abs(samples) > 1e-12)) / samples.size
+            if stats.std > 0:
+                stats.zscore = float((value - stats.mean) / stats.std)
+            stats.percentile = float(np.count_nonzero(samples <= value)) / samples.size
+            if samples.size >= 3:
+                recent = samples[-20:]
+                index = np.arange(recent.size, dtype=float)
+                try:
+                    slope = float(np.polyfit(index, recent, 1)[0])
+                except Exception:  # noqa: BLE001 - degenerate series
+                    slope = 0.0
+                stats.trend = slope
+        return stats
 
     # ------------------------------------------------------------------
     def state_for(self, spec: FormulaSpec, asset: str):
@@ -219,7 +330,7 @@ class FormulaEngine:
     def run(self, snapshot, asset: str) -> FormulaResult:
         """Execute all 22 formulas + DRG against ``snapshot``."""
         asset = asset.upper()
-        started = time.perf_counter()
+        started_us = perf_us()
         params = cfg.asset_params(asset)
         result = FormulaResult(asset=asset, timestamp=snapshot.timestamp)
 
@@ -227,6 +338,7 @@ class FormulaEngine:
 
         # --- Reward meta-parameter first: DRG gates the dopamine nodes -----
         ctx["_trace"] = []
+        drg_us = perf_us()
         try:
             drg_state = self.drg_state(asset)
             value = drg_module.compute(snapshot, drg_state, params, ctx=ctx)
@@ -237,6 +349,7 @@ class FormulaEngine:
             result.values["DRG"] = 0.0
             ctx["_drg"] = 0.0
         finally:
+            result.timings_us["DRG"] = perf_us() - drg_us
             result.traces["DRG"] = ctx.pop("_trace", [])
 
         # --- Formulas 1-20 ------------------------------------------------
@@ -248,8 +361,10 @@ class FormulaEngine:
         ccs_state = self.state_for(ccs_spec, asset)
         try:
             t0 = time.perf_counter()
+            t0_us = perf_us()
             ccsv2.prepare(snapshot, asset, ccs_state, params, ctx)
             result.timings_ms["CCSv2:prepare"] = (time.perf_counter() - t0) * 1000.0
+            result.timings_us["CCSv2:prepare"] = perf_us() - t0_us
         except Exception as exc:  # noqa: BLE001
             result.errors["CCSv2"] = f"prepare failed: {exc}"
             log.warning("CCSv2 prepare failed: %s", exc)
@@ -261,8 +376,29 @@ class FormulaEngine:
         result.ccs_confidence = float(ctx.get("_ccsv2_confidence", 0.0))
         result.kcae = float(ctx.get("KCAE", 0.0))
         result.brain_trace = dict(ctx.get("_brain_trace", {}))
-        result.total_ms = (time.perf_counter() - started) * 1000.0
+        result.total_us = perf_us() - started_us
+        result.total_ms = result.total_us / 1000.0
+        result.history_window = FORMULA_HISTORY
         result.values.setdefault("_hsi", result.values.get("HSI", 0.0))
+
+        # --- the microsecond picture of the tape this pass ran on -----------
+        try:
+            report = micro_analyze(snapshot, asset, state=self._micro)
+            result.micro = report.to_dict()
+        except Exception as exc:  # noqa: BLE001 - analysis must never break a pass
+            log.debug("micro analysis failed: %s", exc)
+            result.micro = {"available": False, "reason": str(exc)}
+
+        # --- per-formula history and statistics ----------------------------
+        for name, value in result.values.items():
+            if name.startswith("_"):
+                continue
+            try:
+                stats = self._record(name, asset, float(value))
+                result.stats[name] = stats.to_dict()
+            except Exception as exc:  # noqa: BLE001
+                log.debug("stats for %s failed: %s", name, exc)
+        self._annotate_traces(result, asset)
 
         self.runs += 1
         self.last = result
@@ -279,6 +415,7 @@ class FormulaEngine:
         result: FormulaResult,
     ) -> None:
         t0 = time.perf_counter()
+        t0_us = perf_us()
         ctx["_trace"] = []
         try:
             state = self.state_for(spec, asset)
@@ -295,6 +432,7 @@ class FormulaEngine:
             log.warning("formula %s failed for %s: %s", spec.name, asset, exc)
         finally:
             result.timings_ms[spec.name] = (time.perf_counter() - t0) * 1000.0
+            result.timings_us[spec.name] = perf_us() - t0_us
             result.traces[spec.name] = ctx.pop("_trace", [])
 
             # Every formula records how many ticks it actually saw: the first
@@ -317,6 +455,70 @@ class FormulaEngine:
                 )
         except Exception:  # noqa: BLE001
             pass
+
+    # ------------------------------------------------------------------
+    def _annotate_traces(self, result: FormulaResult, asset: str) -> None:
+        """Add the microsecond, history and timing context to every trace.
+
+        A formula records what *it* computed (4-8 intermediate numbers).  Those
+        numbers are only trustworthy next to three more facts: how much data the
+        pass actually saw, how long the formula took at microsecond resolution,
+        and whether the value it produced is normal for this tape.  This is what
+        turns the Formula Explorer from a list of results into an audit trail.
+        """
+        ticks = result.micro.get("ticks") if isinstance(result.micro, dict) else None
+        for name, trace in result.traces.items():
+            if not isinstance(trace, list):
+                continue
+            stats = result.stats.get(name, {})
+            value = float(result.values.get(name, 0.0))
+            entry = logic_entry(name)
+            context = [
+                {
+                    "label": "value · "
+                    + (entry.range_label() if entry is not None else "raw"),
+                    "value": f"{value:+.6f}",
+                    "unit": (entry.units if entry is not None else ""),
+                },
+                {
+                    "label": "computed in",
+                    "value": format_us(result.timings_us.get(name, 0)),
+                    "unit": f"{result.timings_us.get(name, 0)} µs · resolution {result.micro.get('resolution_label', '—')}",
+                },
+                {
+                    "label": "data window",
+                    "value": (result.micro.get("span_label") or "—"),
+                    "unit": f"{int(ticks or 0)} ticks analysed in microseconds",
+                },
+            ]
+            if stats:
+                context += [
+                    {
+                        "label": f"history over {stats.get('samples', 0)} windows",
+                        "value": f"mean {stats.get('mean', 0):+.4f} · sigma {stats.get('std', 0):.4f}",
+                        "unit": f"range {stats.get('min', 0):+.4f} … {stats.get('max', 0):+.4f}",
+                    },
+                    {
+                        "label": "z-score vs own history",
+                        "value": f"{stats.get('zscore', 0):+.2f}σ",
+                        "unit": f"percentile {float(stats.get('percentile', 0)) * 100:.0f}% · "
+                        f"non-zero {float(stats.get('nonzero_rate', 0)) * 100:.0f}% of windows",
+                    },
+                    {
+                        "label": "trend over the last 20 windows",
+                        "value": f"{stats.get('trend', 0):+.6f}",
+                        "unit": "per window" + (" · rising" if stats.get("trend", 0) > 0 else " · falling" if stats.get("trend", 0) < 0 else ""),
+                    },
+                ]
+            if entry is not None and entry.units:
+                context.append(
+                    {
+                        "label": "units · sensitivity",
+                        "value": entry.units,
+                        "unit": entry.sensitivity,
+                    }
+                )
+            trace.extend(context)
 
     # ------------------------------------------------------------------
     # Metadata / persistence

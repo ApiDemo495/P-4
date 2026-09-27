@@ -98,9 +98,6 @@ class FrozenSignal(NamedTuple):
     """((key, value), ...) - take-profit / stop-loss block (Section 10.5)."""
 
     # ------------------------------------------------------------------
-    def formula_dict(self) -> dict[str, float]:
-        return {name: value for name, value in self.formula_values}
-
     def agent_dict(self) -> dict[str, Any]:
         return {name: payload for name, payload in self.agent_results}
 
@@ -209,8 +206,11 @@ class SignalLockController:
         self.lock_timestamp = time.time()
         self.computed_at = self.lock_timestamp
         self.history.append(frozen)
-        if len(self.history) > 240:
-            del self.history[:-240]
+        # 1 440 locked windows: a full day at the 60-second cadence, and the
+        # 6x the dashboard now reads.  Bounded so a long-running engine cannot
+        # grow without limit.
+        if len(self.history) > 1440:
+            del self.history[:-1440]
         log.info(
             "cycle %d signal LOCKED: %s (%.0f%%)",
             frozen.cycle_number,
@@ -235,7 +235,7 @@ class SignalLockController:
         how flat is expressed; the payload also carries ``closed_signal`` so the
         panel can say *why* the direction flipped.
         """
-        from backend.core.direction import BUY, SELL, is_direction, opposite
+        from backend.core.direction import BUY, is_direction, opposite
 
         base = self.current_signal
         previous_signal = base.signal if base else "COMPUTING"
@@ -346,7 +346,7 @@ class SignalLockController:
             "history_length": len(self.history),
         }
 
-    def recent_history(self, limit: int = 20) -> list[dict]:
+    def recent_history(self, limit: int = 72) -> list[dict]:
         return [s.to_dict() for s in self.history[-limit:]][::-1]
 
 

@@ -145,9 +145,6 @@ def advance(state: State, ticks: np.ndarray, q_fast: float) -> None:
 
     q_fast_rel = q_fast * PRICE_SCALE
     q_slow_rel = Q_SLOW * PRICE_SCALE
-    # The measurement noise is one tick of tape noise (~0.5 bps of the price).
-    r_rel = 0.25 * PRICE_SCALE
-
     if not state.initialised:
         state.p_fast = state.p_slow = float(prices[0]) / state.reference
         state.initialised = True

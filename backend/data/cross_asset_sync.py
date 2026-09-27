@@ -102,22 +102,3 @@ def synchronise(
     return SyncedSeries(grid, btc_synced, paxg_synced, valid=valid)
 
 
-def interpolate_ticks(ticks: np.ndarray, target_count: int) -> np.ndarray:
-    """Linearly interpolate a short tick series onto ``target_count`` rows.
-
-    Used for PAXG when the buffer holds 15-29 ticks: formulas that require more
-    than 60 ticks (VSD, VSS) then run on interpolated data and the UI shows a
-    warning (Section 5.2).
-    """
-    if ticks is None or ticks.size == 0:
-        return np.zeros((target_count, 2), dtype=np.float64)
-    src = ticks[:, :2].astype(np.float64)
-    if src.shape[0] >= target_count:
-        return src[-target_count:]
-    src_t = src[:, 0]
-    src_t = src_t - src_t[0]
-    dst_t = np.linspace(src_t[0], src_t[-1] if src_t[-1] > 0 else 1.0, target_count)
-    out = np.empty((target_count, 2), dtype=np.float64)
-    out[:, 0] = dst_t
-    out[:, 1] = np.interp(dst_t, src_t, src[:, 1])
-    return out

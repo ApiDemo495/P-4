@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from pathlib import Path
 
 import numpy as np
 
@@ -128,23 +127,6 @@ class Brain:
         self._apply(result)
         await self.refresh_health(ping=False)
         return self.status
-
-    def load_matrix(self, matrix: np.ndarray, source: str = "MANUAL") -> None:
-        """Install a matrix directly (used by the upload/inspect endpoints)."""
-        if matrix.shape != (gc.N_NODES, gc.N_NODES):
-            raise ValueError(f"expected {(gc.N_NODES, gc.N_NODES)}, got {matrix.shape}")
-        self.matrix = matrix
-        self.conv = gc.GraphConvolution(matrix)
-        self.status = BrainStatus.CACHED
-        self.message = f"manually loaded ({source})"
-        self.loaded_at = time.time()
-
-    def save_to(self, path: Path) -> Path:
-        from backend.brain import matrix_builder as mb
-
-        if self.matrix is None:
-            raise RuntimeError("no matrix loaded")
-        return mb.save_csv(self.matrix, path)
 
     # ------------------------------------------------------------------
     # Introspection

@@ -194,6 +194,77 @@ def test_the_ratio_survives_clipping(volatility: float):
     assert block["rr"] == pytest.approx(1.0)
 
 
+# ---------------------------------------------------------------------------
+# Round I: the forecast window is the minute after the release, with detail
+# ---------------------------------------------------------------------------
+def test_a_live_prediction_covers_the_window_that_follows_its_release(
+    manager: CycleManager,
+):
+    """The window is 60 s in production and compressed under the test harness.
+
+    ``base_seconds`` is always the specification's 60 - the contract the user
+    asked for - while ``seconds`` is the window this engine instance is really
+    running, and ``accelerated`` says whether the two differ.
+    """
+    prediction = manager.signal_payload()["prediction"]
+    horizon = prediction["horizon"]
+    assert horizon["base_seconds"] == 60.0
+    assert horizon["accelerated"] is (horizon["seconds"] != 60.0)
+    if not horizon["accelerated"]:
+        assert horizon["seconds"] == 60.0
+        assert horizon["label"] == "the next 60 seconds"
+        assert prediction["forecast_for"] == "the next 60 seconds"
+    # the target instant is exactly one window after the release moment
+    span = horizon["target_at_us"] - horizon["released_at_us"]
+    assert span == int(round(horizon["seconds"] * 1e6))
+    assert horizon["released_at_precise"].endswith("Z")
+    assert horizon["microseconds_to_target"] >= 0
+    assert horizon["scored_in_seconds"] >= 0
+    # and the release is anchored to the window the signal governs
+    assert horizon["released_at_us"] == int(round(manager.published_computed_at * 1e6))
+
+
+def test_the_prediction_detail_explains_the_side(manager: CycleManager):
+    prediction = manager.signal_payload()["prediction"]
+    detail = prediction["detail"]
+    assert detail["side"] in ("BUY", "SELL")
+    assert detail["formulas_evaluated"] >= 20
+    assert set(detail["category_scores"]) == set("ABCDEFGH")
+    assert detail["supporters"], "a side with no supporters cannot be explained"
+    engine = detail["agreement"]["engine"]
+    assert engine["compute_us"] > 0
+    assert engine["publish_latency_us"] >= 0
+    assert engine["history_samples"] > 0
+    assert detail["levels"]["tp_bps"] == detail["levels"]["sl_bps"]
+    assert detail["micro"]["available"] is True
+    assert detail["micro"]["resolution_us"] > 0
+
+
+def test_the_clock_is_published_to_the_microsecond(manager: CycleManager):
+    clock = manager.master_clock()
+    for key in ("window_started_at_us", "window_ends_at_us", "server_time_us",
+                "remaining_us", "elapsed_us", "publish_latency_us", "engine_compute_us",
+                "snapshot_us"):
+        assert key in clock, f"master_clock is missing {key}"
+    window_us = int(round(clock["window_seconds"] * 1e6))
+    assert clock["window_ends_at_us"] - clock["window_started_at_us"] == window_us
+    assert clock["remaining_us"] > 0
+    assert clock["server_time_us"] > clock["window_started_at_us"]
+    assert clock["publish_latency_us"] >= 0
+
+
+def test_the_live_formula_block_carries_microseconds_and_history(manager: CycleManager):
+    manager.last_formula_result.history_window = 360  # as a live pass records it
+    block = manager.live_formulas_payload()
+    assert block["total_us"] > 0
+    assert block["timings_us"], "per-formula microsecond timings are missing"
+    assert all(isinstance(v, int) for v in block["timings_us"].values())
+    assert block["stats"], "per-formula history statistics are missing"
+    assert block["history_window"] >= 360
+    assert block["micro"]["resolution_us"] > 0
+    assert block["micro"]["resolution_label"]
+
+
 def test_the_prediction_exposes_the_levels(manager: CycleManager):
     prediction = manager.signal_payload()["prediction"]
     assert prediction["rr"] == pytest.approx(1.0)

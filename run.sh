@@ -291,7 +291,6 @@ if [ "$MODE" = "status" ]; then
   step "Status"
   pid="$(supervisor_pid || true)"
   [ -n "$pid" ] && ok "supervisor running (pid $pid)" || warn "supervisor not running"
-  local count
   count="$(pgrep -f "[r]un.sh --supervise" 2>/dev/null | wc -l | tr -d ' ')"
   if [ "${count:-0}" -gt 1 ]; then
     warn "$count supervisors are running - bash run.sh --clean makes it one"

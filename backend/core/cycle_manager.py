@@ -31,8 +31,6 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
-import numpy as np
-
 from backend.agents.orchestrator import AgentOrchestrator
 from backend.brain.brain import Brain
 from backend.core import config as cfg
@@ -40,9 +38,11 @@ from backend.core.clock import WorldClock
 from backend.core.direction import describe as describe_direction
 from backend.core.errors import ComponentStatus, DegradationLevel
 from backend.core.prediction import build as build_prediction
+from backend.core.prediction import detail as prediction_detail
 from backend.core.prediction import build_reasoning, consensus
 from backend.core.frozen_snapshot import FrozenMarketSnapshot
 from backend.core.redis_bus import Store
+from backend.core.timebase import now_us
 from backend.core.risk import realized_volatility_bps, risk_levels
 from backend.core.signal_lock import FrozenSignal, LockState, SignalLockController
 from backend.data.market_hub import MarketDataHub
@@ -169,6 +169,11 @@ class CycleManager:
         #: before it goes live when the pipeline is on).
         self.published_computed_at: float = 0.0
         self.published_compute_ms: float = 0.0
+        #: The same numbers at the resolution the engine runs at.
+        self.published_compute_us: int = 0
+        self.publish_latency_us: int = 0
+        self.snapshot_us: int = 0
+        self.window_started_us: int = 0
         self.window_valid_from: float = 0.0
         self.window_valid_until: float = 0.0
         self._origin_wall: float = 0.0
@@ -418,6 +423,11 @@ class CycleManager:
         # panel still says "computed Xs before this window started".
         self.published_computed_at = deadline_wall
         self.published_compute_ms = self.prefetch_ms
+        self.published_compute_us = int(round(self.prefetch_ms * 1000.0))
+        self.window_started_us = int(round(deadline_wall * 1e6))
+        # How far past the intended boundary the publication actually landed.
+        # This is the number that says whether "1 minute" means 60.000000 s.
+        self.publish_latency_us = max(0, now_us() - self.window_started_us)
         await self.broadcast(
             {
                 "type": "SIGNAL",
@@ -516,7 +526,7 @@ class CycleManager:
         """Compute the signal for the next window - during this one."""
         started = time.perf_counter()
         snapshot = self.market.freeze(
-            news_items=self.news.cache.latest(5),
+            news_items=self.news.cache.latest(30),
             drg_outcomes=self.outcomes.array(),
         )
         self._pending_vol_bps = realized_volatility_bps(snapshot, self.asset)
@@ -620,10 +630,14 @@ class CycleManager:
 
         # --- t=0: freeze -------------------------------------------------
         self.lock.new_cycle(self.stats.cycle_number)
+        freeze_started_us = now_us()
         snapshot = self.market.freeze(
-            news_items=self.news.cache.latest(5),
+            news_items=self.news.cache.latest(30),
             drg_outcomes=self.outcomes.array(),
         )
+        # How long the immutable copy took: the formulas only ever see this, so
+        # it is the point where "analysis" officially begins.
+        self.snapshot_us = now_us() - freeze_started_us
         self.last_snapshot = snapshot
         self.warnings = list(snapshot.warnings)
         self.degradation = self._compute_degradation(snapshot)
@@ -718,6 +732,9 @@ class CycleManager:
         locked = self.lock.lock(signal)
         self.published_computed_at = time.time()
         self.published_compute_ms = formula_result.total_ms
+        self.published_compute_us = int(formula_result.total_us)
+        self.window_started_us = int(round(self.window_valid_from * 1e6))
+        self.publish_latency_us = max(0, now_us() - self.window_started_us)
         self.stats.lock_ms = (time.perf_counter() - started) * 1000.0
         self.stats.cycles_completed += 1
         self.stats.signal_counts[locked.signal] = self.stats.signal_counts.get(locked.signal, 0) + 1
@@ -884,7 +901,7 @@ class CycleManager:
                         log.debug("news poll on tick failed: %s", exc)
                 if "formulas" in parts:
                     snapshot = self.market.freeze(
-                        news_items=self.news.cache.latest(5),
+                        news_items=self.news.cache.latest(30),
                         drg_outcomes=self.outcomes.array(),
                     )
                     result = self.formulas.run(snapshot, self.asset)
@@ -916,7 +933,7 @@ class CycleManager:
                                 )
                             ),
                             "agents_status": self.agents_payload(),
-                            "news_feed": self.news_payload(limit=5),
+                            "news_feed": self.news_payload(limit=30),
                             "accuracy": self.accuracy_block(),
                             "brain_explain": self.brain_explain_payload(),
                         },
@@ -981,6 +998,9 @@ class CycleManager:
                     detector = self.news.detector
                     event = detector.check_flash_move(asset, move * (direction or 1.0), direction)
                     if event is not None:
+                        # ``report_price_event`` used to be the documented entry
+                        # point for this; it only delegated back to _dispatch, so
+                        # the trigger now calls the detector path directly.
                         await self.trigger_emergency(event)
                         break
             except asyncio.CancelledError:
@@ -1059,7 +1079,7 @@ class CycleManager:
     # Feature payloads: one shape, used by both the REST mirrors and the
     # WebSocket snapshot, so a panel can never disagree with its endpoint.
     # ------------------------------------------------------------------
-    def news_payload(self, limit: int = 5) -> dict:
+    def news_payload(self, limit: int = 30) -> dict:
         return {
             "items": self.news.latest_items(limit),
             "status": self.news.status.to_dict(),
@@ -1075,15 +1095,25 @@ class CycleManager:
         """Exactly what ``/api/brain/status`` returns, built without HTTP."""
         return self.brain.status_dict()
 
-    def history_payload(self, limit: int = 12) -> dict:
+    def history_payload(self, limit: int = 72) -> dict:
         return {"history": self.lock.recent_history(min(max(limit, 1), 240))}
 
-    def outcomes_payload(self) -> dict:
+    def outcomes_payload(self, limit: int = 72) -> dict:
         rows = self.outcomes.array()
+        recent = rows[-int(limit):] if limit else rows
         return {
             "count": int(rows.shape[0]),
+            "returned": int(recent.shape[0]),
+            "buffer_size": int(rows.shape[0]),
             "win_rate": round(self.outcomes.win_rate(), 4),
-            "rows": [{"outcome": float(o), "pnl_bps": float(p)} for o, p in rows],
+            "rows": [
+                {
+                    "outcome": float(o),
+                    "pnl_bps": float(p),
+                    "index": index,
+                }
+                for index, (o, p) in enumerate(recent, start=max(0, rows.shape[0] - recent.shape[0]))
+            ],
         }
 
     def brain_explain_payload(self) -> dict:
@@ -1115,6 +1145,18 @@ class CycleManager:
                 else {}
             ),
             "total_ms": round(result.total_ms, 4) if result is not None else 0.0,
+            # Round I: the same pass at microsecond resolution, plus the history
+            # statistics and the tape measurements the explorer prints next to
+            # each value.  The Formulae Explorer used to show a value and an ms
+            # timing; now it can say how normal that value is, how long the
+            # formula took in µs, and what the tape itself was doing.
+            "timings_us": (
+                {k: int(v) for k, v in result.timings_us.items()} if result is not None else {}
+            ),
+            "total_us": int(result.total_us) if result is not None else 0,
+            "stats": dict(result.stats) if result is not None else {},
+            "history_window": getattr(result, "history_window", 0) if result is not None else 0,
+            "micro": dict(result.micro) if result is not None else {},
         }
         return payload
 
@@ -1130,11 +1172,11 @@ class CycleManager:
         payload["clock"] = self.master_clock()
         payload["live_formulas"] = self.live_formulas_payload()
         payload["agents_status"] = self.agents_payload()
-        payload["news_feed"] = self.news_payload(limit=5)
+        payload["news_feed"] = self.news_payload(limit=30)
         payload["accuracy"] = self.accuracy_block()
         payload["brain_explain"] = self.brain_explain_payload()
         if include_history:
-            payload["history"] = self.history_payload(limit=12)
+            payload["history"] = self.history_payload(limit=72)
             payload["outcomes"] = self.outcomes_payload()
         return payload
 
@@ -1340,11 +1382,17 @@ class CycleManager:
     def prediction_payload(self, signal: FrozenSignal | None = None,
                            formula_result: FormulaResult | None = None,
                            now: float | None = None) -> dict:
-        """The prediction block: side, levels, freshness, reasoning, accuracy."""
+        """The prediction block: side, levels, freshness, reasoning, detail.
+
+        The forecast window is the 60-second window that starts when the
+        prediction is released, and its result is scored one window later; both
+        are stated explicitly in the ``horizon`` block, in microseconds.
+        """
         current = signal or self.lock.try_get_current()
         result = formula_result if formula_result is not None else self.last_formula_result
         risk = dict(current.risk) if current else {}
         computed_wall = self._computed_wall(current)
+        reasoning = self._reasoning_for(current, result)
         return build_prediction(
             side=(current.signal if current else "·  ·  ·"),
             confidence=(current.confidence if current else 0.0),
@@ -1352,12 +1400,145 @@ class CycleManager:
             computed_wall=computed_wall,
             max_age=self.settings.prediction_expired,
             risk=risk,
-            reasoning=self._reasoning_for(current, result),
+            reasoning=reasoning,
             accuracy=self.accuracy_block(),
             window_seconds=self.settings.cycle_period_seconds,
+            horizon_seconds=self.settings.cycle_period_seconds,
+            scoring_seconds=self.settings.outcome_horizon,
             weak=bool(current.weak) if current else False,
             emergency=bool(current.is_emergency_override) if current else False,
             now=now,
+            detail_block=self.prediction_detail(
+                current, result, risk=risk, reasoning=reasoning
+            ),
+        )
+
+    def prediction_detail(
+        self,
+        signal: FrozenSignal | None,
+        result: FormulaResult | None,
+        *,
+        risk: dict | None = None,
+        reasoning: dict | None = None,
+    ) -> dict:
+        """Every number behind the side, grouped the way a trader would ask.
+
+        Category scores, the ten strongest supporters and opponents with their
+        values and categories, the arithmetic of the confidence, the level
+        geometry in bps and in currency, the microsecond picture of the tape,
+        the per-formula history statistics, the agent spread and the brain
+        read-out.  This is the "increase details" ask, made concrete.
+        """
+        from backend.formulas.engine import ALL_FORMULAS
+
+        values = dict(result.values) if result is not None else {}
+        stats = dict(result.stats) if result is not None else {}
+        micro = dict(result.micro) if result is not None else {}
+        directional = self._directional_map()
+        consensus = (reasoning or {}).get("consensus") or {}
+        supporters = list(consensus.get("up_names") or [])
+        opponents = list(consensus.get("down_names") or [])
+
+        def row(name: str) -> dict:
+            entry = stats.get(name, {})
+            spec = next((s for s in ALL_FORMULAS if s.name == name), None)
+            return {
+                "name": name,
+                "category": (spec.category if spec else ""),
+                "value": round(float(values.get(name, 0.0)), 6),
+                "zscore": entry.get("zscore"),
+                "percentile": entry.get("percentile"),
+                "mean": entry.get("mean"),
+                "samples": entry.get("samples"),
+            }
+
+        # Category scores: the mean of the signed values in each category, so a
+        # reader can see *where* the agreement comes from.
+        category_scores: dict[str, dict] = {}
+        for spec in ALL_FORMULAS:
+            value = float(values.get(spec.name, 0.0))
+            bucket = category_scores.setdefault(
+                spec.category, {"category": spec.category, "count": 0, "sum": 0.0, "mean": 0.0, "directional": spec.directional}
+            )
+            bucket["count"] += 1
+            bucket["sum"] += value
+        for bucket in category_scores.values():
+            bucket["mean"] = round(bucket["sum"] / max(1, bucket["count"]), 6)
+            bucket["sum"] = round(bucket["sum"], 6)
+
+        # The arithmetic of the confidence, read straight off the fusion result.
+        contributions = (self.last_fusion or {}).get("contributions") or {}
+        parts = {
+            "fusion_confidence": round(float((signal.confidence if signal else 0.0)), 6),
+            "formula_consensus": consensus.get("score"),
+            "consensus_multiplier": (self.last_fusion or {}).get("consensus_multiplier"),
+            "calibration_multiplier": (self.last_fusion or {}).get("calibration_multiplier"),
+            "hedge_dampening": (self.last_fusion or {}).get("hedge_dampening"),
+            "degradation_level": int(self.degradation),
+            "contributions": {
+                key: value.get("score") if isinstance(value, dict) else value
+                for key, value in contributions.items()
+            },
+        }
+
+        levels = {
+            "entry": (risk or {}).get("entry"),
+            "take_profit": (risk or {}).get("take_profit"),
+            "stop_loss": (risk or {}).get("stop_loss"),
+            "tp_bps": (risk or {}).get("tp_bps"),
+            "sl_bps": (risk or {}).get("sl_bps"),
+            "rr": (risk or {}).get("rr"),
+            "volatility_bps": (risk or {}).get("volatility_bps"),
+            "distance_price": (
+                round(abs(float((risk or {}).get("take_profit", 0.0)) - float((risk or {}).get("entry", 0.0))), 6)
+                if (risk or {}).get("take_profit")
+                else None
+            ),
+            "note": (risk or {}).get("note"),
+        }
+
+        engine = {
+            "compute_us": int(result.total_us) if result is not None else 0,
+            "compute_ms": round(result.total_ms, 3) if result is not None else 0.0,
+            "per_formula_us": dict(result.timings_us) if result is not None else {},
+            "publish_latency_us": self.publish_latency_us,
+            "tick_interval_us": micro.get("mean_interval_us"),
+            "resolution_us": micro.get("resolution_us"),
+            "history_samples": max((s.get("samples", 0) for s in stats.values()), default=0),
+        }
+
+        agents = {}
+        if signal is not None:
+            # ``agent_results`` is the frozen tuple of (name, payload) pairs; the
+            # signal object exposes it as ``agent_dict()``.
+            for name, payload in dict(signal.agent_dict()).items():
+                if isinstance(payload, dict):
+                    agents[name] = {
+                        "decision": payload.get("decision"),
+                        "confidence": payload.get("confidence"),
+                        "status": payload.get("status"),
+                    }
+
+        return prediction_detail(
+            side=(signal.signal if signal else "·  ·  ·"),
+            category_scores=category_scores,
+            supporters=[row(name) for name in supporters[:10]],
+            opponents=[row(name) for name in opponents[:10]],
+            confidence_parts=parts,
+            levels=levels,
+            micro=micro,
+            stats={name: stats.get(name, {}) for name in sorted(stats)},
+            agreement={
+                "score": consensus.get("score"),
+                "voters": consensus.get("voters"),
+                "up": consensus.get("up"),
+                "down": consensus.get("down"),
+                "directional_formulas": len(directional),
+                "engine": engine,
+            },
+            agents=agents,
+            brain=self.brain_explain_payload(),
+            formula_count=len(values),
         )
 
     def _computed_wall(self, signal: FrozenSignal | None) -> float:
@@ -1393,7 +1574,7 @@ class CycleManager:
         if not self.prediction_is_stale(now=now):
             return False
         snapshot = self.market.freeze(
-            news_items=self.news.cache.latest(5),
+            news_items=self.news.cache.latest(30),
             drg_outcomes=self.outcomes.array(),
         )
         result = self.formulas.run(snapshot, self.asset)
@@ -1402,6 +1583,7 @@ class CycleManager:
         self.last_formula_result = result
         self.published_computed_at = time.time()
         self.published_compute_ms = float(result.total_ms)
+        self.published_compute_us = int(result.total_us)
         self._pending_vol_bps = realized_volatility_bps(snapshot, self.asset)
         await self.broadcast(
             {
@@ -1486,6 +1668,17 @@ class CycleManager:
             "window_started_at_ms": int(round(started * 1000)),
             "window_ends_at_ms": int(round(ends * 1000)),
             "server_time_ms": int(round(moment * 1000)),
+            # Microsecond truth for the same instants: a 60-second window with a
+            # 0.9 ms publication latency is not the same thing as one that
+            # started late, and only the µs fields can tell the difference.
+            "window_started_at_us": int(round(started * 1e6)),
+            "window_ends_at_us": int(round(ends * 1e6)),
+            "server_time_us": int(round(moment * 1e6)),
+            "remaining_us": int(round(remaining * 1e6)),
+            "elapsed_us": int(round(max(0.0, moment - started) * 1e6)),
+            "publish_latency_us": int(self.publish_latency_us),
+            "engine_compute_us": int(self.published_compute_us),
+            "snapshot_us": int(self.snapshot_us),
             "seconds_remaining": round(remaining, 3),
             "seconds_elapsed": round(max(0.0, moment - started), 3),
             "cycle_id": self.stats.cycle_number,
@@ -1645,12 +1838,3 @@ class CycleManager:
             log.debug("could not restore formula state: %s", exc)
 
 
-async def run_cycle_manager(manager: CycleManager) -> None:
-    """Convenience coroutine for tests and scripts."""
-    await manager.start()
-    manager.mark_started()
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    finally:
-        await manager.stop()

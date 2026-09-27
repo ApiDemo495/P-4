@@ -113,7 +113,9 @@ class L2Buffer:
     ``core/frozen_snapshot.py`` for why that is necessary.
     """
 
-    SPREAD_HISTORY = 900
+    #: Spread observations kept for SED's elasticity regression (6x the
+    #: specification's minimum, matching the rest of the data multiplier).
+    SPREAD_HISTORY = 900 * cfg.DATA_MULTIPLIER
 
     def __init__(self) -> None:
         self.current = empty_book()

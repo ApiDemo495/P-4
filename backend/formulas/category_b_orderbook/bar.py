@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from backend.core import config as cfg
+
 from backend.formulas._util import EPS, finite
 
 NAME = "BAR"
@@ -47,7 +49,7 @@ class State:
 
 
 def _side_total(book: np.ndarray, side: int, levels: int) -> float:
-    if book is None or book.shape != (2, 20, 2):
+    if book is None or book.shape != (2, cfg.L2_DEPTH_LEVELS, 2):
         return 0.0
     return float(np.sum(book[side, :levels, 1]))
 

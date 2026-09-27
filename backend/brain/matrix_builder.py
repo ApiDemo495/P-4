@@ -38,10 +38,6 @@ def empty_matrix() -> np.ndarray:
     return np.zeros((gc.N_NODES, gc.N_NODES), dtype=np.float64)
 
 
-def set_edge(matrix: np.ndarray, src: int, dst: int, weight: float) -> None:
-    matrix[src, dst] = float(weight)
-
-
 def scale_to_unit(matrix: np.ndarray) -> np.ndarray:
     """Divide by max |weight| so every entry lies in [-1, 1]."""
     peak = float(np.max(np.abs(matrix))) if matrix.size else 0.0
