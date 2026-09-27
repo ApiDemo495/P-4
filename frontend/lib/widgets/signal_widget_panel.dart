@@ -151,6 +151,10 @@ class SignalWidgetPanel extends StatelessWidget {
           _HorizonLine(state: state),
           const SizedBox(height: 3),
           _MicroLine(state: state),
+          const SizedBox(height: 3),
+          // Round J: the crowd's dominant emotion, live, next to the side it
+          // is pushing.  The full read-out is the Crowd Emotion panel.
+          _CrowdLine(state: state),
           const SizedBox(height: 4),
           _PredictionDetailToggle(state: state),
           const SizedBox(height: 6),
@@ -890,6 +894,63 @@ class _MicroLine extends StatelessWidget {
   }
 }
 
+class _CrowdLine extends StatelessWidget {
+  const _CrowdLine({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final live = state.crowd.live;
+    final top = live.dominant;
+    if (!live.hasData || top == null) {
+      return const Text(
+        'crowd — measuring the tape…',
+        style: TextStyle(color: AppTheme.textMuted, fontSize: 11, fontFamily: 'mono'),
+      );
+    }
+    final color = top.tone == 'negative'
+        ? AppTheme.sell
+        : top.tone == 'positive'
+            ? AppTheme.buy
+            : AppTheme.hold;
+    final manipulation = live.manipulation;
+    final held = live.heldSeconds >= 60
+        ? '${live.heldSeconds ~/ 60}m'
+        : '${live.heldSeconds.toStringAsFixed(0)} s';
+    return Row(
+      children: [
+        Container(
+          width: 9,
+          height: 9,
+          decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: RichText(
+            overflow: TextOverflow.ellipsis,
+            text: TextSpan(
+              style: const TextStyle(
+                  color: AppTheme.textMuted, fontSize: 11.5, fontFamily: 'mono'),
+              children: [
+                const TextSpan(text: 'crowd now: '),
+                TextSpan(
+                  text: '${top.label} ${top.percent.toStringAsFixed(0)}%',
+                  style: TextStyle(color: color, fontWeight: FontWeight.w700),
+                ),
+                TextSpan(
+                  text: ' · ${top.dominantTimescale} · held $held'
+                      '${manipulation.score >= 0.45 ? ' · ${(manipulation.score * 100).toStringAsFixed(0)}% ${manipulation.kind}' : ''}',
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 String _formatUs(int us) {
   if (us <= 0) return '—';
   if (us < 1000) return '$us µs';
@@ -973,6 +1034,26 @@ class _PredictionDetailToggleState extends State<_PredictionDetailToggle> {
                 ),
               ),
             ),
+            // Round J: what the crowd was feeling when this side was locked,
+            // and whether that was strong enough to dampen the confidence.
+            if (detail.hasCrowd)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  'crowd at lock time: ${detail.crowdDominant} '
+                  '${detail.crowdPercent.toStringAsFixed(0)}% on the '
+                  '${detail.crowdTimescale} timescale · temperature '
+                  '${detail.crowdToneBias >= 0 ? '+' : ''}${detail.crowdToneBias.toStringAsFixed(2)} · '
+                  'manipulation ${(detail.crowdManipulation * 100).toStringAsFixed(0)}% '
+                  '(${detail.crowdManipulationKind})'
+                  '${detail.crowdDampening < 0.999 ? ' · confidence x${detail.crowdDampening.toStringAsFixed(2)}' : ' · no crowd dampening'}',
+                  style: const TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 10.5,
+                    fontFamily: 'mono',
+                  ),
+                ),
+              ),
           ],
         ],
       ],

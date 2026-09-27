@@ -38,6 +38,7 @@ from backend.core.clock import WorldClock
 from backend.core.direction import describe as describe_direction
 from backend.core.errors import ComponentStatus, DegradationLevel
 from backend.core.prediction import build as build_prediction
+from backend.core.emotions import EmotionMonitor, analyze as analyze_emotions, compact as compact_emotions
 from backend.core.prediction import detail as prediction_detail
 from backend.core.prediction import build_reasoning, consensus
 from backend.core.frozen_snapshot import FrozenMarketSnapshot
@@ -149,6 +150,19 @@ class CycleManager:
         #: intermediate numbers (traces) behind each one, not just the value.
         self.last_live_result: FormulaResult | None = None
         self.last_fusion: dict = {}
+        #: The crowd's emotions, measured continuously on the live tape (the
+        #: user's "which emotion is dominant, live" ask).  Sampled on its own
+        #: timer so the panel moves between PULSE marks too.
+        self.emotions = EmotionMonitor(
+            hub=self.market,
+            asset=self.asset,
+            news_provider=lambda: self.news.cache.latest(30),
+            interval_seconds=self.settings.emotion_interval_seconds,
+            history_size=self.settings.emotion_history_size,
+        )
+        #: The same measurement taken on the *frozen* snapshot at lock time, so
+        #: the emotion that shaped a signal cannot change afterwards.
+        self.emotion_locked: dict = {}
         #: The "thin edge" note (replaces the Section 10.2 HOLD box).  Present
         #: only when the side came from the tie-break ladder.
         self.conviction_note: dict | None = None
@@ -214,6 +228,7 @@ class CycleManager:
             asyncio.create_task(self._cycle_loop(), name="cycle-loop"),
             asyncio.create_task(self.clock.run(), name="clock"),
             asyncio.create_task(self._flash_watch(), name="flash-watch"),
+            asyncio.create_task(self._emotion_loop(), name="emotions"),
         ]
         log.info(
             "Cycle manager running: period=%.1fs, world_clock=%s",
@@ -388,6 +403,17 @@ class CycleManager:
             log.info("Asset switch applied at window boundary: %s -> %s", self.asset, self.pending_asset)
             self.asset = self.pending_asset
             self.pending_asset = None
+            # The crowd belongs to an asset, so the monitor follows the switch -
+            # and the new tape starts its own history rather than inheriting the
+            # old asset's mood.
+            self.emotions.asset = self.asset
+            self.emotions.tracker.asset = self.asset
+            self.emotions.tracker.history.clear()
+            self.emotions.tracker.emotions = {}
+            self.emotions.tracker.last_dominant = ""
+            self.emotions.tracker.samples = 0
+            self.emotions.last = {}
+            self.emotion_locked = {}
 
         self.lock.new_cycle(cycle)
         self.window_valid_from = deadline_wall
@@ -530,6 +556,7 @@ class CycleManager:
             drg_outcomes=self.outcomes.array(),
         )
         self._pending_vol_bps = realized_volatility_bps(snapshot, self.asset)
+        self.emotion_locked = analyze_emotions(snapshot, self.asset).to_dict()
         formula_result = self.formulas.run(snapshot, self.asset)
         self.pending_formula_result = formula_result
         self.last_live_formulas = dict(formula_result.values)
@@ -561,6 +588,7 @@ class CycleManager:
             formula_consensus=agreement["score"],
             consensus_voters=agreement["voters"],
             recent_accuracy=self.accuracy_block(),
+            crowd=self.emotion_locked,
         )
         self.last_fusion = fusion.to_dict()
         self.conviction_note = fusion_module.conviction_note(fusion.direction, fusion.confidence)
@@ -639,6 +667,10 @@ class CycleManager:
         # it is the point where "analysis" officially begins.
         self.snapshot_us = now_us() - freeze_started_us
         self.last_snapshot = snapshot
+        # The crowd, measured on the frozen tape - the same immutable inputs the
+        # formulas see, so the reading that dampens this window's confidence is
+        # reproducible from the snapshot alone.
+        self.emotion_locked = analyze_emotions(snapshot, self.asset).to_dict()
         self.warnings = list(snapshot.warnings)
         self.degradation = self._compute_degradation(snapshot)
         await self.broadcast(
@@ -691,6 +723,7 @@ class CycleManager:
             formula_consensus=agreement["score"],
             consensus_voters=agreement["voters"],
             recent_accuracy=self.accuracy_block(),
+            crowd=self.emotion_locked,
         )
         self.last_fusion = fusion.to_dict()
         self.conviction_note = fusion_module.conviction_note(fusion.direction, fusion.confidence)
@@ -934,6 +967,7 @@ class CycleManager:
                             ),
                             "agents_status": self.agents_payload(),
                             "news_feed": self.news_payload(limit=30),
+                            "emotions": self.emotions_payload(),
                             "accuracy": self.accuracy_block(),
                             "brain_explain": self.brain_explain_payload(),
                         },
@@ -943,6 +977,73 @@ class CycleManager:
             raise
         except Exception as exc:  # noqa: BLE001
             log.debug("heartbeat stopped: %s", exc)
+
+    # ==================================================================
+    # Crowd emotions (the user's "which emotion is dominant" panel)
+    # ==================================================================
+    async def _emotion_loop(self) -> None:
+        """Score the live tape for emotions, several times a second.
+
+        The cadence is deliberately faster than the PULSE grid: the emotion
+        panel is the one reading that should move *between* the marks, because
+        the whole point of the module is that a crowd's mood changes on the
+        second.  Every sample is cheap (a few hundred microseconds over the
+        last 600 ticks) and purely read-only, so it cannot disturb the cycle.
+        """
+        interval = max(0.1, float(self.settings.emotion_interval_seconds))
+        while not self._stop.is_set():
+            try:
+                if self.market.tick_count(self.asset) >= 15:
+                    reading = self.emotions.sample()
+                    # Streamed as its own small message so the panel moves
+                    # between the PULSE marks.  The client has no timer of its
+                    # own for this - the backend is still the only schedule.
+                    await self.broadcast(
+                        {
+                            "type": "EMOTION",
+                            "data": {
+                                "cycle_number": self.stats.cycle_number,
+                                "asset": self.asset,
+                                "locked_side": (
+                                    self.lock.current_signal.signal
+                                    if self.lock.current_signal
+                                    else None
+                                ),
+                                "emotions": compact_emotions(reading),
+                                "dampening": {
+                                    "applied": (self.last_fusion or {}).get("crowd_adjustment", 1.0),
+                                    "note": (self.last_fusion or {}).get("crowd_note", ""),
+                                },
+                            },
+                        }
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - never take the engine down
+                self.emotions.errors += 1
+                log.debug("emotion sample failed: %s", exc)
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                raise
+
+    def emotions_payload(self) -> dict:
+        """The live emotion reading, plus the frozen one that shaped the signal.
+
+        Both are in every payload because the panel's job is to answer two
+        different questions at once: *what is the crowd feeling right now* and
+        *what was it feeling when this locked signal was computed*.
+        """
+        payload = self.emotions.payload()
+        payload["locked"] = self.emotion_locked or None
+        payload["dampening"] = {
+            "threshold": self.settings.emotion_dampen_threshold,
+            "max": self.settings.emotion_dampen_max,
+            "applied": (self.last_fusion or {}).get("crowd_adjustment", 1.0),
+            "note": (self.last_fusion or {}).get("crowd_note", ""),
+        }
+        payload["asset"] = self.asset
+        return payload
 
     # ==================================================================
     # Emergency handling
@@ -1173,6 +1274,7 @@ class CycleManager:
         payload["live_formulas"] = self.live_formulas_payload()
         payload["agents_status"] = self.agents_payload()
         payload["news_feed"] = self.news_payload(limit=30)
+        payload["emotions"] = self.emotions_payload()
         payload["accuracy"] = self.accuracy_block()
         payload["brain_explain"] = self.brain_explain_payload()
         if include_history:
@@ -1377,6 +1479,7 @@ class CycleManager:
             accuracy=self.accuracy_block(),
             window_seconds=self.settings.cycle_period_seconds,
             extra_against=extra_against,
+            crowd=self.emotion_locked,
         )
 
     def prediction_payload(self, signal: FrozenSignal | None = None,
@@ -1468,12 +1571,18 @@ class CycleManager:
 
         # The arithmetic of the confidence, read straight off the fusion result.
         contributions = (self.last_fusion or {}).get("contributions") or {}
+        crowd = self.emotion_locked or {}
+        crowd_emotions = crowd.get("emotions") or []
+        crowd_dominant = crowd.get("dominant") or {}
+        crowd_manipulation = crowd.get("manipulation") or {}
         parts = {
             "fusion_confidence": round(float((signal.confidence if signal else 0.0)), 6),
             "formula_consensus": consensus.get("score"),
             "consensus_multiplier": (self.last_fusion or {}).get("consensus_multiplier"),
             "calibration_multiplier": (self.last_fusion or {}).get("calibration_multiplier"),
             "hedge_dampening": (self.last_fusion or {}).get("hedge_dampening"),
+            "crowd_dampening": (self.last_fusion or {}).get("crowd_adjustment", 1.0),
+            "crowd_note": (self.last_fusion or {}).get("crowd_note", ""),
             "degradation_level": int(self.degradation),
             "contributions": {
                 key: value.get("score") if isinstance(value, dict) else value
@@ -1538,6 +1647,27 @@ class CycleManager:
             },
             agents=agents,
             brain=self.brain_explain_payload(),
+            crowd={
+                "available": bool(crowd.get("available")),
+                "dominant": crowd_dominant.get("label"),
+                "percent": crowd_dominant.get("percent"),
+                "timescale": crowd_dominant.get("dominant_timescale"),
+                "tone_bias": crowd.get("tone_bias"),
+                "read": crowd.get("read"),
+                "manipulation": crowd_manipulation.get("score"),
+                "manipulation_kind": crowd_manipulation.get("kind"),
+                "manipulation_note": crowd_manipulation.get("note"),
+                "emotions": [
+                    {
+                        "name": item.get("name"),
+                        "label": item.get("label"),
+                        "percent": item.get("percent"),
+                        "timescale": item.get("dominant_timescale"),
+                    }
+                    for item in crowd_emotions
+                ],
+                "drivers": crowd_dominant.get("drivers") or [],
+            },
             formula_count=len(values),
         )
 

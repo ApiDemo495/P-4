@@ -23,7 +23,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.api import routes_agents, routes_brain, routes_formulas, routes_news, routes_signals, state
+from backend.api import (
+    routes_agents,
+    routes_brain,
+    routes_emotions,
+    routes_formulas,
+    routes_news,
+    routes_signals,
+    state,
+)
 from backend.core import config as cfg
 from backend.core.cycle_manager import CycleManager
 
@@ -120,6 +128,7 @@ app.include_router(routes_formulas.router)
 app.include_router(routes_agents.router)
 app.include_router(routes_news.router)
 app.include_router(routes_brain.router)
+app.include_router(routes_emotions.router)
 
 
 @app.get("/api/health")

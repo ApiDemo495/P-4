@@ -174,6 +174,7 @@ def build_reasoning(
     accuracy: dict | None = None,
     window_seconds: float = 15.0,
     extra_against: list[str] | None = None,
+    crowd: dict | None = None,
 ) -> dict:
     """Compose the plain-English case for (and against) the side.
 
@@ -333,6 +334,44 @@ def build_reasoning(
             "text": f"News sentiment {_fmt(float(sentiment or 0.0))} — no headline moved the tape.",
         })
 
+    # 5b. The crowd -----------------------------------------------------------------
+    # The user's premise: a one-minute market is easily pushed by retail
+    # emotion.  The emotion engine's reading of the frozen tape is therefore
+    # part of the case - it supports the side when the crowd's temperature
+    # leans the same way, and it argues against it when the minute looks
+    # crowded or manipulated.
+    crowd = crowd or {}
+    crowd_top = crowd.get("dominant") or {}
+    if crowd.get("available") and crowd_top.get("label"):
+        tone_bias = float(crowd.get("tone_bias") or 0.0)
+        manipulation = crowd.get("manipulation") or {}
+        score = float(manipulation.get("score") or 0.0)
+        leans_with = (tone_bias >= 0) == (side == "BUY") if abs(tone_bias) >= 0.1 else None
+        text = (
+            f"Crowd: {str(crowd_top.get('label')).lower()} is dominant "
+            f"({float(crowd_top.get('percent') or 0.0):.0f}% on the "
+            f"{crowd_top.get('dominant_timescale') or 'window'} timescale), temperature "
+            f"{_fmt(tone_bias, 2)}"
+        )
+        if score >= 0.45:
+            text += (
+                f" — the minute looks {manipulation.get('kind') or 'crowded'} "
+                f"({score:.0%} manipulation), so the confidence was sized down"
+            )
+            supports = False
+        elif leans_with is None:
+            text += " — the crowd is neither afraid nor chasing"
+            supports = True
+        else:
+            text += f" — the crowd's temperature {'leans with' if leans_with else 'leans against'} the {side} side"
+            supports = bool(leans_with)
+        bullets.append({
+            "kind": "crowd",
+            "weight": None,
+            "supports": supports,
+            "text": text + ".",
+        })
+
     # 6. Levels --------------------------------------------------------------------
     if risk.get("tradeable") and risk.get("take_profit"):
         bullets.append({
@@ -450,6 +489,7 @@ def detail(
     agreement: dict | None = None,
     agents: dict | None = None,
     brain: dict | None = None,
+    crowd: dict | None = None,
     formula_count: int = 0,
 ) -> dict:
     """Everything behind the side, at the resolution the engine produced it.
@@ -457,9 +497,9 @@ def detail(
     The user's ask was for more detail, so this is deliberately generous: the
     per-category scores, the strongest supporters *and* opponents with their
     values and categories, the arithmetic that produced the confidence
-    (base x consensus x calibration x hedge), the level geometry in bps and in
-    currency, the microsecond picture of the tape, and the per-formula
-    statistics of the window.
+    (base x consensus x calibration x hedge x crowd), the level geometry in bps
+    and in currency, the microsecond picture of the tape, the per-formula
+    statistics of the window, and the emotion reading the crowd term came from.
     """
     return {
         "side": side,
@@ -474,6 +514,9 @@ def detail(
         "agreement": dict(agreement or {}),
         "agents": dict(agents or {}),
         "brain": dict(brain or {}),
+        # What the crowd was feeling when this side was locked, and whether that
+        # feeling was strong enough to dampen the confidence.
+        "crowd": dict(crowd or {}),
     }
 
 

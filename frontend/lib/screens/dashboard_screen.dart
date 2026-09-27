@@ -5,6 +5,7 @@ import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/agent_list.dart';
 import '../widgets/cycle_timer.dart';
+import '../widgets/emotion_panel.dart';
 import '../widgets/hedge_dashboard.dart';
 import '../widgets/news_card.dart';
 import '../widgets/signal_panel.dart';
@@ -136,6 +137,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
         padding: const EdgeInsets.all(14),
         children: [
           SignalWidgetPanel(state: state),
+          const SizedBox(height: 12),
+          // Round J: which emotion the crowd is feeling, live, right under
+          // the prediction it is pushing.
+          EmotionPanel(state: state),
           const SizedBox(height: 12),
           SignalPanel(state: state),
           const SizedBox(height: 12),

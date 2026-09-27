@@ -568,3 +568,89 @@ plus `tools/dead_code.py` itself as the standing gate.
 **Escape hatch.** `DATA_MULTIPLIER` is one constant - set it to 1 for the
 draft's original buffer sizes. `BASE_HORIZON_SECONDS` is the forecast window;
 `CYCLE_SECONDS` still sets the real window.
+
+## J — The crowd's emotions, from microseconds to minutes
+
+**Asked for, verbatim.** *"shouldn't we should have emotions, it would be great
+if we consider market sentiments and peoples emotions every micro seconds to
+normal seconds. Since I realised 60 second timeframe market easily get
+manipulated by retailers emotions. Emotions could be any fear, Happy,
+withdrawal and another 4-5 emotions. Also tell me in ui which emotion it is
+more in live condition."*
+
+The premise is right, and it is the premise of the whole module: a 60-second
+window is short enough that the tape is often a crowd acting on a feeling
+rather than on information. So the engine now reads the crowd continuously and
+lets the reading shape the prediction - never the side, always the size.
+
+**1. Eight named emotions, each on five timescales.**
+`backend/core/emotions.py` scores `FEAR`, `PANIC`, `CAPITULATION`
+(withdrawal), `DENIAL`, `HOPE`, `EUPHORIA` (happy), `FOMO` and `COMPLACENCY`,
+each an intensity in [0, 1], each decomposed over `micro` (µs–ms: inter-tick
+intervals, jitter, tick surge, quote lifetime), `seconds` (1–15 s: velocity,
+aggression, spread), `window` (the 60 s: range position, drawdown, volume
+climax), `minutes` (1-minute candles) and `news` (headline sentiment and
+flow). Every emotion is a weighted mean of legible ramps, and the three numbers
+behind it are printed as *drivers*, so the panel can say *why*.
+
+**2. The scales are the tape's own.** A move counts in multiples of the tape's
+typical move over the same horizon (measured over *time*, tick against the
+last price at or before the horizon, so bursts and gaps cannot make the scale
+and the return disagree). "40 bps in a second" is a panic on a dead tape and a
+rounding error on a violent one; measuring the crowd on an absolute scale
+would have measured volatility, not surprise.
+
+**3. A manipulation read.** The same features produce a 0–1 *crowding* score
+with a named mechanism - retail chase (herding: side skew and same-side runs),
+stop hunt (a wick beyond the recent extreme that snaps back), whipsaw
+(direction flips), book imbalance - plus a note and the evidence.
+
+**4. Continuity, not flicker.** `EmotionTracker` smooths every emotion with a
+fast-attack / slow-release EMA, keeps a five-minute history, and elects the
+*dominant* emotion with hysteresis: a challenger must lead by 4 points for two
+consecutive samples before the headline switches. The bars stay honest; only
+the headline waits for the crowd to mean it. The panel therefore shows *how
+long* the emotion has held and how many times it switched this minute.
+
+**5. It shapes the prediction.** `fusion.fuse()` takes the crowd reading of the
+*frozen* snapshot (the same immutable inputs the formulas see, so the reading
+that dampened a window is reproducible from the snapshot alone). Above the
+threshold (`emotion_dampen_threshold = 0.45`) the confidence is multiplied by
+`1 − 0.25 × excess` (`emotion_dampen_max`); the side is never touched. The
+reasoning gains a `crowd` bullet, the prediction detail a `crowd` block and a
+`crowd_dampening` confidence part.
+
+**6. It is live.** The cycle manager samples the live tape every
+`EMOTION_INTERVAL_SECONDS` (0.5 s) on its own task and streams a compact
+`EMOTION` message; every HELLO / SIGNAL / PULSE carries the full block
+(`emotions`, including `locked` - the reading at lock time - and `dampening`).
+`GET /api/emotions` and `GET /api/emotions/history` expose the same. The
+client still has exactly one timer (the safety net): the backend is the
+schedule, the browser only draws.
+
+**7. The UI says which emotion is dominant, live.** The dashboard's **Crowd
+Emotion** card: the dominant emotion big and coloured by tone, its intensity,
+the timescale it lives on, how long it has held, the runner-up, the one-line
+read with a size hint, the eight ranked bars, the signed temperature gauge
+(fear ← 0 → euphoria), the manipulation meter with its kind and note, the
+five-timescale strip for the dominant emotion, and *what the crowd was feeling
+when the locked signal was computed*. An inline `crowd now:` line sits under
+the prediction itself. The Flutter client mirrors all of it (`EmotionPanel`,
+`_CrowdLine`, models in `signal.dart`).
+
+**A Flutter bug this round found and fixed.** The HELLO handler passed
+`event.data['signal']` - the direction *string* - to `_applySignal`, which
+ignores non-maps, so the Flutter panel stayed empty until the next minute
+boundary. HELLO is a flat signal snapshot and is now applied whole, like a
+SIGNAL.
+
+**Verification.** `backend/tests/test_emotions.py` (25 tests: vocabulary, the
+right emotion on the right synthetic tape, tape-relative scales, manipulation
+bounds, the tracker's smoothing / hold time / hysteresis, the fusion dampener,
+the reasoning bullet, the live loop, the `EMOTION` stream cadence, the payload
+block, the frozen-snapshot reproducibility, the routes, and the two UIs);
+`tools/dashboard_payload_check.js` (+14 live checks); the full suite is 140.
+
+**Escape hatches.** `EMOTION_INTERVAL_SECONDS` (default 0.5),
+`EMOTION_HISTORY_SIZE` (720 samples), and the two dampening constants in
+`config.Settings`.

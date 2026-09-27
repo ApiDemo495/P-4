@@ -598,3 +598,94 @@ th { color: var(--muted); font-weight: 600; }
   font-family: var(--mono); font-size: 11.5px;
   background: #0d1420; padding: 1px 5px; border-radius: 4px;
 }
+
+/* ============================ Round J: crowd emotion ============================
+   Which emotion is dominant, live.  Bars are coloured by tone (fear family red,
+   chase family green, calm grey), the temperature gauge is signed, and every
+   change is a width/transform transition - no relayout, no overlay. */
+.crowd-line {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12px; margin-top: 5px; font-family: var(--mono);
+}
+.crowd-line b { color: var(--text); }
+.crowd-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px;
+  background: #33415c; box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+  transition: background .35s ease;
+}
+.crowd-dot.negative { background: var(--red); animation: crowd-pulse 1.6s ease-in-out infinite; }
+.crowd-dot.positive { background: var(--green); animation: crowd-pulse 1.6s ease-in-out infinite; }
+.crowd-dot.neutral { background: #5b6b8a; }
+@keyframes crowd-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, .18); }
+  50%      { box-shadow: 0 0 0 5px rgba(255, 255, 255, 0); }
+}
+
+.emotion-card .card-head h2 .muted { text-transform: none; letter-spacing: 0; margin-left: 6px; }
+.emotion-grid {
+  display: grid; grid-template-columns: 1.1fr 1.3fr 1fr; gap: 18px; align-items: start;
+}
+.emotion-hero { min-width: 0; }
+.emotion-dominant {
+  font-size: 34px; font-weight: 800; letter-spacing: .01em; line-height: 1.1;
+  margin-top: 4px; transition: color .35s ease;
+}
+.emotion-dominant.negative { color: var(--red); }
+.emotion-dominant.positive { color: var(--green); }
+.emotion-dominant.neutral { color: #9fb4d8; }
+.emotion-dominant.pop { animation: signal-pop .45s cubic-bezier(.2, .9, .25, 1.3); }
+.emotion-dominant-sub { font-size: 12px; color: var(--muted); margin-top: 4px; font-family: var(--mono); }
+.emotion-held { font-size: 12px; margin-top: 6px; font-family: var(--mono); color: #9fb4d8; }
+.emotion-held b { color: var(--text); }
+.emotion-read { font-size: 12.5px; margin-top: 10px; line-height: 1.5; color: #cbd7ee; }
+.emotion-drivers { list-style: none; padding: 0; margin: 8px 0 0; font-size: 11px; color: var(--muted); font-family: var(--mono); }
+.emotion-drivers li::before { content: "· "; color: #5b6b8a; }
+
+.emotion-bars { display: grid; gap: 7px; min-width: 0; }
+.emotion-row {
+  display: grid; grid-template-columns: 96px 1fr 44px 58px; gap: 8px; align-items: center;
+  font-size: 12px;
+}
+.emotion-row .name { color: #cbd7ee; font-weight: 600; }
+.emotion-row .name.dominant { color: var(--text); }
+.emotion-row .name .fam { display: block; font-size: 9.5px; color: var(--muted); font-weight: 400; text-transform: uppercase; letter-spacing: .05em; }
+.emotion-row .bar { height: 8px; }
+.emotion-row .bar-fill.positive { background: var(--green); }
+.emotion-row .bar-fill.negative { background: var(--red); }
+.emotion-row .bar-fill.neutral { background: #5b6b8a; }
+.emotion-row .pct { font-family: var(--mono); text-align: right; color: var(--text); }
+.emotion-row .band { font-family: var(--mono); font-size: 10px; color: var(--muted); text-align: right; }
+
+.emotion-side { min-width: 0; }
+.tone-gauge {
+  position: relative; height: 10px; border-radius: 999px; margin-top: 6px;
+  background: linear-gradient(90deg, var(--red) 0%, #33415c 50%, var(--green) 100%);
+  opacity: .9;
+}
+.tone-zero { position: absolute; left: 50%; top: -3px; width: 1px; height: 16px; background: #cbd7ee; opacity: .6; }
+.tone-marker {
+  position: absolute; top: -4px; left: 50%; width: 18px; height: 18px; margin-left: -9px;
+  border-radius: 50%; background: var(--text); border: 2px solid var(--bg);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, .25);
+  transition: left .35s ease;
+}
+.tone-value, .manip-value { font-family: var(--mono); font-size: 12px; margin-top: 8px; }
+.manip-value b { color: var(--text); }
+.manip-note { font-size: 11px; margin-top: 3px; line-height: 1.4; }
+.timescale-strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; margin-top: 6px; }
+.timescale-cell {
+  border: 1px solid var(--line); border-radius: 6px; padding: 5px 4px; text-align: center;
+  font-family: var(--mono); font-size: 10px; color: var(--muted);
+  background: #0d1420;
+}
+.timescale-cell b { display: block; font-size: 12px; color: var(--text); margin-top: 2px; }
+.timescale-cell.peak { border-color: #2f7d5c; color: #7fe0b5; }
+.timescale-cell.peak.negative { border-color: #7f1d1d; color: #fca5a5; }
+.emotion-locked { font-size: 12px; margin-top: 6px; font-family: var(--mono); color: #9fb4d8; line-height: 1.6; }
+.emotion-locked b { color: var(--text); }
+.emotion-locked .muted { display: block; }
+
+@media (max-width: 980px) {
+  .emotion-grid { grid-template-columns: 1fr; }
+  .emotion-row { grid-template-columns: 84px 1fr 40px 52px; }
+}

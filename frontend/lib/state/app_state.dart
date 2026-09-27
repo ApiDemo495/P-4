@@ -83,6 +83,12 @@ class AppState extends ChangeNotifier {
   MicroReading lastMicro = MicroReading.none;
   double totalFormulaMs = 0.0;
 
+  /// Round J: the crowd's emotions.  [crowd.live] is refreshed by the EMOTION
+  /// stream (twice a second, on the backend's schedule), [crowd.locked] is the
+  /// reading taken on the frozen snapshot when the current signal was locked.
+  CrowdEmotions crowd = CrowdEmotions.none;
+  String? _lastEmotionDominant;
+
   /// The tape as the engine measured it: the live formula pass if one has run,
   /// otherwise whatever the prediction carried.
   MicroReading get micro =>
@@ -169,6 +175,7 @@ class AppState extends ChangeNotifier {
     await refreshHistory();
     await refreshOutcomes();
     await refreshTimings();
+    await refreshEmotions();
 
     _subscription = socket.events.listen(_onEvent);
     socket.connect();
@@ -229,10 +236,14 @@ class AppState extends ChangeNotifier {
         connected = false;
         break;
       case 'HELLO':
+        // The HELLO payload is the complete snapshot - a flat signal payload
+        // whose own `signal` key is the *direction* - so it is applied whole,
+        // exactly like a SIGNAL, and every panel paints from it at once.
         asset = (event.data['asset'] ?? asset).toString();
         pendingAsset = event.data['pending_asset']?.toString();
         _applyWindow(event.data['window'] ?? _statusWindow(event.data['status']));
-        _applySignal(event.data['signal']);
+        _applySignal(event.data);
+        _applySnapshot(event.data, includeHistory: true);
         _applyStatus(event.data['status']);
         refreshWiring();
         refreshBrainExplain();
@@ -276,6 +287,18 @@ class AppState extends ChangeNotifier {
         final outcome = SignalOutcome.fromJson(event.data);
         outcomes = [outcome, ...outcomes].take(12).toList();
         winRate = outcome.winRate;
+        break;
+      case 'EMOTION':
+        // The crowd's mood, streamed on the backend's cadence.  Only the
+        // emotion state changes; the locked panels and the countdown are not
+        // touched, so nothing else on screen moves.
+        final reading = event.data['emotions'];
+        if (reading is Map) {
+          _applyLiveEmotion(
+            EmotionReading.fromJson(Map<String, dynamic>.from(reading)),
+            dampening: (event.data['dampening'] as Map?)?.cast<String, dynamic>(),
+          );
+        }
         break;
       case 'ASSET_SWITCH':
         pendingAsset = event.data['pending']?.toString();
@@ -339,6 +362,11 @@ class AppState extends ChangeNotifier {
     if (newsFeed is Map) {
       news = NewsSnapshot.fromJson(Map<String, dynamic>.from(newsFeed));
     }
+    final emotions = data['emotions'];
+    if (emotions is Map) {
+      final block = CrowdEmotions.fromJson(Map<String, dynamic>.from(emotions));
+      _applyLiveEmotion(block.live, replaceWith: block);
+    }
     final agents = data['agents_status'];
     if (agents is Map) {
       agentStatus = Map<String, dynamic>.from(agents);
@@ -387,6 +415,34 @@ class AppState extends ChangeNotifier {
             (outcomesPayload['count'] as num?)?.toInt() ?? outcomeCount;
       }
     }
+  }
+
+  /// Adopt a live emotion reading.  A change of the dominant emotion is a
+  /// light selection tick - felt, not stared at - and never more than that:
+  /// the crowd's mood is context for the side, not a signal of its own.
+  void _applyLiveEmotion(
+    EmotionReading reading, {
+    Map<String, dynamic>? dampening,
+    CrowdEmotions? replaceWith,
+  }) {
+    crowd = replaceWith ?? crowd.withLive(reading, dampening: dampening);
+    final dominant = crowd.live.dominant?.name;
+    if (crowd.live.hasData &&
+        _lastEmotionDominant != null &&
+        dominant != _lastEmotionDominant) {
+      HapticFeedback.selectionClick();
+    }
+    if (crowd.live.hasData) _lastEmotionDominant = dominant;
+  }
+
+  /// REST fallback for the emotion block (boot, and while the socket is down).
+  Future<void> refreshEmotions() async {
+    final json = await api.emotions();
+    if (json != null && json['available'] == true) {
+      final block = CrowdEmotions.fromJson(json);
+      _applyLiveEmotion(block.live, replaceWith: block);
+    }
+    notifyListeners();
   }
 
   void _applySignal(dynamic raw) {
@@ -643,6 +699,7 @@ class AppState extends ChangeNotifier {
     await refreshAgents();
     await refreshNews();
     await refreshOutcomes();
+    await refreshEmotions();
     await refreshBrainExplain();
     if (isEmergency) await refreshBrain();
   }

@@ -461,6 +461,14 @@ class PredictionDetail {
     this.resolutionUs = 0,
     this.historySamples = 0,
     this.micro = MicroReading.none,
+    this.crowdDominant = '',
+    this.crowdPercent = 0.0,
+    this.crowdTimescale = '',
+    this.crowdToneBias = 0.0,
+    this.crowdManipulation = 0.0,
+    this.crowdManipulationKind = '',
+    this.crowdRead = '',
+    this.crowdDampening = 1.0,
   });
 
   final String side;
@@ -476,7 +484,20 @@ class PredictionDetail {
   final int historySamples;
   final MicroReading micro;
 
+  /// What the crowd was feeling when this side was locked (Round J).
+  final String crowdDominant;
+  final double crowdPercent;
+  final String crowdTimescale;
+  final double crowdToneBias;
+  final double crowdManipulation;
+  final String crowdManipulationKind;
+  final String crowdRead;
+
+  /// The confidence multiplier the crowd produced (1.0 = no dampening).
+  final double crowdDampening;
+
   bool get hasData => side.isNotEmpty || supporters.isNotEmpty;
+  bool get hasCrowd => crowdDominant.isNotEmpty;
 
   static const PredictionDetail none = PredictionDetail();
 
@@ -493,6 +514,8 @@ class PredictionDetail {
   factory PredictionDetail.fromJson(Map<String, dynamic> json) {
     final engine = (json['agreement'] as Map?)?['engine'] as Map?;
     final micro = json['micro'];
+    final crowd = json['crowd'] as Map?;
+    final parts = (json['confidence_parts'] as Map?) ?? const {};
     return PredictionDetail(
       side: _s(json['side']),
       formulasEvaluated:
@@ -509,8 +532,244 @@ class PredictionDetail {
       micro: micro is Map
           ? MicroReading.fromJson(Map<String, dynamic>.from(micro))
           : MicroReading.none,
+      crowdDominant: _s(crowd?['dominant']),
+      crowdPercent: _d(crowd?['percent']),
+      crowdTimescale: _s(crowd?['timescale']),
+      crowdToneBias: _d(crowd?['tone_bias']),
+      crowdManipulation: _d(crowd?['manipulation']),
+      crowdManipulationKind: _s(crowd?['manipulation_kind']),
+      crowdRead: _s(crowd?['read']),
+      crowdDampening: _d(parts['crowd_dampening'], 1.0),
     );
   }
+}
+
+/// One of the crowd's eight emotions, with its intensity on each timescale.
+///
+/// Mirrors ``EmotionScore.to_dict()`` in ``backend/core/emotions.py``.
+class EmotionScore {
+  const EmotionScore({
+    this.name = '',
+    this.label = '',
+    this.tone = 'neutral',
+    this.family = '',
+    this.intensity = 0.0,
+    this.byTimescale = const {},
+    this.dominantTimescale = '',
+    this.drivers = const [],
+  });
+
+  final String name;
+  final String label;
+
+  /// `negative` (fear family), `positive` (chase family) or `neutral` (calm).
+  final String tone;
+  final String family;
+
+  /// 0 … 1.
+  final double intensity;
+
+  /// micro / seconds / window / minutes / news → 0 … 1.
+  final Map<String, double> byTimescale;
+  final String dominantTimescale;
+  final List<String> drivers;
+
+  double get percent => intensity * 100.0;
+
+  factory EmotionScore.fromJson(Map<String, dynamic> json) => EmotionScore(
+        name: _s(json['name']),
+        label: _s(json['label'], _s(json['name'])),
+        tone: _s(json['tone'], 'neutral'),
+        family: _s(json['family']),
+        intensity: _d(json['intensity'], _d(json['percent']) / 100.0),
+        byTimescale: ((json['by_timescale'] as Map?) ?? const {})
+            .map((key, value) => MapEntry(key.toString(), _d(value))),
+        dominantTimescale: _s(json['dominant_timescale']),
+        drivers: ((json['drivers'] as List?) ?? const [])
+            .map((item) => item.toString())
+            .toList(),
+      );
+}
+
+/// The manipulation signature of the minute: how crowded the tape looks and by
+/// which mechanism (retail chase, stop hunt, whipsaw, book imbalance).
+class ManipulationRead {
+  const ManipulationRead({
+    this.score = 0.0,
+    this.kind = 'none',
+    this.note = '',
+    this.components = const {},
+    this.evidence = const [],
+  });
+
+  final double score;
+  final String kind;
+  final String note;
+  final Map<String, double> components;
+  final List<String> evidence;
+
+  static const ManipulationRead none = ManipulationRead();
+
+  factory ManipulationRead.fromJson(Map<String, dynamic> json) =>
+      ManipulationRead(
+        score: _d(json['score']),
+        kind: _s(json['kind'], 'none'),
+        note: _s(json['note']),
+        components: ((json['components'] as Map?) ?? const {})
+            .map((key, value) => MapEntry(key.toString(), _d(value))),
+        evidence: ((json['evidence'] as List?) ?? const [])
+            .map((item) => item.toString())
+            .toList(),
+      );
+}
+
+/// One reading of the crowd: the eight emotions ranked, the dominant one, how
+/// long it has held, the signed temperature and the manipulation read.
+///
+/// Mirrors ``EmotionReport.to_dict()`` (and its streamed ``compact`` form).
+class EmotionReading {
+  const EmotionReading({
+    this.available = false,
+    this.reason = '',
+    this.asset = '',
+    this.atUs = 0,
+    this.ticks = 0,
+    this.resolutionUs = 0.0,
+    this.resolutionLabel = '',
+    this.emotions = const [],
+    this.dominant,
+    this.runnerUp,
+    this.toneBias = 0.0,
+    this.heldSeconds = 0.0,
+    this.churnPerMinute = 0,
+    this.samples = 0,
+    this.read = '',
+    this.hint = '',
+    this.intervalSeconds = 0.5,
+    this.manipulation = ManipulationRead.none,
+  });
+
+  final bool available;
+  final String reason;
+  final String asset;
+  final int atUs;
+  final int ticks;
+  final double resolutionUs;
+  final String resolutionLabel;
+
+  /// Ranked: the dominant emotion first.
+  final List<EmotionScore> emotions;
+  final EmotionScore? dominant;
+  final EmotionScore? runnerUp;
+
+  /// −1 terrified … +1 euphoric, 0 asleep.
+  final double toneBias;
+  final double heldSeconds;
+  final int churnPerMinute;
+  final int samples;
+  final String read;
+  final String hint;
+  final double intervalSeconds;
+  final ManipulationRead manipulation;
+
+  static const EmotionReading none = EmotionReading();
+
+  bool get hasData => available && emotions.isNotEmpty;
+
+  factory EmotionReading.fromJson(Map<String, dynamic> json) {
+    final ranked = ((json['emotions'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((row) => EmotionScore.fromJson(Map<String, dynamic>.from(row)))
+        .toList();
+    EmotionScore? pick(dynamic raw) {
+      if (raw is! Map) return null;
+      final name = _s(raw['name']);
+      for (final item in ranked) {
+        if (item.name == name) return item;
+      }
+      return EmotionScore.fromJson(Map<String, dynamic>.from(raw));
+    }
+
+    final manipulation = json['manipulation'];
+    return EmotionReading(
+      available: json['available'] == true,
+      reason: _s(json['reason']),
+      asset: _s(json['asset']),
+      atUs: _i(json['at_us']),
+      ticks: _i(json['ticks']),
+      resolutionUs: _d(json['resolution_us']),
+      resolutionLabel: _s(json['resolution_label']),
+      emotions: ranked,
+      dominant: pick(json['dominant']) ?? (ranked.isNotEmpty ? ranked.first : null),
+      runnerUp: pick(json['runner_up']) ?? (ranked.length > 1 ? ranked[1] : null),
+      toneBias: _d(json['tone_bias']),
+      heldSeconds: _d(json['held_seconds'], _d((json['dominant'] as Map?)?['held_seconds'])),
+      churnPerMinute: _i(json['churn_per_minute']),
+      samples: _i(json['samples']),
+      read: _s(json['read']),
+      hint: _s(json['hint']),
+      intervalSeconds: _d(json['interval_seconds'], 0.5),
+      manipulation: manipulation is Map
+          ? ManipulationRead.fromJson(Map<String, dynamic>.from(manipulation))
+          : ManipulationRead.none,
+    );
+  }
+}
+
+/// The block every payload carries: the live reading, the reading taken on
+/// the frozen snapshot when the signal was locked, and the confidence
+/// dampening the crowd produced.
+class CrowdEmotions {
+  const CrowdEmotions({
+    this.live = EmotionReading.none,
+    this.locked = EmotionReading.none,
+    this.dampeningApplied = 1.0,
+    this.dampeningNote = '',
+    this.dampenThreshold = 0.45,
+    this.dampenMax = 0.25,
+  });
+
+  final EmotionReading live;
+  final EmotionReading locked;
+
+  /// The multiplier the fusion applied to the confidence (1.0 = none).
+  final double dampeningApplied;
+  final String dampeningNote;
+  final double dampenThreshold;
+  final double dampenMax;
+
+  static const CrowdEmotions none = CrowdEmotions();
+
+  bool get hasData => live.hasData;
+  bool get dampened => dampeningApplied < 0.999;
+
+  /// From the `emotions` block of a snapshot / PULSE (the full form).
+  factory CrowdEmotions.fromJson(Map<String, dynamic> json) {
+    final locked = json['locked'];
+    final dampening = (json['dampening'] as Map?) ?? const {};
+    return CrowdEmotions(
+      live: EmotionReading.fromJson(json),
+      locked: locked is Map
+          ? EmotionReading.fromJson(Map<String, dynamic>.from(locked))
+          : EmotionReading.none,
+      dampeningApplied: _d(dampening['applied'], 1.0),
+      dampeningNote: _s(dampening['note']),
+      dampenThreshold: _d(dampening['threshold'], 0.45),
+      dampenMax: _d(dampening['max'], 0.25),
+    );
+  }
+
+  /// A new live reading (the EMOTION stream) keeps the locked one and the
+  /// dampening unless the message carries fresher values.
+  CrowdEmotions withLive(EmotionReading reading, {Map<String, dynamic>? dampening}) =>
+      CrowdEmotions(
+        live: reading,
+        locked: locked,
+        dampeningApplied: _d(dampening?['applied'], dampeningApplied),
+        dampeningNote: _s(dampening?['note'], dampeningNote),
+        dampenThreshold: dampenThreshold,
+        dampenMax: dampenMax,
+      );
 }
 
 /// Which window the locked signal governs, and what the engine is doing in it.

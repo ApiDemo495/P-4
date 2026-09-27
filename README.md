@@ -25,6 +25,14 @@ one polling on a private timer.
 Every prediction carries a **side (BUY or SELL - there is no HOLD), a fresh-ness
 age, the reasoning behind it, and a 1:1 take-profit / stop-loss pair**.
 
+**The crowd's emotions, live.** A 60-second market is easily pushed around by
+retail emotion, so the engine reads the crowd continuously - eight emotions
+(fear, panic, capitulation, denial, hope, euphoria, FOMO, complacency), each
+measured from microseconds to minutes - and the dashboard says **which emotion
+is dominant right now**, how long it has held, how crowded / manipulated the
+minute looks, and what the crowd was feeling when the locked signal was
+computed. A crowded minute sizes the confidence down; it never flips the side.
+
 **The whole app runs on ONE port.** Dashboard, API, WebSocket, matrix viewer,
 settings page and the Flutter build are all served from port **8000**, so there
 is exactly one URL to forward and no second window to keep open.
@@ -184,7 +192,8 @@ Open the URL `bash run.sh --urls` prints. Everything lives under it:
 | `/matrix` | the 80×80 connectome with the last activation trace |
 | `/flutter` | the Flutter client, once `bash frontend/run_web.sh` has built it |
 | `/docs` | the OpenAPI explorer |
-| `/ws/signals` | the WebSocket stream both clients use |
+| `/ws/signals` | the WebSocket stream both clients use (`EMOTION` messages twice a second) |
+| `/api/emotions` | the crowd's emotions: live reading, lock-time reading, dampening |
 
 `bash frontend/run_web.sh --dev` is the only command that opens a second port,
 and it is pinned to **8081**. Anything else in your PORTS tab belongs to another
@@ -334,9 +343,14 @@ curl -s localhost:8000/api/health | python3 -m json.tool
 curl -s localhost:8000/api/brain/explain | python3 -m json.tool
 ```
 
+```bash
+curl -s localhost:8000/api/emotions | python3 -m json.tool
+```
+
 The microsecond contract, checked against the running engine: the forecast
-window, its six-digit instants, the per-formula µs timings and the tape's real
-resolution (no browser needed).
+window, its six-digit instants, the per-formula µs timings, the tape's real
+resolution, and the crowd's eight emotions with the dominant one (no browser
+needed).
 
 ```bash
 BASE=http://127.0.0.1:8000 node tools/dashboard_payload_check.js
@@ -360,7 +374,7 @@ tail -f server.log
 
 | Path | What it is |
 |---|---|
-| `backend/core` | config, world clock, **signal lock**, frozen snapshot, cycle manager, risk levels, store |
+| `backend/core` | config, world clock, **signal lock**, frozen snapshot, cycle manager, risk levels, store, **crowd emotions** (`emotions.py`) |
 | `backend/data` | tick/L2/candle buffers, Binance WS, CoinGecko, simulator, market hub |
 | `backend/formulas` | the 22 formulas in 8 categories + `engine.py` + the DRG reward learner |
 | `backend/brain` | 5-step startup verification, connectome query, spectral clustering, 3-layer GCN, `explain.py`, fallback matrix |

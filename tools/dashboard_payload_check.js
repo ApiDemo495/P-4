@@ -14,9 +14,12 @@
      2. the micro block carries a resolution, a jitter and a quote lifetime;
      3. every one of the 23 formulas has a microsecond timing and a history
         statistic, and the totals in the payload agree with the parts;
-     4. the formatter the UI prints them with (`fmtUs`) is sane at every scale.
+     4. the formatter the UI prints them with (`fmtUs`) is sane at every scale;
+     5. (Round J) the crowd's eight emotions arrive live, decomposed over five
+        timescales, with a dominant emotion, its hold time and a manipulation
+        score - and the served page has the panel that draws them.
 
-   Exit code 0 = the dashboard is being handed the Round-I data it renders. */
+   Exit code 0 = the dashboard is being handed the data it renders. */
 
 const fs = require("fs");
 const path = require("path");
@@ -121,6 +124,38 @@ const getJSON = async (pathname) => {
   check(timingsPayload.total_us > 0, `timings total_us = ${timingsPayload.total_us}`);
   check(timingsPayload.resolution_us > 0,
     `timings resolution_us = ${timingsPayload.resolution_us}`);
+
+  // 6. Round J: the crowd's emotions, live --------------------------------------
+  const crowd = await getJSON("/api/emotions");
+  check(crowd.available === true, "the emotion engine has no live reading");
+  check(Array.isArray(crowd.emotions) && crowd.emotions.length === 8,
+    `${(crowd.emotions || []).length} emotions scored (want 8)`);
+  const names = (crowd.emotions || []).map((e) => e.name).sort().join(",");
+  check(names === "CAPITULATION,COMPLACENCY,DENIAL,EUPHORIA,FEAR,FOMO,HOPE,PANIC",
+    `emotion vocabulary: ${names}`);
+  check(crowd.dominant && crowd.dominant.label && crowd.dominant.percent >= 0,
+    `dominant emotion = ${crowd.dominant && crowd.dominant.label} ${crowd.dominant && crowd.dominant.percent}%`);
+  check((crowd.emotions || []).every((e) =>
+    ["micro", "seconds", "window", "minutes", "news"].every((k) => typeof (e.by_timescale || {})[k] === "number")),
+    "every emotion is decomposed over the five timescales");
+  check(typeof crowd.held_seconds === "number" && crowd.held_seconds >= 0,
+    `dominant held for ${crowd.held_seconds} s`);
+  check(crowd.manipulation && crowd.manipulation.score >= 0 && crowd.manipulation.score <= 1,
+    `manipulation = ${crowd.manipulation && crowd.manipulation.score} (${crowd.manipulation && crowd.manipulation.kind})`);
+  check(/\.\d{6}Z$/.test(crowd.at || ""), `emotion instant in microseconds: ${crowd.at}`);
+  check((crowd.interval_seconds || 0) <= 1.0, `sampled every ${crowd.interval_seconds} s`);
+  check(crowd.dampening && typeof crowd.dampening.applied === "number",
+    `crowd dampening applied = ${crowd.dampening && crowd.dampening.applied}`);
+  check(typeof crowd.read === "string" && crowd.read.includes("dominant"),
+    `read: ${String(crowd.read || "").slice(0, 60)}…`);
+  const crowdDetail = (signal.prediction || {}).detail || {};
+  check(crowdDetail.crowd && typeof crowdDetail.crowd.available === "boolean",
+    "the prediction detail carries the crowd at lock time");
+  check(APP.includes('case "EMOTION"') && APP.includes("function renderEmotions("),
+    "app.js handles the EMOTION stream and renders the panel");
+  const html = await (await fetch(`${BASE}/`)).text();
+  check(html.includes('id="emotion-card"') && html.includes('id="w-crowd-line"'),
+    "the served page has the Crowd Emotion card and the inline crowd line");
 
   for (const line of ok) console.log(`  ok   ${line}`);
   for (const line of fail) console.log(`  FAIL ${line}`);

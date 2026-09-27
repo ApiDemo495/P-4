@@ -10,6 +10,12 @@ Two v2.0 additions:
 * **HSI override** - when the Hedge Stress Index exceeds 0.80 the final
   confidence is multiplied by ``max(0.2, 1 - HSI)``.  During extreme hedge
   stress even a strong signal is dampened; the 0.2 floor stops it being zeroed.
+* **Crowd-emotion dampener** - the emotion engine measures how crowded and
+  emotional the minute is (herding, whipsaw, stop hunts, book imbalance, a
+  volume climax).  When that manipulation score passes
+  ``emotion_dampen_threshold`` the confidence is multiplied by
+  ``1 - emotion_dampen_max * score``: an emotional tape is a tape to trade
+  smaller, never a reason to flip a locked side.
 * **Binary direction** - the third state (HOLD) was removed at the user's
   request.  Every gate that used to return HOLD now returns a side plus the
   reason it won; see :mod:`backend.core.direction` for the ladder.  The gates
@@ -51,6 +57,8 @@ class FusionResult:
     formula_consensus: float | None = None
     confirmation: float = 1.0
     calibration: float = 1.0
+    crowd_adjustment: float = 1.0
+    crowd_note: str = ""
 
     # -- binary direction fields (HOLD was removed) ----------------------
     @property
@@ -85,6 +93,8 @@ class FusionResult:
             else round(float(self.formula_consensus), 4),
             "confirmation": self.confirmation,
             "calibration": self.calibration,
+            "crowd_adjustment": round(self.crowd_adjustment, 4),
+            "crowd_note": self.crowd_note,
         }
         # Kept for the two clients: "lean" now always equals the decision,
         # because there is no third state to lean away from.
@@ -111,13 +121,16 @@ def fuse(
     formula_consensus: float | None = None,
     consensus_voters: int = 0,
     recent_accuracy: dict | None = None,
+    crowd: dict | None = None,
 ) -> FusionResult:
     """Combine the Drosophila brain with the available AI agents.
 
     Always returns BUY or SELL: see :mod:`backend.core.direction`.
 
     ``formula_consensus`` is the weighted agreement of the directional formulas
-    (-1..+1) and ``recent_accuracy`` the measured hit rate of recent windows.
+    (-1..+1), ``recent_accuracy`` the measured hit rate of recent windows and
+    ``crowd`` the emotion engine's reading of the tape (see
+    :mod:`backend.core.emotions`).
     Neither moves the *side* - the direction ladder stays the spec's - but both
     move the confidence, because a side that the tape's own formulas contradict,
     or that has been losing recently, is not a side to size up on.
@@ -248,6 +261,27 @@ def fuse(
             accuracy_note = f"recent form {win_rate:.0%} of {evaluated}"
     raw_confidence *= calibration
 
+    # --- crowd emotion -----------------------------------------------
+    # The user's premise is the whole reason this term exists: a 60-second
+    # window is easy to push when the crowd is emotional.  The manipulation
+    # score therefore scales the confidence down - it never touches the side.
+    crowd_adjustment = 1.0
+    crowd_note = ""
+    crowd = crowd or {}
+    manipulation = float((crowd.get("manipulation") or {}).get("score") or 0.0)
+    threshold = float(getattr(settings, "emotion_dampen_threshold", 0.45))
+    if manipulation >= threshold:
+        span = max(1e-6, 1.0 - threshold)
+        excess = min(1.0, (manipulation - threshold) / span)
+        crowd_adjustment = 1.0 - float(getattr(settings, "emotion_dampen_max", 0.25)) * excess
+        dominant = (crowd.get("dominant") or {}).get("label") or "an emotional crowd"
+        kind = (crowd.get("manipulation") or {}).get("kind") or "crowding"
+        crowd_note = (
+            f"{dominant.lower()} tape ({manipulation:.0%} {kind}) - "
+            f"confidence x{crowd_adjustment:.2f}"
+        )
+    raw_confidence *= crowd_adjustment
+
     confidence = raw_confidence * hsi_adjustment
     confidence = max(0.0, min(0.95, confidence))
 
@@ -285,6 +319,7 @@ def fuse(
         confidence,
         consensus_note=consensus_note,
         accuracy_note=accuracy_note,
+        crowd_note=crowd_note,
     )
 
     return FusionResult(
@@ -301,6 +336,8 @@ def fuse(
         formula_consensus=formula_consensus,
         confirmation=round(confirmation, 4),
         calibration=round(calibration, 4),
+        crowd_adjustment=round(crowd_adjustment, 4),
+        crowd_note=crowd_note,
     )
 
 
@@ -316,6 +353,7 @@ def _explain(
     confidence: float,
     consensus_note: str = "",
     accuracy_note: str = "",
+    crowd_note: str = "",
 ) -> str:
     parts: list[str] = []
 
@@ -341,6 +379,8 @@ def _explain(
         parts.append(consensus_note)
     if accuracy_note:
         parts.append(f"confidence dampened on {accuracy_note}")
+    if crowd_note:
+        parts.append(f"crowd: {crowd_note}")
     parts.append(describe_direction(direction, confidence))
     if direction.tie_break and direction.tie_break not in ("emergency", "fused score"):
         parts.append(f"tie-break: {direction.tie_break}")

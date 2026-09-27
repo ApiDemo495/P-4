@@ -202,6 +202,22 @@ class Settings:
     hsi_confidence_floor: float = 0.20
     min_fusion_confidence: float = 0.55
 
+    # Crowd emotion engine (the user's Section 4.5 request: retail sentiment)
+    #: How often the live tape is scored for emotions.  Half a second keeps the
+    #: panel in step with the countdown while still resolving "held for N s".
+    emotion_interval_seconds: float = field(
+        default_factory=lambda: _env_float("EMOTION_INTERVAL_SECONDS", 0.5)
+    )
+    #: Samples kept for the panel's history (0.5 s cadence -> 6 minutes).
+    emotion_history_size: int = field(
+        default_factory=lambda: _env_int("EMOTION_HISTORY_SIZE", 720)
+    )
+    #: A crowded, emotional minute is a minute to size down: the confidence is
+    #: multiplied by ``1 - emotion_dampen_max * manipulation_score`` once the
+    #: score passes the threshold.  It never flips the side.
+    emotion_dampen_threshold: float = 0.45
+    emotion_dampen_max: float = 0.25
+
     # Decision thresholds (Section 10.1)
     signal_threshold: float = 0.25
     max_failed_formulas: int = 10  # >= 11 zeros => degraded evidence (weak side)

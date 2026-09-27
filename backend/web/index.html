@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>Drosophila Trader v2.0</title>
-<link rel="stylesheet" href="/static/styles.css?v=2.2.0" />
+<link rel="stylesheet" href="/static/styles.css?v=2.3.0" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪰</text></svg>" />
 </head>
 <body>
@@ -117,6 +117,9 @@
              instant in microseconds, the target instant and what is left. -->
         <div class="horizon-line" id="w-horizon-line">forecast: the next 60 seconds — waiting for the first release</div>
         <div class="micro-line" id="w-micro-line">tape resolution — waiting for the first tick</div>
+        <!-- Round J: the crowd's dominant emotion, live, next to the side it
+             is pushing.  The full read-out is the Crowd Emotion card below. -->
+        <div class="crowd-line" id="w-crowd-line"><span class="crowd-dot neutral" id="w-crowd-dot"></span><span id="w-crowd-text">crowd — measuring the tape…</span></div>
         <button class="btn tiny ghost detail-toggle" id="w-detail-toggle" type="button">▸ prediction detail</button>
         <div class="prediction-detail hidden" id="w-detail"></div>
         <!-- Why this side: the same bullets the API returns. -->
@@ -189,6 +192,44 @@
       <span class="kv"><span>window</span><b id="w-window-span">—</b></span>
       <span style="flex:1"></span>
       <span class="muted" id="w-clock-note"></span>
+    </div>
+  </section>
+
+  <!-- ===================== CROWD EMOTION (live) ===================== -->
+  <!-- The user's premise: a 60-second market is easily pushed around by
+       retail emotion.  This card says which emotion is dominant right now,
+       on which timescale (µs → minutes), how long it has held, how crowded /
+       manipulated the minute looks, and what the crowd was feeling when the
+       locked signal was computed.  Streamed twice a second (EMOTION message),
+       on the backend's schedule - the client has no timer of its own. -->
+  <section class="card emotion-card" id="emotion-card">
+    <div class="card-head">
+      <h2>🎭 Crowd Emotion <span class="muted">live · µs → minutes</span></h2>
+      <span class="muted" id="emotion-meta">waiting for the first sample…</span>
+    </div>
+    <div class="emotion-grid">
+      <div class="emotion-hero">
+        <div class="cell-label">DOMINANT NOW</div>
+        <div class="emotion-dominant" id="emotion-dominant">—</div>
+        <div class="emotion-dominant-sub" id="emotion-dominant-sub">the crowd has not been measured yet</div>
+        <div class="emotion-held" id="emotion-held">—</div>
+        <div class="emotion-read" id="emotion-read">—</div>
+        <ul class="emotion-drivers" id="emotion-drivers"></ul>
+      </div>
+      <div class="emotion-bars" id="emotion-bars"></div>
+      <div class="emotion-side">
+        <div class="cell-label">TEMPERATURE <span class="muted">fear ← 0 → euphoria</span></div>
+        <div class="tone-gauge"><div class="tone-zero"></div><div class="tone-marker" id="emotion-tone-marker"></div></div>
+        <div class="tone-value" id="emotion-tone">—</div>
+        <div class="cell-label" style="margin-top:12px">MANIPULATION <span class="muted">crowding of this minute</span></div>
+        <div class="bar"><div class="bar-fill neutral" id="emotion-manip-bar"></div></div>
+        <div class="manip-value" id="emotion-manip">—</div>
+        <div class="manip-note muted" id="emotion-manip-note">—</div>
+        <div class="cell-label" style="margin-top:12px">TIMESCALES <span class="muted">where the dominant emotion lives</span></div>
+        <div class="timescale-strip" id="emotion-timescales"></div>
+        <div class="cell-label" style="margin-top:12px">AT LOCK TIME <span class="muted">what shaped this signal</span></div>
+        <div class="emotion-locked" id="emotion-locked">—</div>
+      </div>
     </div>
   </section>
 
@@ -390,6 +431,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=2.2.0"></script>
+<script src="/static/app.js?v=2.3.0"></script>
 </body>
 </html>

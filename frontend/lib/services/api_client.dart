@@ -88,6 +88,10 @@ class ApiClient {
 
   Future<Map<String, dynamic>?> signalStatus() => _getJson('/api/signal/status');
 
+  /// The crowd's emotions: the live reading, the one taken at lock time and
+  /// the confidence dampening it produced (Round J).
+  Future<Map<String, dynamic>?> emotions() => _getJson('/api/emotions');
+
   Future<Map<String, dynamic>?> health() => _getJson('/api/health');
 
   Future<Map<String, dynamic>?> agents() => _getJson('/api/agents');

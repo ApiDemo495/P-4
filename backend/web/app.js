@@ -25,6 +25,10 @@ const state = {
   liveMicro: {},        // the tape measured in microseconds (Round I)
   liveTimingsUs: {},    // per-formula cost in µs from the last live pass
   liveHistoryWindow: 0,
+  emotions: null,        // the crowd's live emotion reading (Round J, EMOTION stream)
+  emotionsLocked: null,  // the reading taken on the frozen snapshot at lock time
+  emotionDampening: null,
+  lastEmotionDominant: null,
   formulaTraces: {},
   formulaReadings: {},
   formulaMeta: [],
@@ -200,6 +204,14 @@ function handle(msg) {
     case "OUTCOME":
       refreshOutcomes();
       break;
+    case "EMOTION": {
+      // The crowd's mood, streamed twice a second on the backend's schedule.
+      // Only the emotion panel repaints: nothing else on the page is touched,
+      // so the countdown and the locked panels stay exactly where they are.
+      adoptEmotions(msg.data);
+      renderEmotions();
+      break;
+    }
     case "ASSET_SWITCH": {
       state.pendingAsset = msg.data.pending;
       renderAssetToggle();
@@ -506,9 +518,159 @@ function renderPredictionDetail(prediction) {
     (detail.brain
       ? `<div class="detail-line">brain: ${escapeHtml(String(detail.brain.status ?? "—"))} · gain ${fmtSigned(detail.brain.gain ?? 0, 3)} · ${escapeHtml(String(detail.brain.message || ""))}</div>`
       : "") +
+    crowdDetailHtml(detail.crowd) +
     (detail.formula_stats
       ? `<div class="muted" style="font-size:11px">per-formula history: ${Object.keys(detail.formula_stats).length} formulas tracked</div>`
       : "");
+}
+
+/* What the crowd was feeling when this side was locked, and whether that was
+   strong enough to dampen the confidence (Round J). */
+function crowdDetailHtml(crowd) {
+  if (!crowd || !crowd.available) return "";
+  const bars = (crowd.emotions || []).slice(0, 8)
+    .map((e) => `${escapeHtml(e.label || e.name)} ${Number(e.percent || 0).toFixed(0)}%`)
+    .join(" · ");
+  const parts = state.prediction?.detail?.confidence_parts || {};
+  const damp = Number(parts.crowd_dampening ?? 1);
+  return `<div><div class="logic-h">Crowd at lock time</div><div class="detail-line">` +
+    `dominant <b>${escapeHtml(String(crowd.dominant || "—"))}</b> ${Number(crowd.percent || 0).toFixed(0)}% ` +
+    `on the <b>${escapeHtml(String(crowd.timescale || "—"))}</b> timescale · ` +
+    `temperature ${fmtSigned(crowd.tone_bias ?? 0, 2)} · ` +
+    `manipulation <b>${fmtPct(crowd.manipulation || 0)}</b> (${escapeHtml(String(crowd.manipulation_kind || "none"))})` +
+    (damp < 0.999 ? ` · confidence <b>x${damp.toFixed(2)}</b> for the crowd` : " · no crowd dampening") +
+    `</div>` +
+    (bars ? `<div class="detail-line" style="font-size:10.5px">${bars}</div>` : "") +
+    (crowd.read ? `<div class="muted" style="font-size:11px">${escapeHtml(String(crowd.read))}</div>` : "") +
+    `</div>`;
+}
+
+/* ------------------------------------------------------------ emotions --
+   Round J.  The card answers, live: which emotion is dominant, on which
+   timescale, for how long, how crowded the minute is, and what the crowd was
+   feeling when the locked signal was computed.  The data arrives in the
+   EMOTION stream (twice a second) and in every PULSE / snapshot; the client
+   only draws it - it never measures anything itself. */
+function adoptEmotions(data) {
+  const block = data?.emotions;
+  if (!block || typeof block !== "object") return;
+  state.emotions = block;
+  if (block.locked !== undefined) state.emotionsLocked = block.locked;
+  if (block.dampening) state.emotionDampening = block.dampening;
+  if (data.dampening) state.emotionDampening = data.dampening;
+}
+
+function toneClass(tone) {
+  return tone === "negative" || tone === "positive" ? tone : "neutral";
+}
+
+function emotionTimescaleLabel(key) {
+  return { micro: "µs", seconds: "sec", window: "60 s", minutes: "min", news: "news" }[key] || key;
+}
+
+function renderEmotions() {
+  const e = state.emotions;
+  const dominantEl = $("emotion-dominant");
+  if (!dominantEl) return;
+  const line = $("w-crowd-text");
+  const dot = $("w-crowd-dot");
+  if (!e || !e.available) {
+    dominantEl.textContent = "—";
+    dominantEl.className = "emotion-dominant neutral";
+    $("emotion-dominant-sub").textContent = e?.reason || "the crowd has not been measured yet";
+    $("emotion-meta").textContent = "waiting for the first sample…";
+    if (line) line.textContent = "crowd — measuring the tape…";
+    if (dot) dot.className = "crowd-dot neutral";
+    return;
+  }
+  const top = e.dominant || {};
+  const tone = toneClass(top.tone);
+  const changed = state.lastEmotionDominant !== null && state.lastEmotionDominant !== top.name;
+  dominantEl.textContent = top.label || top.name || "—";
+  dominantEl.className = `emotion-dominant ${tone}`;
+  if (changed) {
+    dominantEl.classList.remove("pop");
+    void dominantEl.offsetWidth; // restart the animation
+    dominantEl.classList.add("pop");
+    haptic([8]);
+  }
+  state.lastEmotionDominant = top.name || null;
+
+  $("emotion-dominant-sub").textContent =
+    `${Number(top.percent || 0).toFixed(0)}% intensity · ${top.family || ""} family · ` +
+    `strongest on the ${emotionTimescaleLabel(top.dominant_timescale)} timescale`;
+  const held = Number(e.held_seconds ?? top.held_seconds ?? 0);
+  const runner = e.runner_up;
+  $("emotion-held").innerHTML =
+    `held for <b>${held >= 60 ? `${Math.floor(held / 60)}m ${Math.round(held % 60)}s` : `${held.toFixed(1)} s`}</b>` +
+    (runner ? ` · runner-up <b>${escapeHtml(runner.label)}</b> ${Number(runner.percent || 0).toFixed(0)}%` : "") +
+    (e.churn_per_minute ? ` · ${e.churn_per_minute} switch${e.churn_per_minute === 1 ? "" : "es"} this minute` : "");
+  $("emotion-read").textContent = e.read || "";
+  $("emotion-drivers").innerHTML = (top.drivers || []).map((d) => `<li>${escapeHtml(d)}</li>`).join("");
+  $("emotion-meta").textContent =
+    `${e.asset || state.asset} · sampled every ${Number(e.interval_seconds || 0.5).toFixed(1)} s · ` +
+    `tape resolution ${e.resolution_label || fmtUs(e.resolution_us)} · ${e.ticks || 0} ticks · ` +
+    `${e.samples || 0} samples`;
+
+  /* the eight bars, ranked */
+  const bars = $("emotion-bars");
+  const rows = (e.emotions || []).map((item) => {
+    const cls = toneClass(item.tone);
+    const isTop = item.name === top.name;
+    return `<div class="emotion-row">` +
+      `<span class="name${isTop ? " dominant" : ""}">${escapeHtml(item.label || item.name)}<span class="fam">${escapeHtml(item.family || "")}</span></span>` +
+      `<div class="bar"><div class="bar-fill ${cls}" style="width:${clamp(Number(item.percent || 0), 0, 100)}%"></div></div>` +
+      `<span class="pct">${Number(item.percent || 0).toFixed(0)}%</span>` +
+      `<span class="band">${emotionTimescaleLabel(item.dominant_timescale)}</span>` +
+      `</div>`;
+  });
+  bars.innerHTML = rows.join("");
+
+  /* temperature */
+  const toneBias = clamp(Number(e.tone_bias || 0), -1, 1);
+  $("emotion-tone-marker").style.left = `${50 + toneBias * 50}%`;
+  $("emotion-tone").innerHTML =
+    `<b>${fmtSigned(toneBias, 2)}</b> ` +
+    (toneBias < -0.25 ? "— the crowd is afraid" : toneBias > 0.25 ? "— the crowd is chasing" : "— the crowd is neither afraid nor chasing");
+
+  /* manipulation */
+  const manip = e.manipulation || {};
+  const score = clamp(Number(manip.score || 0), 0, 1);
+  const bar = $("emotion-manip-bar");
+  bar.style.width = `${(score * 100).toFixed(0)}%`;
+  bar.className = `bar-fill ${score >= 0.45 ? "neg" : score >= 0.25 ? "" : "neutral"}`;
+  if (score >= 0.25 && score < 0.45) bar.style.background = "var(--amber)"; else bar.style.background = "";
+  const damp = Number(state.emotionDampening?.applied ?? 1);
+  $("emotion-manip").innerHTML =
+    `<b>${fmtPct(score)}</b> ${escapeHtml(String(manip.kind || "none"))}` +
+    (damp < 0.999 ? ` · confidence <b>x${damp.toFixed(2)}</b>` : "");
+  $("emotion-manip-note").textContent = manip.note || "";
+
+  /* timescales of the dominant emotion */
+  const topRow = (e.emotions || []).find((item) => item.name === top.name) || {};
+  const bands = topRow.by_timescale || {};
+  $("emotion-timescales").innerHTML = ["micro", "seconds", "window", "minutes", "news"].map((key) => {
+    const value = Number(bands[key] || 0);
+    const peak = key === top.dominant_timescale;
+    return `<div class="timescale-cell${peak ? ` peak ${tone}` : ""}">${emotionTimescaleLabel(key)}<b>${(value * 100).toFixed(0)}%</b></div>`;
+  }).join("");
+
+  /* at lock time */
+  const locked = state.emotionsLocked;
+  const lockedTop = locked?.dominant;
+  $("emotion-locked").innerHTML = lockedTop
+    ? `<b>${escapeHtml(lockedTop.label || lockedTop.name)}</b> ${Number(lockedTop.percent || 0).toFixed(0)}% · ` +
+      `manipulation ${fmtPct(Number(locked.manipulation?.score || 0))} (${escapeHtml(String(locked.manipulation?.kind || "none"))})` +
+      `<span class="muted">${escapeHtml(String(state.emotionDampening?.note || "no crowd dampening on this signal"))}</span>`
+    : `<span class="muted">the first locked window will record the crowd's mood</span>`;
+
+  /* inline line in the prediction cell */
+  if (line) {
+    line.innerHTML = `crowd now: <b>${escapeHtml(top.label || top.name)}</b> ${Number(top.percent || 0).toFixed(0)}% ` +
+      `· ${emotionTimescaleLabel(top.dominant_timescale)} · held ${held >= 60 ? `${Math.floor(held / 60)}m` : `${held.toFixed(0)} s`}` +
+      (score >= 0.45 ? ` · <b>${fmtPct(score)}</b> ${escapeHtml(String(manip.kind || ""))}` : "");
+  }
+  if (dot) dot.className = `crowd-dot ${tone}`;
 }
 
 /* The freshness contract: the prediction may never be older than the
@@ -1625,6 +1787,7 @@ function applySnapshot(data, opts = {}) {
   }
   if (data.live_formulas) renderLiveFormulas(data.live_formulas);
   if (data.news_feed) renderNewsList(data.news_feed);
+  if (data.emotions) adoptEmotions(data);
   if (data.agents_status) renderAgents(data.agents_status);
   if (data.brain_explain) renderBrainExplain(data.brain_explain);
   if (data.brain_status) renderBrainStatus(data.brain_status);
@@ -1654,6 +1817,7 @@ function renderAll() {
     renderFormulas();
     renderWidgetPanel();
     renderConvictionBox();
+    renderEmotions();
   } finally {
     state.inRenderAll = false;
   }
