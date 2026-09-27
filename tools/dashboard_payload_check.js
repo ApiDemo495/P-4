@@ -15,6 +15,8 @@
      3. every one of the 23 formulas has a microsecond timing and a history
         statistic, and the totals in the payload agree with the parts;
      4. the formatter the UI prints them with (`fmtUs`) is sane at every scale;
+     6. (Round K) the deep reasoning layer - fourteen microstructure formulas,
+        a normalised Bayesian posterior and the chain - is live and at lock time;
      5. (Round J) the crowd's eight emotions arrive live, decomposed over five
         timescales, with a dominant emotion, its hold time and a manipulation
         score - and the served page has the panel that draws them.
@@ -156,6 +158,38 @@ const getJSON = async (pathname) => {
   const html = await (await fetch(`${BASE}/`)).text();
   check(html.includes('id="emotion-card"') && html.includes('id="w-crowd-line"'),
     "the served page has the Crowd Emotion card and the inline crowd line");
+
+  // 7. Round K: the deep reasoning layer -------------------------------------------
+  const deepPayload = await getJSON("/api/emotions/deep");
+  const deep = deepPayload.live || {};
+  check(deep.available === true, "the deep layer has a live reading");
+  check(Array.isArray(deep.chain) && deep.chain.length === 14,
+    `${(deep.chain || []).length} reasoning steps (want 14)`);
+  check((deep.chain || []).every((s) => s.formula && s.reads && typeof s.step === "number"),
+    "every step carries a formula, a value and a reading");
+  const post = deep.posterior || {};
+  const total = Object.values(post.posterior || {}).reduce((a, b) => a + b, 0);
+  check(Math.abs(total - 1) < 0.01 && post.argmax,
+    `Bayesian posterior sums to ${total.toFixed(3)}, believes ${post.argmax} ${((post.argmax_probability || 0) * 100).toFixed(0)}%`);
+  check(["micro", "seconds", "window"].every((k) => deep.bands && typeof deep.bands[k].hurst === "number"),
+    `three bands: H = ${["micro", "seconds", "window"].map((k) => deep.bands && deep.bands[k].hurst).join(" / ")}`);
+  check(deep.flow && typeof deep.flow.vpin === "number" && typeof deep.flow.kyle_lambda_bps === "number",
+    `VPIN ${deep.flow && deep.flow.vpin}, Kyle λ ${deep.flow && deep.flow.kyle_lambda_bps} (R² ${deep.flow && deep.flow.kyle_r2})`);
+  check(deep.hawkes && typeof deep.hawkes.branching_ratio === "number",
+    `Hawkes branching ratio ${deep.hawkes && deep.hawkes.branching_ratio}`);
+  check(deep.regime && ["calm", "trend", "stress"].includes(deep.regime.label),
+    `regime ${deep.regime && deep.regime.label}`);
+  check(deep.manipulation && ["ignition", "stuffing", "spoofing", "toxicity", "pushable"].every((k) => typeof deep.manipulation[k] === "number"),
+    "ignition / stuffing / spoofing / toxicity / pushable detectors present");
+  check((deep.compute_us || 0) < 250000, `deep layer computed in ${deep.compute_us} µs`);
+  check(deepPayload.locked && typeof deepPayload.locked.available === "boolean",
+    "the deep layer at lock time is published");
+  check((crowd.emotions || []).every((e) => typeof e.belief === "number" && typeof e.ramp === "number"),
+    "every emotion carries the filter's belief and the ramp reading");
+  check(crowdDetail.crowd && crowdDetail.crowd.deep && typeof crowdDetail.crowd.deep.available === "boolean",
+    "the prediction detail carries the deep read at lock time");
+  check(APP.includes("function renderDeep(") && html.includes('id="deep-chain"'),
+    "app.js renders the deep block and the served page has it");
 
   for (const line of ok) console.log(`  ok   ${line}`);
   for (const line of fail) console.log(`  FAIL ${line}`);

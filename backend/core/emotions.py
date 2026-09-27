@@ -50,6 +50,7 @@ from typing import Any
 
 import numpy as np
 
+from backend.core import deep_micro
 from backend.core.timebase import format_us, now_us, us_to_iso
 
 # ---------------------------------------------------------------------------
@@ -136,10 +137,16 @@ class EmotionScore:
     by_timescale: dict[str, float] = field(default_factory=dict)
     dominant_timescale: str = ""
     drivers: tuple[str, ...] = ()
+    #: the Bayesian filter's belief in this emotion (0-1), from ``deep_micro``
+    belief: float = 0.0
+    #: the ramp reading before the belief was blended in
+    ramp: float = 0.0
 
     def to_dict(self) -> dict:
         return {
             "name": self.name,
+            "belief": round(self.belief, 4),
+            "ramp": round(self.ramp, 4),
             "label": self.label,
             "tone": self.tone,
             "family": self.family,
@@ -183,6 +190,8 @@ class EmotionTracker:
     volatility_per_s: float = 0.0
     challenger: str = ""
     challenger_count: int = 0
+    #: the Bayesian filter's posterior, carried between samples
+    deep_state: deep_micro.DeepState = field(default_factory=deep_micro.DeepState)
 
     def _elect(self, ranked: list[tuple[str, float]]) -> str:
         """The dominant emotion, with hysteresis (see the class docstring)."""
@@ -300,6 +309,7 @@ class EmotionReport:
     features: dict[str, float] = field(default_factory=dict)
     manipulation: dict = field(default_factory=dict)
     tracker: dict = field(default_factory=dict)
+    deep: dict = field(default_factory=dict)
 
     # -- convenience ----------------------------------------------------
     @property
@@ -342,6 +352,16 @@ class EmotionReport:
         hint = CONVICTION_HINT.get(top.name)
         if hint:
             text += f" - {hint}"
+        post = (self.deep or {}).get("posterior") or {}
+        if post.get("argmax"):
+            belief = post.get("argmax_probability", 0.0) * 100.0
+            if post["argmax"] == top.name:
+                text += f"; the Bayesian filter agrees ({belief:.0f}% belief)"
+            else:
+                text += (
+                    f"; the Bayesian filter leans {post['argmax'].capitalize()} "
+                    f"({belief:.0f}% belief)"
+                )
         return text + "."
 
     def to_dict(self) -> dict:
@@ -399,6 +419,7 @@ class EmotionReport:
             "held_seconds": tracker.get("held_seconds", 0.0),
             "features": {k: round(v, 6) for k, v in self.features.items()},
             "manipulation": dict(self.manipulation),
+            "deep": dict(self.deep),
             "history": tracker.get("history", []),
         }
         if top is not None:
@@ -423,6 +444,7 @@ def compact(payload: dict) -> dict:
         "held_seconds", "read", "hint", "interval_seconds", "measured_at_us",
     )
     out = {key: payload[key] for key in keep if key in payload}
+    out["deep"] = deep_micro.compact(payload.get("deep") or {})
     manipulation = payload.get("manipulation") or {}
     out["manipulation"] = {
         key: manipulation[key]
@@ -1118,14 +1140,27 @@ def manipulation_read(f: dict[str, float]) -> dict:
     # The climax arrives as a multiple of the tape's own pace (3.4x, 10.2x...);
     # the score needs it on the same 0-1 scale as every other component.
     volume = _ramp(_num(f.get("volume_climax")), 2.0, 8.0)
+    # The deep detectors (backend.core.deep_micro): a burst that faded, prints
+    # without price, resting size nobody trades against, one-sided flow and a
+    # tape whose price the flow itself is moving.
+    ignition = _num(f.get("deep_ignition"))
+    stuffing = _num(f.get("deep_stuffing"))
+    spoofing = _num(f.get("deep_spoofing"))
+    toxicity = _num(f.get("deep_toxicity"))
+    pushable = _num(f.get("deep_pushable"))
     score = _weighted([
-        (0.30, herding), (0.20, whipsaw), (0.20, hunt), (0.15, spoof), (0.15, volume),
+        (0.22, herding), (0.13, whipsaw), (0.15, hunt), (0.08, spoof), (0.08, volume),
+        (0.12, ignition), (0.08, toxicity), (0.06, stuffing), (0.04, spoofing), (0.04, pushable),
     ])
     kinds = {
         "retail chase": herding,
         "stop hunt": hunt,
         "whipsaw": whipsaw,
         "book imbalance": spoof,
+        "momentum ignition": ignition,
+        "toxic flow": toxicity * 0.8,
+        "quote stuffing": stuffing,
+        "spoofing": spoofing,
     }
     kind = max(kinds, key=lambda k: kinds[k])
     if score < 0.25:
@@ -1136,6 +1171,8 @@ def manipulation_read(f: dict[str, float]) -> dict:
         f"depth imbalance {_num(f.get('depth_imbalance')):+.2f}",
         f"stop-hunt wick score {hunt * 100:.0f}%",
         f"volume {_num(f.get('volume_climax')):.1f}x the tape's pace",
+        f"ignition {ignition * 100:.0f}% (burst-then-fade), toxicity {toxicity * 100:.0f}% (VPIN)",
+        f"stuffing {stuffing * 100:.0f}%, spoofing {spoofing * 100:.0f}%, pushable {pushable * 100:.0f}% (Kyle)",
     ]
     return {
         "score": round(float(score), 4),
@@ -1147,6 +1184,11 @@ def manipulation_read(f: dict[str, float]) -> dict:
             "stop_hunt": round(hunt, 4),
             "thin_book": round(spoof, 4),
             "volume_climax": round(volume, 4),
+            "ignition": round(ignition, 4),
+            "toxicity": round(toxicity, 4),
+            "stuffing": round(stuffing, 4),
+            "spoofing": round(spoofing, 4),
+            "pushable": round(pushable, 4),
         },
         "evidence": evidence,
         "note": (
@@ -1191,6 +1233,23 @@ def analyze(
         k: v for k, v in f.items() if k not in ("at_us",)
     }
     report.scores = score_emotions(f)
+    # The deep layer: microstructure formulas + the Bayesian filter.  Its
+    # posterior is blended into the ramp intensities (the ramps say how *big*
+    # the behaviour is, the filter how *consistent* the whole tape is with the
+    # emotion), and its detectors feed the manipulation read.
+    report.deep = deep_micro.analyze(
+        tape, asset, f, state=tracker.deep_state if tracker is not None else None
+    )
+    posterior = (report.deep.get("posterior") or {}).get("posterior") or {}
+    for score in report.scores:
+        score.ramp = score.intensity
+        if posterior:
+            score.belief = float(posterior.get(score.name, 0.0))
+            score.intensity = min(
+                1.0, 0.65 * score.ramp + 0.35 * min(1.0, 2.5 * score.belief)
+            )
+    for key, value in (report.deep.get("manipulation") or {}).items():
+        f[f"deep_{key}"] = float(value)
     report.manipulation = manipulation_read(f)
     if tracker is not None:
         report.tracker = tracker.observe(report)

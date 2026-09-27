@@ -654,3 +654,93 @@ block, the frozen-snapshot reproducibility, the routes, and the two UIs);
 **Escape hatches.** `EMOTION_INTERVAL_SECONDS` (default 0.5),
 `EMOTION_HISTORY_SIZE` (720 samples), and the two dampening constants in
 `config.Settings`.
+
+## K — Deep reasoning under the emotions, microseconds to seconds
+
+**The ask.** "It is basic - we need ultra advanced deep reasoning formulas for
+micro seconds and normal seconds." Round J read the crowd with ramps; this round
+puts the quantitative-finance layer underneath them, on the same tape, at the
+same cadence, and makes the engine show its work.
+
+1. **`backend/core/deep_micro.py`** - the formulas, each in the tape's own
+   units so a dead simulator tape and a violent live one read the same way:
+   * *µs band*: Hawkes branching ratio `n = 1 − 1/√F` from the Fano factor of
+     250 ms arrival counts (self-excitation: prints causing prints), current
+     intensity vs baseline; microprice `P* = (Pa·Qb + Pb·Qa)/(Qa+Qb)` and
+     top-5 / top-20 depth pressure; quote-stuffing ratio (surge × share of
+     prints that moved nothing).
+   * *seconds band*: VPIN over 24 volume buckets (order-flow toxicity);
+     Kyle's λ by OLS of 1 s mid changes on signed volume, with R² and a
+     normalised "pushability"; Lo-MacKinlay variance ratio with its
+     z-statistic; the three-state (calm / trend / stress) Gaussian HMM
+     forward filter with sticky transitions; the momentum-ignition detector
+     (a ≥2σ 1 s burst that gives ≥60 % back within 5 s); the spoofing proxy
+     (large resting imbalance while flow is balanced and price is flat).
+   * *seconds → minute*: generalised Hurst exponent from the log-log scaling
+     of q-sum variance; Bandt-Pompe permutation entropy (order 3);
+     Lillo-Farmer sign-memory (ACF at lags 1-13 and the decay exponent γ);
+     Haar wavelet energy per dyadic scale, labelled in µs from the tape's own
+     median interval.
+   * Three **bands** (`micro` on the tick clock, `seconds` on 250 ms,
+     `window` on 1 s) each report H, VR (+z) and entropy.
+2. **The Bayesian filter.** Nineteen bounded evidence variables (fast / mid /
+   slow moves in surprise units, drawdown, run-up, toxicity, cascade,
+   momentum, persistence, disorder, herd memory, regime probabilities, spread
+   blow-out, book pressure, news tone) go through a naive-Bayes log-odds
+   table (`LIKELIHOOD`, one row per emotion) at temperature 1.4;
+   `prior = (1−ρ)·previous + ρ·uniform` with ρ = 0.1 per sample (a ~3 s
+   belief half-life, slightly steadier than the panel's EMA) and
+   `posterior ∝ prior · exp(Σ w·e)`. The output carries the posterior, its
+   entropy / certainty, the KL "surprise" of the sample, and the four
+   strongest pieces of evidence for the top two emotions. The state lives on
+   the `EmotionTracker` (`deep_state`), so the live loop carries belief
+   between samples; the locked reading of a frozen snapshot uses a flat prior
+   and is reproducible bit for bit.
+3. **The reasoning chain.** Fourteen ordered steps - name, formula (as text),
+   inputs, value, unit, one-line reading, timescale, the evidence strength
+   and the emotions the step argues for (only when the evidence is material,
+   |e| ≥ 0.1). Rendered verbatim on the dashboard and in the Flutter panel.
+4. **How it feeds the reading.** Every `EmotionScore` now carries `ramp`
+   (round J's intensity) and `belief`; the bar is
+   `0.65·ramp + 0.35·min(1, 2.5·belief)`, so the ramps still say how *big*
+   the behaviour is and the filter how *consistent* the whole tape is with the
+   emotion. `read` ends with "the Bayesian filter agrees (72 % belief)" or
+   "leans Panic (41 %)". The five detectors (ignition, toxicity, stuffing,
+   spoofing, pushable) join the manipulation read as components with their
+   own kinds ("momentum ignition", "toxic flow", "quote stuffing",
+   "spoofing"), so the fusion dampener sees them without any new plumbing.
+5. **Where it appears.** `deep` in every emotion payload (full on REST /
+   PULSE / HELLO, `compact()` on the EMOTION stream - ~10 KB at 0.5 s);
+   `GET /api/emotions/deep` (live, locked, and the model's likelihood table);
+   `prediction.detail.crowd.deep` (belief, regime, the headline numbers, the
+   chain) and a "deep read: …" clause on the crowd bullet of the reasoning.
+6. **UI.** Web: a DEEP REASONING block under the Crowd Emotion card - the
+   belief line with evidence chips (green agrees / amber leans differently),
+   seven verdict tiles, the three-band H / VR / entropy table, five detector
+   meters, the wavelet energy strip with the peak scale, and the numbered
+   chain (collapsible, open by default); the lock-time chain in the signal
+   detail. Flutter: `_DeepBlock` in `emotion_panel.dart` with the same
+   sections, `DeepReasoning` / `DeepBand` / `DeepStep` models, and the
+   lock-time deep line + chain in `signal_widget_panel.dart`.
+7. **Calibration notes.** Regime sigmas are 0.8 / 1.0 / 3.0 × the tape's 1 s
+   σ (σ = median|move| / 0.6745), stickiness 0.95; the spread blow-out
+   evidence is gated on movement and halved for sub-bps spreads exactly as
+   the ramps are; PANIC's momentum weight is small (0.3) so a rhythmic tape
+   cannot read as panic; DENIAL needs a drawdown and is penalised by calm;
+   sign memory is the *signed* mean ACF so an alternating tape is "no herd".
+   Cost: ~5-10 ms per sample on a 1 200-tick tape.
+
+**Verification.** `backend/tests/test_deep_micro.py` (25): each formula on a
+series with a known answer (random walk → VR ≈ 1 / H ≈ 0.5; AR(±0.5) →
+momentum / reversion; monotone path → zero entropy; Poisson vs bursty arrivals;
+one-sided vs alternating flow; a planted λ recovered with R² > 0.95; runs vs
+alternation; a planted wavelet scale; stress vs calm regimes; a burst that
+fades), the filter (normalised, moved by evidence, sticky but not stubborn),
+the layer on synthetic tapes (fourteen steps, tone agreement, short-tape
+refusal, compact form), and its consumers (report, tracker, stream, route,
+served pages, prediction reasoning). `tools/dashboard_payload_check.js` gains
+14 live checks (57 total). Full suite 165.
+
+**Escape hatches.** `DeepState.forgetting` / `temperature`, the `LIKELIHOOD`
+table and `BANDS` in `deep_micro.py`; the blend weights in
+`emotions.analyze`.

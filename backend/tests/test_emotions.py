@@ -163,10 +163,16 @@ def test_the_manipulation_read_is_bounded_and_named() -> None:
     for key in ("FLAT", "BULL", "BEAR", "STRESS", "IMPULSE_DOWN", "IMPULSE_UP"):
         block = _report(key)["manipulation"]
         assert 0.0 <= block["score"] <= 1.0, (key, block)
-        assert block["kind"] in ("none", "retail chase", "stop hunt", "whipsaw", "book imbalance")
-        assert set(block["components"]) == {"herding", "whipsaw", "stop_hunt", "thin_book", "volume_climax"}
+        assert block["kind"] in (
+            "none", "retail chase", "stop hunt", "whipsaw", "book imbalance",
+            "momentum ignition", "toxic flow", "quote stuffing", "spoofing",
+        )
+        assert set(block["components"]) == {
+            "herding", "whipsaw", "stop_hunt", "thin_book", "volume_climax",
+            "ignition", "toxicity", "stuffing", "spoofing", "pushable",
+        }
         assert all(0.0 <= v <= 1.0 for v in block["components"].values()), (key, block)
-        assert len(block["evidence"]) == 5
+        assert len(block["evidence"]) == 7
         assert block["note"]
 
 

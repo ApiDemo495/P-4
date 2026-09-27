@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>Drosophila Trader v2.0</title>
-<link rel="stylesheet" href="/static/styles.css?v=2.3.0" />
+<link rel="stylesheet" href="/static/styles.css?v=2.4.0" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪰</text></svg>" />
 </head>
 <body>
@@ -231,6 +231,21 @@
         <div class="emotion-locked" id="emotion-locked">—</div>
       </div>
     </div>
+    <!-- Round K: the deep microstructure reasoning behind the reading -->
+    <div class="deep-block" id="deep-block">
+      <div class="cell-label">DEEP REASONING <span class="muted" id="deep-meta">microsecond → minute formulas, Bayesian filter</span></div>
+      <div class="deep-belief" id="deep-belief">—</div>
+      <div class="deep-grid">
+        <div class="deep-verdicts" id="deep-verdicts"></div>
+        <div class="deep-bands" id="deep-bands"></div>
+      </div>
+      <div class="deep-detectors" id="deep-detectors"></div>
+      <div class="deep-spectrum" id="deep-spectrum"></div>
+      <details class="deep-chain-wrap" id="deep-chain-wrap" open>
+        <summary>reasoning chain <span class="muted" id="deep-chain-meta">step by step</span></summary>
+        <ol class="deep-chain" id="deep-chain"></ol>
+      </details>
+    </div>
   </section>
 
   <!-- ===================== SIGNAL DETAIL (locked) ===================== -->
@@ -431,6 +446,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=2.3.0"></script>
+<script src="/static/app.js?v=2.4.0"></script>
 </body>
 </html>

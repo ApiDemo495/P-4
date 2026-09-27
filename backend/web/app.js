@@ -542,7 +542,25 @@ function crowdDetailHtml(crowd) {
     `</div>` +
     (bars ? `<div class="detail-line" style="font-size:10.5px">${bars}</div>` : "") +
     (crowd.read ? `<div class="muted" style="font-size:11px">${escapeHtml(String(crowd.read))}</div>` : "") +
+    deepLockedHtml(crowd.deep) +
     `</div>`;
+}
+
+/* Round K: the deep-reasoning layer as it was when the side was locked -
+   the filter's belief, the microstructure verdicts and the chain. */
+function deepLockedHtml(deep) {
+  if (!deep || !deep.available) return "";
+  const num = (v, d = 2) => (typeof v === "number" ? v.toFixed(d) : "—");
+  const chain = (deep.chain || []).map((step) =>
+    `<li><b>${escapeHtml(String(step.name))}</b> <span class="mono">${escapeHtml(String(step.value))} ${escapeHtml(String(step.unit || ""))}</span>` +
+    ` — ${escapeHtml(String(step.reads || ""))}</li>`).join("");
+  return `<div class="logic-h" style="margin-top:8px">Deep reasoning at lock time</div>` +
+    `<div class="detail-line">Bayesian filter <b>${escapeHtml(String(deep.belief || "—"))}</b> ${fmtPct(Number(deep.belief_probability || 0))} belief · ` +
+    `certainty ${num(deep.certainty)} · regime <b>${escapeHtml(String(deep.regime || "—"))}</b> · ` +
+    `Hawkes n ${num(deep.branching_ratio)} · VPIN ${num(deep.vpin)} · Kyle λ ${num(deep.kyle_lambda_bps, 4)} (R² ${num(deep.kyle_r2)}) · ` +
+    `VR ${num(deep.variance_ratio)} · H ${num(deep.hurst)} · entropy ${num(deep.entropy)} · sign memory ${num(deep.sign_memory)} · ` +
+    `computed in ${deep.compute_us ? fmtUs(deep.compute_us) : "—"}</div>` +
+    (chain ? `<ol class="deep-chain compact">${chain}</ol>` : "");
 }
 
 /* ------------------------------------------------------------ emotions --
@@ -671,6 +689,98 @@ function renderEmotions() {
       (score >= 0.45 ? ` · <b>${fmtPct(score)}</b> ${escapeHtml(String(manip.kind || ""))}` : "");
   }
   if (dot) dot.className = `crowd-dot ${tone}`;
+  renderDeep(e.deep, top);
+}
+
+/* ------------------------------------------------------------ deep --------
+   Round K.  The microstructure formulas behind the reading (Hawkes, VPIN,
+   Kyle's lambda, variance ratio, Hurst, permutation entropy, sign memory,
+   wavelet spectrum, regime filter, ignition / stuffing / spoofing) and the
+   Bayesian filter's belief, plus the ordered reasoning chain.  Everything is
+   computed on the server at the emotion cadence; the client only draws it. */
+function renderDeep(deep, top) {
+  const belief = $("deep-belief");
+  if (!belief) return;
+  if (!deep || !deep.available) {
+    belief.textContent = deep?.reason || "the deep layer needs a little more tape";
+    $("deep-verdicts").innerHTML = ""; $("deep-bands").innerHTML = "";
+    $("deep-detectors").innerHTML = ""; $("deep-spectrum").innerHTML = ""; $("deep-chain").innerHTML = "";
+    return;
+  }
+  const num = (v, d = 2) => (typeof v === "number" ? v.toFixed(d) : "—");
+  const post = deep.posterior || {};
+  const agrees = top && post.argmax === top.name;
+  const reg = deep.regime || {};
+  const flow = deep.flow || {};
+  const hawkes = deep.hawkes || {};
+  const book = deep.book || {};
+  $("deep-meta").textContent =
+    `${deep.ticks || 0} ticks · ${(deep.chain || []).length} formulas · computed in ${deep.compute_us ? fmtUs(deep.compute_us) : "—"}`;
+  const evidenceChips = ((post.evidence_for || {})[post.argmax] || []).slice(0, 4).map((ev) =>
+    `<span class="${ev.log_odds >= 0 ? "chip pos" : "chip neg"}">${escapeHtml(String(ev.label))} ${fmtSigned(Number(ev.log_odds), 2)}</span>`).join("");
+  belief.innerHTML =
+    `Bayesian filter: <b class="${agrees ? "ok" : "warn"}">${escapeHtml(String(post.argmax || "—")).toLowerCase()}</b> ` +
+    `${fmtPct(Number(post.argmax_probability || 0))} belief ` +
+    `<span class="muted">(${agrees ? "agrees with the reading" : "leans differently from the reading"} · ` +
+    `certainty ${num(post.certainty)} · surprise ${num(post.surprise_kl)} nats · runner-up ${escapeHtml(String(post.runner_up || "—")).toLowerCase()})</span>` +
+    `<div class="deep-evidence">${evidenceChips}</div>`;
+
+  const verdict = (label, value, reads, cls = "") =>
+    `<div class="deep-verdict ${cls}"><span class="k">${label}</span><b>${value}</b><span class="r">${escapeHtml(String(reads))}</span></div>`;
+  const n = Number(hawkes.branching_ratio || 0);
+  const vp = Number(flow.vpin || 0);
+  $("deep-verdicts").innerHTML = [
+    verdict("Hawkes n", num(n), n >= 0.6 ? "cascade" : n >= 0.3 ? "clustered" : "Poisson", n >= 0.6 ? "neg" : ""),
+    verdict("intensity", `${num(hawkes.intensity_hz, 1)}/s`, `baseline ${num(hawkes.baseline_hz, 1)}/s`),
+    verdict("VPIN", num(vp), vp >= 0.6 ? "one-sided" : vp >= 0.4 ? "leaning" : "balanced", vp >= 0.6 ? "neg" : ""),
+    verdict("Kyle λ", num(flow.kyle_lambda_bps, 4), `R² ${num(flow.kyle_r2)} · impact ${num(flow.impact_norm)}x`),
+    verdict("sign memory", num(flow.sign_memory), `γ ${num(flow.sign_gamma)}`),
+    verdict("microprice", `${fmtSigned(Number(book.microprice_bps || 0), 3)} bps`, `top-5 ${fmtSigned(Number(book.pressure_top5 || 0), 2)}`),
+    verdict("regime", escapeHtml(String(reg.label || "—")),
+      `calm ${fmtPct(Number(reg.calm || 0))} · trend ${fmtPct(Number(reg.trend || 0))} · stress ${fmtPct(Number(reg.stress || 0))}`,
+      reg.label === "stress" ? "neg" : reg.label === "calm" ? "ok" : ""),
+  ].join("");
+
+  const bands = deep.bands || {};
+  $("deep-bands").innerHTML =
+    `<div class="deep-band head"><span>band</span><span>clock</span><span>H</span><span>VR</span><span>entropy</span></div>` +
+    ["micro", "seconds", "window"].map((key) => {
+      const b = bands[key] || {};
+      const vr = Number(b.variance_ratio || 1);
+      const h = Number(b.hurst || 0.5);
+      return `<div class="deep-band"><span class="k">${key}</span><span class="mono">${escapeHtml(String(b.clock || "—"))}</span>` +
+        `<span class="${h > 0.58 ? "pos" : h < 0.42 ? "neg" : ""}">${num(h)}</span>` +
+        `<span class="${vr > 1.15 ? "pos" : vr < 0.85 ? "neg" : ""}">${num(vr)}</span>` +
+        `<span>${num(b.entropy)}</span></div>`;
+    }).join("");
+
+  const man = deep.manipulation || {};
+  $("deep-detectors").innerHTML = [
+    ["ignition", "momentum ignition"], ["toxicity", "toxic flow"], ["stuffing", "quote stuffing"],
+    ["spoofing", "spoofing"], ["pushable", "pushable tape"],
+  ].map(([key, label]) => {
+    const v = clamp(Number(man[key] || 0), 0, 1);
+    return `<div class="deep-detector"><span class="k">${label}</span>` +
+      `<div class="bar"><div class="bar-fill ${v >= 0.5 ? "neg" : v >= 0.25 ? "" : "neutral"}" style="width:${(v * 100).toFixed(0)}%"></div></div>` +
+      `<span class="pct">${fmtPct(v)}</span></div>`;
+  }).join("");
+
+  const spec = deep.spectrum || [];
+  const peak = spec.reduce((a, b) => (Number(b.share) > Number(a?.share || 0) ? b : a), null);
+  const specCells = spec.map((sc) =>
+    `<span class="${sc === peak ? "spec-cell peak" : "spec-cell"}"><b>${escapeHtml(String(sc.scale_label))}</b>${fmtPct(Number(sc.share || 0))}</span>`).join("");
+  $("deep-spectrum").innerHTML = spec.length ? `<span class="k">where the energy is</span>${specCells}` : "";
+
+  $("deep-chain-meta").textContent = `${(deep.chain || []).length} steps, microseconds → minute`;
+  $("deep-chain").innerHTML = (deep.chain || []).map((step) => {
+    const chips = (step.feeds || []).map((f) => `<span class="chip">${escapeHtml(String(f))}</span>`).join("");
+    const feeds = chips ? ` <span class="feeds">→ ${chips}</span>` : "";
+    return `<li><div class="step-h"><b>${escapeHtml(String(step.name))}</b>` +
+      `<span class="mono val">${escapeHtml(String(step.value))} <span class="muted">${escapeHtml(String(step.unit || ""))}</span></span>` +
+      `<span class="band">${escapeHtml(String(step.timescale || ""))}</span></div>` +
+      `<div class="mono formula">${escapeHtml(String(step.formula || ""))}</div>` +
+      `<div class="reads">${escapeHtml(String(step.reads || ""))}${feeds}</div></li>`;
+  }).join("");
 }
 
 /* The freshness contract: the prediction may never be older than the

@@ -63,3 +63,36 @@ async def emotions_history(limit: int = Query(120, ge=2, le=720)) -> dict:
         "history": history,
         "catalogue": _catalogue(),
     }
+
+
+@router.get("/api/emotions/deep")
+async def emotions_deep() -> dict:
+    """The deep-reasoning layer behind the reading (round K).
+
+    Every microstructure formula with its inputs and value (Hawkes branching,
+    VPIN, Kyle's lambda, variance ratio, Hurst, permutation entropy, sign
+    memory, wavelet spectrum, regime filter, ignition / stuffing / spoofing
+    detectors), the Bayesian filter's posterior with the evidence behind it,
+    and the ordered reasoning chain - live and as it was at lock time.
+    """
+    from backend.core.deep_micro import BANDS, EVIDENCE_LABEL, LIKELIHOOD
+
+    manager = get_manager()
+    live = manager.emotions.payload()
+    locked = manager.emotion_locked or {}
+    return {
+        "asset": manager.asset,
+        "cycle_number": manager.stats.cycle_number,
+        "interval_seconds": manager.settings.emotion_interval_seconds,
+        "at_us": live.get("at_us"),
+        "live": live.get("deep") or {"available": False},
+        "locked": locked.get("deep") or {"available": False},
+        "model": {
+            "bands": [
+                {"name": name, "label": label, "clock_ms": clock_ms, "q": q}
+                for name, label, clock_ms, q in BANDS
+            ],
+            "evidence": EVIDENCE_LABEL,
+            "likelihood": LIKELIHOOD,
+        },
+    }

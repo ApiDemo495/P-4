@@ -17,6 +17,7 @@
   --amber: #f59e0b;
   --blue: #3b82f6;
   --violet: #8b5cf6;
+  --accent-k: #60a5fa;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
@@ -689,3 +690,53 @@ th { color: var(--muted); font-weight: 600; }
   .emotion-grid { grid-template-columns: 1fr; }
   .emotion-row { grid-template-columns: 84px 1fr 40px 52px; }
 }
+
+/* ============================ Round K: deep reasoning ==========================
+   The microstructure formulas and the Bayesian filter behind the emotion
+   reading.  Dense on purpose: it is the engine showing its work. */
+.deep-block { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line, #2a2f3a); }
+.deep-belief { font-size: 13px; margin: 6px 0 8px; line-height: 1.5; }
+.deep-belief b.ok { color: var(--green, #35d07f); }
+.deep-belief b.warn { color: var(--amber, #f5b342); }
+.deep-evidence { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.deep-block .chip { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; border: 1px solid var(--line, #2a2f3a); color: var(--muted, #9aa3b2); }
+.deep-block .chip.pos { border-color: rgba(53,208,127,.5); color: var(--green, #35d07f); }
+.deep-block .chip.neg { border-color: rgba(255,92,92,.5); color: var(--red, #ff5c5c); }
+.deep-grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 10px; }
+@media (max-width: 900px) { .deep-grid { grid-template-columns: 1fr; } }
+.deep-verdicts { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
+.deep-verdict { padding: 6px 8px; border: 1px solid var(--line, #2a2f3a); border-radius: 8px; font-size: 11px; display: flex; flex-direction: column; gap: 1px; }
+.deep-verdict .k { color: var(--muted, #9aa3b2); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.deep-verdict b { font-size: 14px; font-variant-numeric: tabular-nums; }
+.deep-verdict .r { color: var(--muted, #9aa3b2); font-size: 10.5px; }
+.deep-verdict.neg b { color: var(--red, #ff5c5c); }
+.deep-verdict.ok b { color: var(--green, #35d07f); }
+.deep-bands { font-size: 11px; }
+.deep-band { display: grid; grid-template-columns: 1.1fr 1fr .8fr .8fr .9fr; gap: 6px; padding: 4px 6px; border-bottom: 1px solid var(--line, #2a2f3a); font-variant-numeric: tabular-nums; }
+.deep-band.head { color: var(--muted, #9aa3b2); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.deep-band .k { text-transform: capitalize; }
+.deep-band .pos, .deep-chain .pos { color: var(--green, #35d07f); }
+.deep-band .neg, .deep-chain .neg { color: var(--red, #ff5c5c); }
+.deep-detectors { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 4px 12px; margin-top: 10px; }
+.deep-detector { display: grid; grid-template-columns: 110px 1fr 38px; gap: 6px; align-items: center; font-size: 11px; }
+.deep-detector .k { color: var(--muted, #9aa3b2); }
+.deep-detector .pct { text-align: right; font-variant-numeric: tabular-nums; }
+.deep-spectrum { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 10px; font-size: 11px; }
+.deep-spectrum .k { color: var(--muted, #9aa3b2); margin-right: 4px; }
+.spec-cell { padding: 3px 7px; border: 1px solid var(--line, #2a2f3a); border-radius: 6px; display: inline-flex; flex-direction: column; align-items: center; min-width: 58px; font-variant-numeric: tabular-nums; }
+.spec-cell b { font-size: 10.5px; }
+.spec-cell.peak { border-color: var(--accent-k); color: var(--accent-k); }
+.deep-chain-wrap { margin-top: 10px; }
+.deep-chain-wrap summary { cursor: pointer; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted, #9aa3b2); }
+.deep-chain { list-style: none; padding: 0; margin: 6px 0 0; counter-reset: step; display: grid; gap: 6px; }
+.deep-chain li { padding: 6px 8px 6px 34px; border: 1px solid var(--line, #2a2f3a); border-radius: 8px; position: relative; font-size: 11px; }
+.deep-chain li::before { counter-increment: step; content: counter(step); position: absolute; left: 10px; top: 7px; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--accent-k); color: var(--accent-k); font-size: 10px; display: flex; align-items: center; justify-content: center; }
+.deep-chain .step-h { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.deep-chain .val { margin-left: auto; font-variant-numeric: tabular-nums; }
+.deep-chain .band { font-size: 10px; color: var(--muted, #9aa3b2); }
+.deep-chain .formula { color: var(--muted, #9aa3b2); font-size: 10.5px; margin: 2px 0; white-space: pre-wrap; }
+.deep-chain .reads { line-height: 1.45; }
+.deep-chain .feeds .chip { margin-left: 2px; }
+.deep-chain.compact li { padding: 3px 8px 3px 28px; font-size: 10.5px; }
+.deep-chain.compact li::before { width: 14px; height: 14px; top: 5px; left: 8px; font-size: 9px; }
+.deep-block .mono { font-family: var(--mono); }

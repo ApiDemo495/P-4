@@ -254,6 +254,13 @@ class EmotionPanel extends StatelessWidget {
           _label('AT LOCK TIME', 'what shaped this signal'),
           const SizedBox(height: 4),
           _LockedLine(crowd: crowd),
+          const SizedBox(height: 14),
+
+          // ---- Round K: the deep reasoning behind the reading -------------
+          _label('DEEP REASONING',
+              'microsecond → minute formulas · Bayesian filter'),
+          const SizedBox(height: 6),
+          _DeepBlock(deep: live.deep, dominantName: dominant.name),
         ],
       ),
     );
@@ -475,6 +482,387 @@ class _LockedLine extends StatelessWidget {
           style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
         ),
       ],
+    );
+  }
+}
+
+
+/// Round K.  The microstructure formulas behind the reading (Hawkes, VPIN,
+/// Kyle's lambda, variance ratio / Hurst / entropy per band, sign memory,
+/// wavelet spectrum, regime filter, ignition / stuffing / spoofing) and the
+/// Bayesian filter's belief, followed by the ordered reasoning chain.  All of
+/// it is computed on the server at the emotion cadence; this widget draws it.
+class _DeepBlock extends StatelessWidget {
+  const _DeepBlock({required this.deep, required this.dominantName});
+
+  final DeepReasoning deep;
+  final String dominantName;
+
+  static const _mono = TextStyle(
+    fontFamily: 'monospace',
+    fontSize: 10.5,
+    color: AppTheme.textMuted,
+    fontFeatures: [FontFeature.tabularFigures()],
+  );
+
+  static String _n(double v, [int d = 2]) => v.toStringAsFixed(d);
+  static String _pct(double v) => '${(v * 100).toStringAsFixed(0)}%';
+  static String _cap(String s) =>
+      s.isEmpty ? '—' : s[0].toUpperCase() + s.substring(1).toLowerCase();
+
+  @override
+  Widget build(BuildContext context) {
+    if (!deep.available) {
+      return Text(
+        deep.reason.isNotEmpty
+            ? deep.reason
+            : 'the deep layer needs a little more tape',
+        style: const TextStyle(color: AppTheme.textMuted, fontSize: 11.5),
+      );
+    }
+    final agrees = deep.belief == dominantName;
+    final beliefColor = agrees ? AppTheme.buy : AppTheme.warning;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // belief line
+        RichText(
+          text: TextSpan(
+            style: const TextStyle(
+                color: AppTheme.textPrimary, fontSize: 12.5, height: 1.4),
+            children: [
+              const TextSpan(text: 'Bayesian filter: '),
+              TextSpan(
+                  text: '${_cap(deep.belief)} ${_pct(deep.beliefProbability)}',
+                  style: TextStyle(
+                      color: beliefColor, fontWeight: FontWeight.w700)),
+              TextSpan(
+                text: agrees
+                    ? '  agrees with the reading'
+                    : '  leans differently from the reading',
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+              ),
+              TextSpan(
+                text: ' · certainty ${_n(deep.certainty)} · surprise '
+                    '${_n(deep.surpriseKl)} nats · runner-up '
+                    '${_cap(deep.runnerUp)} · ${deep.ticks} ticks in '
+                    '${(deep.computeUs / 1000).toStringAsFixed(1)} ms',
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+        if (deep.evidence.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            children: deep.evidence
+                .take(4)
+                .map((e) => _chip(
+                    '${e.key} ${e.value >= 0 ? '+' : ''}${_n(e.value)}',
+                    e.value >= 0 ? AppTheme.buy : AppTheme.sell))
+                .toList(),
+          ),
+        ],
+        const SizedBox(height: 10),
+
+        // verdict tiles
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            _tile('HAWKES n', _n(deep.branchingRatio),
+                deep.branchingRatio >= 0.6
+                    ? 'cascade'
+                    : deep.branchingRatio >= 0.3
+                        ? 'clustered'
+                        : 'Poisson',
+                deep.branchingRatio >= 0.6 ? AppTheme.sell : null),
+            _tile('INTENSITY', '${_n(deep.intensityHz, 1)}/s',
+                'baseline ${_n(deep.baselineHz, 1)}/s'),
+            _tile(
+                'VPIN',
+                _n(deep.vpin),
+                deep.vpin >= 0.6
+                    ? 'one-sided'
+                    : deep.vpin >= 0.4
+                        ? 'leaning'
+                        : 'balanced',
+                deep.vpin >= 0.6 ? AppTheme.sell : null),
+            _tile('KYLE λ', _n(deep.kyleLambdaBps, 4),
+                'R² ${_n(deep.kyleR2)} · ${_n(deep.impactNorm)}x'),
+            _tile('SIGN MEMORY', _n(deep.signMemory),
+                'γ ${_n(deep.signGamma)}'),
+            _tile(
+                'MICROPRICE',
+                '${deep.micropriceBps >= 0 ? '+' : ''}${_n(deep.micropriceBps, 3)} bps',
+                'top-5 ${deep.pressureTop5 >= 0 ? '+' : ''}${_n(deep.pressureTop5)}'),
+            _tile(
+                'REGIME',
+                deep.regime,
+                'calm ${_pct(deep.regimeCalm)} · trend ${_pct(deep.regimeTrend)}'
+                ' · stress ${_pct(deep.regimeStress)}',
+                deep.regime == 'stress'
+                    ? AppTheme.sell
+                    : deep.regime == 'calm'
+                        ? AppTheme.buy
+                        : null),
+          ],
+        ),
+        const SizedBox(height: 10),
+
+        // bands table
+        _bandRow('band', 'clock', 'H', 'VR', 'entropy', header: true),
+        for (final key in const ['micro', 'seconds', 'window'])
+          if (deep.bands[key] != null)
+            _bandRow(
+              key,
+              deep.bands[key]!.clock,
+              _n(deep.bands[key]!.hurst),
+              _n(deep.bands[key]!.varianceRatio),
+              _n(deep.bands[key]!.entropy),
+              hurst: deep.bands[key]!.hurst,
+              vr: deep.bands[key]!.varianceRatio,
+            ),
+        const SizedBox(height: 10),
+
+        // detectors
+        for (final entry in const [
+          MapEntry('ignition', 'momentum ignition'),
+          MapEntry('toxicity', 'toxic flow'),
+          MapEntry('stuffing', 'quote stuffing'),
+          MapEntry('spoofing', 'spoofing'),
+          MapEntry('pushable', 'pushable tape'),
+        ])
+          Padding(
+            padding: const EdgeInsets.only(bottom: 3),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 120,
+                  child: Text(entry.value,
+                      style: const TextStyle(
+                          color: AppTheme.textMuted, fontSize: 11)),
+                ),
+                Expanded(
+                  child: _Meter(
+                    value: deep.detectors[entry.key] ?? 0.0,
+                    color: (deep.detectors[entry.key] ?? 0.0) >= 0.5
+                        ? AppTheme.sell
+                        : (deep.detectors[entry.key] ?? 0.0) >= 0.25
+                            ? AppTheme.warning
+                            : AppTheme.hold,
+                  ),
+                ),
+                SizedBox(
+                  width: 40,
+                  child: Text(_pct(deep.detectors[entry.key] ?? 0.0),
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(fontSize: 11)),
+                ),
+              ],
+            ),
+          ),
+        if (deep.spectrum.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              const Text('where the energy is',
+                  style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+              ...deep.spectrum.map((sc) {
+                final peak = sc.value ==
+                    deep.spectrum
+                        .map((e) => e.value)
+                        .reduce((a, b) => a > b ? a : b);
+                return Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                        color: peak ? AppTheme.accent : AppTheme.border),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(sc.key,
+                          style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w600,
+                              color: peak
+                                  ? AppTheme.accent
+                                  : AppTheme.textPrimary)),
+                      Text(_pct(sc.value),
+                          style: const TextStyle(fontSize: 10.5)),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ),
+        ],
+        const SizedBox(height: 10),
+
+        // the chain
+        Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: EdgeInsets.zero,
+            initiallyExpanded: true,
+            title: Text(
+              'REASONING CHAIN  ${deep.chain.length} steps, microseconds → minute',
+              style: const TextStyle(
+                  color: AppTheme.textMuted,
+                  fontSize: 10,
+                  letterSpacing: 1.2,
+                  fontWeight: FontWeight.w600),
+            ),
+            children: deep.chain.map(_stepTile).toList(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _stepTile(DeepStep step) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+      decoration: BoxDecoration(
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 18,
+            height: 18,
+            margin: const EdgeInsets.only(right: 8, top: 1),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: AppTheme.accent),
+            ),
+            child: Text('${step.step}',
+                style: const TextStyle(fontSize: 10, color: AppTheme.accent)),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(step.name,
+                          style: const TextStyle(
+                              fontSize: 11.5, fontWeight: FontWeight.w700)),
+                    ),
+                    Text('${step.value} ${step.unit}',
+                        style: _mono.copyWith(color: AppTheme.textPrimary)),
+                    const SizedBox(width: 6),
+                    Text(step.timescale,
+                        style: const TextStyle(
+                            fontSize: 10, color: AppTheme.textMuted)),
+                  ],
+                ),
+                Text(step.formula, style: _mono),
+                Wrap(
+                  spacing: 4,
+                  runSpacing: 2,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(step.reads,
+                        style: const TextStyle(fontSize: 11, height: 1.4)),
+                    if (step.feeds.isNotEmpty)
+                      const Text('→',
+                          style: TextStyle(
+                              fontSize: 11, color: AppTheme.textMuted)),
+                    ...step.feeds.map((f) => _chip(f, AppTheme.textMuted)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static Widget _chip(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+      decoration: BoxDecoration(
+        border: Border.all(color: color.withAlpha(140)),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(text, style: TextStyle(fontSize: 10.5, color: color)),
+    );
+  }
+
+  static Widget _tile(String label, String value, String sub, [Color? color]) {
+    return Container(
+      width: 150,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label,
+              style: const TextStyle(
+                  color: AppTheme.textMuted, fontSize: 9.5, letterSpacing: 1)),
+          Text(value,
+              style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: color ?? AppTheme.textPrimary,
+                  fontFeatures: const [FontFeature.tabularFigures()])),
+          Text(sub,
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 10.5)),
+        ],
+      ),
+    );
+  }
+
+  static Widget _bandRow(String a, String b, String c, String d, String e,
+      {bool header = false, double? hurst, double? vr}) {
+    Color? tint(double? v, double hi, double lo) {
+      if (v == null) return null;
+      if (v > hi) return AppTheme.buy;
+      if (v < lo) return AppTheme.sell;
+      return null;
+    }
+
+    final style = TextStyle(
+      fontSize: header ? 9.5 : 11,
+      letterSpacing: header ? 1 : 0,
+      color: header ? AppTheme.textMuted : AppTheme.textPrimary,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: AppTheme.border))),
+      child: Row(
+        children: [
+          Expanded(flex: 11, child: Text(header ? a.toUpperCase() : a, style: style)),
+          Expanded(flex: 10, child: Text(header ? b.toUpperCase() : b, style: style)),
+          Expanded(
+              flex: 8,
+              child: Text(c, style: style.copyWith(color: tint(hurst, 0.58, 0.42) ?? style.color))),
+          Expanded(
+              flex: 8,
+              child: Text(d, style: style.copyWith(color: tint(vr, 1.15, 0.85) ?? style.color))),
+          Expanded(flex: 9, child: Text(e, style: style)),
+        ],
+      ),
     );
   }
 }

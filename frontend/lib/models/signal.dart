@@ -469,6 +469,8 @@ class PredictionDetail {
     this.crowdManipulationKind = '',
     this.crowdRead = '',
     this.crowdDampening = 1.0,
+    this.crowdDeep = const {},
+    this.crowdChain = const [],
   });
 
   final String side;
@@ -496,8 +498,15 @@ class PredictionDetail {
   /// The confidence multiplier the crowd produced (1.0 = no dampening).
   final double crowdDampening;
 
+  /// Round K: the deep-reasoning summary at lock time (belief, regime, VPIN,
+  /// Hawkes n, Kyle's lambda, variance ratio, Hurst, entropy …) and the
+  /// ordered reasoning chain.
+  final Map<String, dynamic> crowdDeep;
+  final List<DeepStep> crowdChain;
+
   bool get hasData => side.isNotEmpty || supporters.isNotEmpty;
   bool get hasCrowd => crowdDominant.isNotEmpty;
+  bool get hasDeep => crowdDeep['available'] == true;
 
   static const PredictionDetail none = PredictionDetail();
 
@@ -540,6 +549,13 @@ class PredictionDetail {
       crowdManipulationKind: _s(crowd?['manipulation_kind']),
       crowdRead: _s(crowd?['read']),
       crowdDampening: _d(parts['crowd_dampening'], 1.0),
+      crowdDeep: crowd?['deep'] is Map
+          ? Map<String, dynamic>.from(crowd!['deep'] as Map)
+          : const {},
+      crowdChain: (((crowd?['deep'] as Map?)?['chain'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((row) => DeepStep.fromJson(Map<String, dynamic>.from(row)))
+          .toList(),
     );
   }
 }
@@ -647,6 +663,7 @@ class EmotionReading {
     this.hint = '',
     this.intervalSeconds = 0.5,
     this.manipulation = ManipulationRead.none,
+    this.deep = DeepReasoning.none,
   });
 
   final bool available;
@@ -671,6 +688,10 @@ class EmotionReading {
   final String hint;
   final double intervalSeconds;
   final ManipulationRead manipulation;
+
+  /// Round K: the microstructure formulas and the Bayesian filter behind
+  /// the reading.
+  final DeepReasoning deep;
 
   static const EmotionReading none = EmotionReading();
 
@@ -712,6 +733,228 @@ class EmotionReading {
       manipulation: manipulation is Map
           ? ManipulationRead.fromJson(Map<String, dynamic>.from(manipulation))
           : ManipulationRead.none,
+      deep: json['deep'] is Map
+          ? DeepReasoning.fromJson(Map<String, dynamic>.from(json['deep'] as Map))
+          : DeepReasoning.none,
+    );
+  }
+}
+
+/// One step of the deep reasoning chain (Round K): a formula, its value and
+/// what it reads as, plus the emotions it argues for.
+class DeepStep {
+  const DeepStep({
+    this.step = 0,
+    this.name = '',
+    this.formula = '',
+    this.value = '',
+    this.unit = '',
+    this.reads = '',
+    this.timescale = '',
+    this.feeds = const [],
+  });
+
+  final int step;
+  final String name;
+  final String formula;
+  final String value;
+  final String unit;
+  final String reads;
+  final String timescale;
+  final List<String> feeds;
+
+  factory DeepStep.fromJson(Map<String, dynamic> json) {
+    final raw = json['value'];
+    return DeepStep(
+      step: _i(json['step']),
+      name: _s(json['name']),
+      formula: _s(json['formula']),
+      value: raw is num ? _trim(raw) : _s(raw),
+      unit: _s(json['unit']),
+      reads: _s(json['reads']),
+      timescale: _s(json['timescale']),
+      feeds: ((json['feeds'] as List?) ?? const []).map(_s).toList(),
+    );
+  }
+
+  static String _trim(num v) {
+    final d = v.toDouble();
+    if (d == d.roundToDouble() && d.abs() < 1e6) return d.toStringAsFixed(0);
+    return d.abs() < 0.01 ? d.toStringAsFixed(5) : d.toStringAsFixed(3);
+  }
+}
+
+/// One of the three multi-scale bands (micro / seconds / window).
+class DeepBand {
+  const DeepBand({
+    this.clock = '',
+    this.hurst = 0.5,
+    this.varianceRatio = 1.0,
+    this.entropy = 1.0,
+    this.samples = 0,
+  });
+
+  final String clock;
+  final double hurst;
+  final double varianceRatio;
+  final double entropy;
+  final int samples;
+
+  factory DeepBand.fromJson(Map<String, dynamic> json) => DeepBand(
+        clock: _s(json['clock']),
+        hurst: _d(json['hurst'], 0.5),
+        varianceRatio: _d(json['variance_ratio'], 1.0),
+        entropy: _d(json['entropy'], 1.0),
+        samples: _i(json['samples']),
+      );
+}
+
+/// The deep microstructure layer (Round K): Hawkes self-excitation, VPIN,
+/// Kyle's lambda, variance ratio / Hurst / entropy per band, sign memory,
+/// wavelet spectrum, the regime filter, the manipulation detectors, the
+/// Bayesian filter's posterior and the ordered reasoning chain.
+class DeepReasoning {
+  const DeepReasoning({
+    this.available = false,
+    this.reason = '',
+    this.ticks = 0,
+    this.computeUs = 0,
+    this.branchingRatio = 0.0,
+    this.intensityHz = 0.0,
+    this.baselineHz = 0.0,
+    this.vpin = 0.0,
+    this.kyleLambdaBps = 0.0,
+    this.kyleR2 = 0.0,
+    this.impactNorm = 0.0,
+    this.signMemory = 0.0,
+    this.signGamma = 1.0,
+    this.micropriceBps = 0.0,
+    this.pressureTop5 = 0.0,
+    this.regime = '',
+    this.regimeCalm = 0.0,
+    this.regimeTrend = 0.0,
+    this.regimeStress = 0.0,
+    this.bands = const {},
+    this.detectors = const {},
+    this.spectrum = const [],
+    this.belief = '',
+    this.beliefProbability = 0.0,
+    this.runnerUp = '',
+    this.certainty = 0.0,
+    this.surpriseKl = 0.0,
+    this.posterior = const {},
+    this.evidence = const [],
+    this.chain = const [],
+  });
+
+  final bool available;
+  final String reason;
+  final int ticks;
+  final int computeUs;
+  final double branchingRatio;
+  final double intensityHz;
+  final double baselineHz;
+  final double vpin;
+  final double kyleLambdaBps;
+  final double kyleR2;
+  final double impactNorm;
+  final double signMemory;
+  final double signGamma;
+  final double micropriceBps;
+  final double pressureTop5;
+  final String regime;
+  final double regimeCalm;
+  final double regimeTrend;
+  final double regimeStress;
+  final Map<String, DeepBand> bands;
+
+  /// ignition / toxicity / stuffing / spoofing / pushable, each 0-1.
+  final Map<String, double> detectors;
+
+  /// (scale label, share of energy) from the finest scale up.
+  final List<MapEntry<String, double>> spectrum;
+  final String belief;
+  final double beliefProbability;
+  final String runnerUp;
+  final double certainty;
+  final double surpriseKl;
+  final Map<String, double> posterior;
+
+  /// (label, log-odds) - the strongest evidence for the believed emotion.
+  final List<MapEntry<String, double>> evidence;
+  final List<DeepStep> chain;
+
+  static const DeepReasoning none = DeepReasoning();
+
+  factory DeepReasoning.fromJson(Map<String, dynamic> json) {
+    if (json['available'] != true) {
+      return DeepReasoning(reason: _s(json['reason']));
+    }
+    final hawkes = (json['hawkes'] as Map?) ?? const {};
+    final flow = (json['flow'] as Map?) ?? const {};
+    final book = (json['book'] as Map?) ?? const {};
+    final regime = (json['regime'] as Map?) ?? const {};
+    final post = (json['posterior'] as Map?) ?? const {};
+    final bands = <String, DeepBand>{};
+    ((json['bands'] as Map?) ?? const {}).forEach((key, value) {
+      if (value is Map) {
+        bands[_s(key)] = DeepBand.fromJson(Map<String, dynamic>.from(value));
+      }
+    });
+    final detectors = <String, double>{};
+    ((json['manipulation'] as Map?) ?? const {}).forEach((key, value) {
+      final name = _s(key);
+      if (const ['ignition', 'toxicity', 'stuffing', 'spoofing', 'pushable']
+          .contains(name)) {
+        detectors[name] = _d(value);
+      }
+    });
+    final posterior = <String, double>{};
+    ((post['posterior'] as Map?) ?? const {}).forEach((key, value) {
+      posterior[_s(key)] = _d(value);
+    });
+    final argmax = _s(post['argmax']);
+    final evidenceFor = (post['evidence_for'] as Map?) ?? const {};
+    final evidence = ((evidenceFor[argmax] as List?) ?? const [])
+        .whereType<Map>()
+        .map((row) => MapEntry(_s(row['label']), _d(row['log_odds'])))
+        .toList();
+    return DeepReasoning(
+      available: true,
+      ticks: _i(json['ticks']),
+      computeUs: _i(json['compute_us']),
+      branchingRatio: _d(hawkes['branching_ratio']),
+      intensityHz: _d(hawkes['intensity_hz']),
+      baselineHz: _d(hawkes['baseline_hz']),
+      vpin: _d(flow['vpin']),
+      kyleLambdaBps: _d(flow['kyle_lambda_bps']),
+      kyleR2: _d(flow['kyle_r2']),
+      impactNorm: _d(flow['impact_norm']),
+      signMemory: _d(flow['sign_memory']),
+      signGamma: _d(flow['sign_gamma'], 1.0),
+      micropriceBps: _d(book['microprice_bps']),
+      pressureTop5: _d(book['pressure_top5']),
+      regime: _s(regime['label']),
+      regimeCalm: _d(regime['calm']),
+      regimeTrend: _d(regime['trend']),
+      regimeStress: _d(regime['stress']),
+      bands: bands,
+      detectors: detectors,
+      spectrum: ((json['spectrum'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((row) => MapEntry(_s(row['scale_label']), _d(row['share'])))
+          .toList(),
+      belief: argmax,
+      beliefProbability: _d(post['argmax_probability']),
+      runnerUp: _s(post['runner_up']),
+      certainty: _d(post['certainty']),
+      surpriseKl: _d(post['surprise_kl']),
+      posterior: posterior,
+      evidence: evidence,
+      chain: ((json['chain'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((row) => DeepStep.fromJson(Map<String, dynamic>.from(row)))
+          .toList(),
     );
   }
 }

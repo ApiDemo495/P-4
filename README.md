@@ -33,6 +33,21 @@ is dominant right now**, how long it has held, how crowded / manipulated the
 minute looks, and what the crowd was feeling when the locked signal was
 computed. A crowded minute sizes the confidence down; it never flips the side.
 
+**Deep reasoning under the emotions.** The reading is not a rule of thumb: under
+every emotion sit fourteen market-microstructure formulas run on the same tape
+at the same half-second cadence - Hawkes self-excitation (are prints causing
+prints?), microprice lean, VPIN order-flow toxicity, Kyle's lambda (how
+pushable the tape is), Lo-MacKinlay variance ratios, the Hurst exponent,
+Bandt-Pompe permutation entropy, Lillo-Farmer trade-sign memory, a Haar wavelet
+energy spectrum (which timescale carries the action), a three-state regime
+filter, and momentum-ignition / quote-stuffing / spoofing detectors - each on
+three bands from ticks to the minute. A discrete Bayesian filter with sticky
+transitions turns that evidence into a *belief* over the eight emotions, and the
+dashboard renders the whole **reasoning chain**: formula, inputs, value, what it
+reads as, and which emotions it argues for. The belief is blended into the bars,
+the detectors into the manipulation score, and the whole chain is frozen with
+the signal at lock time.
+
 **The whole app runs on ONE port.** Dashboard, API, WebSocket, matrix viewer,
 settings page and the Flutter build are all served from port **8000**, so there
 is exactly one URL to forward and no second window to keep open.
@@ -194,6 +209,7 @@ Open the URL `bash run.sh --urls` prints. Everything lives under it:
 | `/docs` | the OpenAPI explorer |
 | `/ws/signals` | the WebSocket stream both clients use (`EMOTION` messages twice a second) |
 | `/api/emotions` | the crowd's emotions: live reading, lock-time reading, dampening |
+| `/api/emotions/deep` | the deep layer: fourteen microstructure formulas, Bayesian posterior, reasoning chain, the likelihood table |
 
 `bash frontend/run_web.sh --dev` is the only command that opens a second port,
 and it is pinned to **8081**. Anything else in your PORTS tab belongs to another
@@ -347,10 +363,15 @@ curl -s localhost:8000/api/brain/explain | python3 -m json.tool
 curl -s localhost:8000/api/emotions | python3 -m json.tool
 ```
 
+```bash
+curl -s localhost:8000/api/emotions/deep | python3 -m json.tool
+```
+
 The microsecond contract, checked against the running engine: the forecast
 window, its six-digit instants, the per-formula µs timings, the tape's real
-resolution, and the crowd's eight emotions with the dominant one (no browser
-needed).
+resolution, the crowd's eight emotions with the dominant one, and the deep
+layer (fourteen reasoning steps, a normalised posterior, three bands, the
+detectors) - no browser needed.
 
 ```bash
 BASE=http://127.0.0.1:8000 node tools/dashboard_payload_check.js

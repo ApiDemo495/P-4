@@ -1516,6 +1516,40 @@ class CycleManager:
             ),
         )
 
+    @staticmethod
+    def _crowd_deep_summary(deep: dict) -> dict:
+        """The deep-reasoning block of a locked crowd reading, trimmed for the
+        prediction detail: what the Bayesian filter believed, the verdict of
+        each microstructure formula and the full chain."""
+        if not deep or not deep.get("available"):
+            return {"available": False}
+        post = deep.get("posterior") or {}
+        flow = deep.get("flow") or {}
+        bands = deep.get("bands") or {}
+        seconds = bands.get("seconds") or {}
+        return {
+            "available": True,
+            "belief": post.get("argmax"),
+            "belief_probability": post.get("argmax_probability"),
+            "certainty": post.get("certainty"),
+            "surprise_kl": post.get("surprise_kl"),
+            "regime": (deep.get("regime") or {}).get("label"),
+            "branching_ratio": (deep.get("hawkes") or {}).get("branching_ratio"),
+            "vpin": flow.get("vpin"),
+            "kyle_lambda_bps": flow.get("kyle_lambda_bps"),
+            "kyle_r2": flow.get("kyle_r2"),
+            "variance_ratio": seconds.get("variance_ratio"),
+            "hurst": seconds.get("hurst"),
+            "entropy": seconds.get("entropy"),
+            "sign_memory": flow.get("sign_memory"),
+            "manipulation": dict(deep.get("manipulation") or {}),
+            "compute_us": deep.get("compute_us"),
+            "chain": [
+                {k: step.get(k) for k in ("step", "name", "formula", "value", "unit", "reads", "timescale", "feeds")}
+                for step in deep.get("chain") or []
+            ],
+        }
+
     def prediction_detail(
         self,
         signal: FrozenSignal | None,
@@ -1667,6 +1701,9 @@ class CycleManager:
                     for item in crowd_emotions
                 ],
                 "drivers": crowd_dominant.get("drivers") or [],
+                # The deep layer at lock time: the filter's belief, the
+                # microstructure verdicts and the reasoning chain (round K).
+                "deep": self._crowd_deep_summary(crowd.get("deep") or {}),
             },
             formula_count=len(values),
         )

@@ -365,6 +365,16 @@ def build_reasoning(
         else:
             text += f" — the crowd's temperature {'leans with' if leans_with else 'leans against'} the {side} side"
             supports = bool(leans_with)
+        deep = (crowd.get("deep") or {}).get("posterior") or {}
+        if deep.get("argmax"):
+            regime = ((crowd.get("deep") or {}).get("regime") or {}).get("label")
+            flow = (crowd.get("deep") or {}).get("flow") or {}
+            text += (
+                f"; deep read: Bayesian filter {float(deep.get('argmax_probability') or 0.0):.0%} "
+                f"{str(deep.get('argmax')).capitalize()}"
+                + (f", {regime} regime" if regime else "")
+                + (f", VPIN {float(flow.get('vpin')):.2f}" if flow.get("vpin") is not None else "")
+            )
         bullets.append({
             "kind": "crowd",
             "weight": None,

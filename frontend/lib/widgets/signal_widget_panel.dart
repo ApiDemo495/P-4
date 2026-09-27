@@ -1054,6 +1054,44 @@ class _PredictionDetailToggleState extends State<_PredictionDetailToggle> {
                   ),
                 ),
               ),
+            // Round K: the deep reasoning at lock time - the Bayesian
+            // filter's belief, the microstructure verdicts and the chain.
+            if (detail.hasDeep)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'deep read at lock time: Bayesian filter '
+                      '${_s(detail.crowdDeep['belief'])} '
+                      '${(_d(detail.crowdDeep['belief_probability']) * 100).toStringAsFixed(0)}% belief · '
+                      'regime ${_s(detail.crowdDeep['regime'])} · '
+                      'Hawkes n ${_d(detail.crowdDeep['branching_ratio']).toStringAsFixed(2)} · '
+                      'VPIN ${_d(detail.crowdDeep['vpin']).toStringAsFixed(2)} · '
+                      'Kyle λ ${_d(detail.crowdDeep['kyle_lambda_bps']).toStringAsFixed(4)} '
+                      '(R² ${_d(detail.crowdDeep['kyle_r2']).toStringAsFixed(2)}) · '
+                      'VR ${_d(detail.crowdDeep['variance_ratio']).toStringAsFixed(2)} · '
+                      'H ${_d(detail.crowdDeep['hurst']).toStringAsFixed(2)} · '
+                      'entropy ${_d(detail.crowdDeep['entropy']).toStringAsFixed(2)}',
+                      style: const TextStyle(
+                        color: AppTheme.textMuted,
+                        fontSize: 10.5,
+                        fontFamily: 'mono',
+                      ),
+                    ),
+                    for (final step in detail.crowdChain)
+                      Text(
+                        '  ${step.step}. ${step.name}: ${step.value} ${step.unit} — ${step.reads}',
+                        style: const TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: 10,
+                          fontFamily: 'mono',
+                        ),
+                      ),
+                  ],
+                ),
+              ),
           ],
         ],
       ],
@@ -1187,3 +1225,7 @@ class _ReasonList extends StatelessWidget {
     );
   }
 }
+
+
+String _s(dynamic v) => v == null ? '—' : v.toString();
+double _d(dynamic v) => v is num ? v.toDouble() : 0.0;
