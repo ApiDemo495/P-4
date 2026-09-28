@@ -163,8 +163,8 @@ const getJSON = async (pathname) => {
   const deepPayload = await getJSON("/api/emotions/deep");
   const deep = deepPayload.live || {};
   check(deep.available === true, "the deep layer has a live reading");
-  check(Array.isArray(deep.chain) && deep.chain.length === 14,
-    `${(deep.chain || []).length} reasoning steps (want 14)`);
+  check(Array.isArray(deep.chain) && deep.chain.length === 15,
+    `${(deep.chain || []).length} reasoning steps (want 15)`);
   check((deep.chain || []).every((s) => s.formula && s.reads && typeof s.step === "number"),
     "every step carries a formula, a value and a reading");
   const post = deep.posterior || {};
@@ -190,6 +190,33 @@ const getJSON = async (pathname) => {
     "the prediction detail carries the deep read at lock time");
   check(APP.includes("function renderDeep(") && html.includes('id="deep-chain"'),
     "app.js renders the deep block and the served page has it");
+
+  // 8. Round L: sync, lock, and the crowd against the formulas -------------------
+  const win = signal.window || {};
+  check(win.lock && win.lock.stages === 2,
+    `two-stage lock: agents ${win.lock && win.lock.agents_lead_seconds}s early, final freeze ${win.lock && win.lock.final_lock_lead_seconds}s before the boundary`);
+  check(typeof (win.lock || {}).data_age_at_open_seconds === "number" && win.lock.data_age_at_open_seconds <= 1.5,
+    `the live window was frozen ${win.lock && win.lock.data_age_at_open_seconds}s before it opened (want <= 1.5 s)`);
+  check(crowd.formula_agreement && typeof crowd.formula_agreement.verdict === "string",
+    `crowd vs formulas: ${crowd.formula_agreement && crowd.formula_agreement.verdict} (${crowd.formula_agreement && crowd.formula_agreement.note})`);
+  check((crowd.formula_agreement || {}).weights && crowd.formula_agreement.weights.formulas === 0.4,
+    "the agreement block states the formulas' 40% vote and the crowd's 25% cap");
+  check((crowd.emotions || []).every((e) => typeof e.formula === "string" && e.formula.includes("=") && Array.isArray(e.terms) && e.terms.length >= 3),
+    "every emotion carries its printed formula and live terms");
+  check(crowd.formula_glossary && Object.keys(crowd.formula_glossary).length >= 20,
+    `${Object.keys(crowd.formula_glossary || {}).length} formula terms defined`);
+  check(deep.chain && deep.chain[deep.chain.length - 1].name === "22-formula cross-check",
+    "the reasoning chain ends with the 22-formula cross-check");
+  check(crowdDetail.crowd && crowdDetail.crowd.formula_agreement,
+    "the locked crowd reading was cross-checked against the lock-time formulas");
+  check(APP.includes("opts.boundary") && APP.includes("state.serverOffsetMs = arrival"),
+    "the client snaps its clock to the boundary SIGNAL (reveal == zero)");
+  check(APP.includes("renderLockedCrowdLine(") && !APP.includes("crowd now:"),
+    "the prediction cell shows the crowd at lock, never the live one");
+  check(APP.includes("emotionsDeepDirty") && APP.includes("function renderEmotionFormula("),
+    "the deep block repaints only when a new one arrives; emotion formulas are rendered");
+  check(html.indexOf('class="card signal-card"') < html.indexOf('id="emotion-card"'),
+    "the locked signal card comes before the live crowd card");
 
   for (const line of ok) console.log(`  ok   ${line}`);
   for (const line of fail) console.log(`  FAIL ${line}`);

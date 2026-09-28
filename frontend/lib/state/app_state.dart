@@ -259,7 +259,8 @@ class AppState extends ChangeNotifier {
       case 'SIGNAL':
         // The boundary message is a complete snapshot: adopting it repaints
         // every panel in this one pass, in parallel with the countdown flip.
-        _applyWindow(event.data['window'] ?? event.data['clock']);
+        _applyWindow(event.data['window'] ?? event.data['clock'],
+            boundary: true);
         _applySignal(event.data);
         _applySnapshot(event.data, includeHistory: true);
         break;
@@ -294,8 +295,15 @@ class AppState extends ChangeNotifier {
         // touched, so nothing else on screen moves.
         final reading = event.data['emotions'];
         if (reading is Map) {
+          final map = Map<String, dynamic>.from(reading);
+          var parsed = EmotionReading.fromJson(map);
+          // The heavy deep block rides on every fourth sample only; the bars
+          // move twice a second.  Keep the last deep block in between.
+          if (map['deep'] == null && crowd.live.deep.available) {
+            parsed = parsed.withDeep(crowd.live.deep);
+          }
           _applyLiveEmotion(
-            EmotionReading.fromJson(Map<String, dynamic>.from(reading)),
+            parsed,
             dampening: (event.data['dampening'] as Map?)?.cast<String, dynamic>(),
           );
         }
@@ -475,7 +483,7 @@ class AppState extends ChangeNotifier {
   /// Any other message that happens to carry a window block - a pulse, a status
   /// poll, a reconnect - just refreshes the descriptive fields, so a late
   /// message can never move the deadline under a running countdown.
-  void _applyWindow(dynamic raw) {
+  void _applyWindow(dynamic raw, {bool boundary = false}) {
     if (raw is! Map) return;
     final parsed = WindowInfo.fromJson(Map<String, dynamic>.from(raw));
     window = parsed;
@@ -495,9 +503,15 @@ class AppState extends ChangeNotifier {
 
     // Nudge the offset estimate towards the server's clock instead of snapping:
     // a slow network must not shift the deadline.
+    // Exception (Round L): the boundary SIGNAL is sent at the exact instant
+    // the window opens, so its arrival is the one sample worth snapping to.
+    // Anchoring to the arrival keeps this clock *behind* the server by the
+    // one-way latency, so the countdown reaches zero only when the next
+    // SIGNAL is already here - the reveal and the zero are the same instant,
+    // and a prediction can never appear "early".
     final sample = incoming.serverTimeMs - DateTime.now().millisecondsSinceEpoch;
     final current = _serverOffsetMs;
-    _serverOffsetMs = current == null
+    _serverOffsetMs = current == null || boundary
         ? sample
         : current + (sample - current).clamp(-120, 120);
 

@@ -456,3 +456,70 @@ def test_the_flutter_client_has_the_model_and_the_panel() -> None:
     panel = DART_PANEL.read_text()
     assert "class EmotionPanel" in panel
     assert "dominant" in panel and "manipulation" in panel
+
+
+# ---------------------------------------------------------------------------
+# Round L: the emotions are printed formulas and are cross-checked against the
+# 22 formulas, which keep the vote
+# ---------------------------------------------------------------------------
+
+
+def test_every_emotion_carries_its_formula_and_live_terms():
+    from backend.core import emotions as E
+    from backend.formulas import synthetic
+
+    snap = synthetic.scenario("IMPULSE_DOWN").snapshots[-1]
+    report = E.analyze(snap, "BTC")
+    assert report.available
+    for score in report.scores:
+        assert score.formula.startswith(score.name + " =")
+        assert score.terms, score.name
+        weights = sum(t["weight"] for t in score.terms)
+        assert weights == pytest.approx(1.0, abs=1e-6)
+        # the printed terms reproduce the ramp reading (before gate + band lift)
+        raw = sum(t["contribution"] for t in score.terms)
+        assert 0.0 <= raw <= 1.0
+        assert 0.0 <= score.gate <= 1.0
+        for term in score.terms:
+            assert term["term"]
+            assert 0.0 <= term["value"] <= 1.0 + 1e-9
+    payload = report.to_dict()
+    assert set(payload["formula_glossary"]) >= {"sell", "buy", "down_1s", "top", "bottom"}
+    assert payload["emotions"][0]["formula"]
+
+
+def test_formula_agreement_names_the_verdict_and_who_has_the_vote():
+    from backend.core.emotions import formula_agreement
+
+    aligned = formula_agreement({"score": 0.5, "voters": 10, "up": 8, "down": 2}, 0.4)
+    assert aligned["verdict"] == "aligned" and aligned["alignment"] == pytest.approx(0.4)
+    conflict = formula_agreement({"score": 0.5, "voters": 10, "up": 8, "down": 2}, -0.3)
+    assert conflict["verdict"] == "conflict" and conflict["alignment"] == pytest.approx(-0.3)
+    assert "formulas keep the vote" in conflict["note"]
+    silent = formula_agreement({"score": 0.9, "voters": 2}, 0.9)
+    assert silent["verdict"] == "formulas silent" and not silent["available"]
+    flat = formula_agreement({"score": -0.4, "voters": 6}, 0.0)
+    assert flat["verdict"] == "crowd flat" and flat["formula_side"] == "SELL"
+    assert aligned["weights"]["formulas"] == 0.40
+    assert aligned["weights"]["crowd_max_confidence_cut"] == 0.25
+
+
+def test_the_live_reading_is_checked_against_the_formulas():
+    from backend.core import emotions as E
+    from backend.formulas import synthetic
+
+    snap = synthetic.scenario("IMPULSE_UP").snapshots[-1]
+    directional = {"CCSv2": "core", "MPS": "momentum", "DRG": "drosophila", "TQD": "flow"}
+    report = E.analyze(
+        snap, "BTC",
+        formulas={"CCSv2": 0.7, "MPS": 0.5, "DRG": 0.6, "TQD": 0.4},
+        directional=directional,
+    )
+    agree = report.formula_agreement
+    assert agree["available"] and agree["voters"] == 4 and agree["formula_side"] == "BUY"
+    assert report.deep["formula_voters"] == 4 and report.deep["formula_consensus"] > 0
+    assert report.deep["evidence"]["formula_up"] > 0
+    assert report.deep["chain"][-1]["name"] == "22-formula cross-check"
+    assert agree["note"] in report.read()
+    streamed = E.compact(report.to_dict())
+    assert streamed["formula_agreement"]["verdict"] == agree["verdict"]

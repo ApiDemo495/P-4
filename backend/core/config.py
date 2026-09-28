@@ -295,6 +295,14 @@ class Settings:
     lock_deadline_seconds: float = field(
         default_factory=lambda: _env_float("LOCK_DEADLINE_SECONDS", 8.0)
     )
+    #: Round L - the two-stage lock.  The slow inputs (agents, with their 7 s
+    #: timeouts) are prepared ``lock_deadline_seconds`` before the boundary;
+    #: everything fast (a fresh snapshot, the 22 formulas, the crowd, fusion)
+    #: is re-frozen this many seconds before the boundary, so the prediction
+    #: is built on data that is a fraction of a second old, not eight seconds.
+    final_lock_lead_seconds: float = field(
+        default_factory=lambda: _env_float("FINAL_LOCK_LEAD_SECONDS", 0.4)
+    )
     formula_refresh_seconds: float = field(
         default_factory=lambda: _env_float("FORMULA_REFRESH_SECONDS", 15.0)
     )

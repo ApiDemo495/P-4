@@ -79,34 +79,42 @@ BANDS = (
 #: per unit of evidence.  Positive means the evidence argues *for* the emotion.
 LIKELIHOOD: dict[str, dict[str, float]] = {
     "FEAR": {
+        "formula_down": 1.5, "formula_up": -1.0,
         "down_mid": 2.0, "down_slow": 1.0, "stress": 1.5, "blowout": 1.0,
         "toxicity": 0.8, "book_pressure": -0.8, "news": -0.8, "calm": -1.5,
     },
     "PANIC": {
+        "formula_down": 1.2,
         "down_fast": 2.5, "cascade": 2.0, "stress": 1.5, "toxicity": 1.2,
         "blowout": 1.2, "momentum": 0.3, "calm": -2.0,
     },
     "CAPITULATION": {
+        "formula_down": 1.0,
         "drawdown": 2.5, "down_slow": 1.5, "toxicity": 1.0, "momentum": -0.5,
         "herd_memory": 0.8, "persistence": 0.6, "calm": -1.5,
     },
     "DENIAL": {
+        "formula_down": 1.2, "formula_up": -0.8,
         "drawdown": 2.0, "down_slow": 0.8, "up_fast": 1.0, "momentum": -1.0,
         "disorder": 0.4, "book_pressure": 0.6, "news": -0.5, "stress": 0.5, "calm": -1.0,
     },
     "HOPE": {
+        "formula_up": 1.5, "formula_down": -1.0,
         "up_mid": 1.5, "up_slow": 1.0, "calm": 0.5, "book_pressure": 0.8,
         "news": 0.8, "stress": -0.8, "momentum": 0.5,
     },
     "EUPHORIA": {
+        "formula_up": 1.5, "formula_down": -0.8,
         "up_slow": 2.0, "up_mid": 1.0, "runup": 2.0, "persistence": 1.0, "herd_memory": 1.0,
         "calm": -0.5, "news": 0.8, "momentum": 0.8,
     },
     "FOMO": {
+        "formula_up": 1.2,
         "up_fast": 2.5, "cascade": 2.0, "toxicity": 1.0, "momentum": 1.0,
         "herd_memory": 1.2, "calm": -1.5,
     },
     "COMPLACENCY": {
+        "formula_conviction": -1.5,
         "calm": 2.5, "disorder": 1.0, "stress": -2.0, "down_fast": -1.5,
         "up_fast": -1.5, "down_mid": -1.5, "up_mid": -1.5, "cascade": -1.0,
         "toxicity": -0.8,
@@ -124,6 +132,8 @@ EVIDENCE_LABEL = {
     "disorder": "permutation entropy", "herd_memory": "sign memory (Lillo-Farmer)",
     "stress": "stress regime", "calm": "calm regime", "blowout": "spread blow-out",
     "book_pressure": "book pressure (microprice)", "news": "news tone",
+    "formula_up": "22-formula consensus (bullish)", "formula_down": "22-formula consensus (bearish)",
+    "formula_conviction": "22-formula conviction |C|",
 }
 
 
@@ -542,13 +552,27 @@ def quote_stuffing(times_ms: np.ndarray, prices: np.ndarray, tick_rate_hz: float
 # ---------------------------------------------------------------------------
 # Evidence, Bayesian filter, reasoning chain
 # ---------------------------------------------------------------------------
-def _evidence(f: dict[str, float], deep: dict) -> dict[str, float]:
+def _evidence(
+    f: dict[str, float], deep: dict, formula_consensus: float = 0.0, formula_voters: int = 0
+) -> dict[str, float]:
     """Compress the raw formulas into the bounded evidence variables the
-    likelihood table understands (each in [-1, 1] or [0, 1])."""
+    likelihood table understands (each in [-1, 1] or [0, 1]).
+
+    ``formula_consensus`` is the weighted vote of the 22 directional formulas
+    (``backend.core.prediction.consensus``, in [-1, 1]).  It enters the filter
+    as its own evidence so the crowd reading is pulled toward what the
+    formulas measure - the emotions describe *how* the crowd behaves around
+    the formulas' view, they never out-vote it (the fusion gives the formulas
+    the vote and the crowd only a bounded confidence modifier).
+    """
     z1 = _safe(f.get("z_1s")); z5 = _safe(f.get("z_5s")); z60 = _safe(f.get("z_60s"))
     bands = deep["bands"]
     reg = deep["regime"]
+    c = _clip(_safe(formula_consensus), -1.0, 1.0) if formula_voters >= 3 else 0.0
     return {
+        "formula_up": _ramp(c, 0.05, 0.50),
+        "formula_down": _ramp(-c, 0.05, 0.50),
+        "formula_conviction": _ramp(abs(c), 0.10, 0.60),
         "down_fast": _ramp(-z1, 0.5, 3.0), "up_fast": _ramp(z1, 0.5, 3.0),
         "down_mid": _ramp(-z5, 0.5, 3.0), "up_mid": _ramp(z5, 0.5, 3.0),
         "down_slow": _ramp(-z60, 0.5, 3.0), "up_slow": _ramp(z60, 0.5, 3.0),
@@ -754,6 +778,17 @@ def reasoning_chain(f: dict[str, float], deep: dict, evidence: dict[str, float])
         (f"the filter believes {post['argmax'].capitalize()} "
          f"({post['argmax_probability'] * 100:.0f}%, runner-up {post['runner_up'].capitalize()})"),
         "all bands")
+    c = _safe(deep.get("formula_consensus")); voters = int(deep.get("formula_voters", 0))
+    add("22-formula cross-check",
+        "C = Σ_i w_cat(i)·clip(F_i, −1, 1) / Σ_i w_cat(i)  over the directional formulas",
+        {"consensus": round(c, 4), "voters": voters,
+         "for": round(evidence["formula_up"], 4), "against": round(evidence["formula_down"], 4)},
+        round(c, 4), "consensus",
+        ("the formulas have no directional vote yet - the crowd reading stands alone" if voters < 3 else
+         f"{voters} formulas lean BUY: the filter favours the buying emotions" if c > 0.05 else
+         f"{voters} formulas lean SELL: the filter favours the selling emotions" if c < -0.05 else
+         f"{voters} formulas are split: the crowd reading is not pulled either way"),
+        "window", "formula_up" if c >= 0 else "formula_down", 1.0)
     return steps
 
 
@@ -767,6 +802,8 @@ def analyze(
     *,
     state: DeepState | None = None,
     recent: int = 1200,
+    formula_consensus: float = 0.0,
+    formula_voters: int = 0,
 ) -> dict:
     """Run every formula on the tape and return the deep block.
 
@@ -851,7 +888,9 @@ def analyze(
             "pushable": round(_ramp(kyle["impact_norm"], 0.8, 2.5) * _ramp(kyle["r2"], 0.15, 0.6), 4),
         },
     }
-    evidence = _evidence(f, deep)
+    evidence = _evidence(f, deep, formula_consensus, formula_voters)
+    deep["formula_consensus"] = round(_safe(formula_consensus), 4)
+    deep["formula_voters"] = int(formula_voters)
     deep["evidence"] = {k: round(v, 4) for k, v in evidence.items()}
     deep["posterior"] = bayesian_update(state, evidence)
     deep["chain"] = reasoning_chain(f, deep, evidence)
@@ -870,6 +909,8 @@ def compact(deep: dict) -> dict:
         "available": True,
         "ticks": deep["ticks"],
         "compute_us": deep["compute_us"],
+        "formula_consensus": deep.get("formula_consensus", 0.0),
+        "formula_voters": deep.get("formula_voters", 0),
         "bands": deep["bands"],
         "hawkes": {k: deep["hawkes"][k] for k in ("branching_ratio", "intensity_hz", "baseline_hz", "excitation")},
         "flow": {k: deep["flow"][k] for k in ("vpin", "kyle_lambda_bps", "kyle_r2", "impact_norm", "sign_memory", "sign_gamma")},

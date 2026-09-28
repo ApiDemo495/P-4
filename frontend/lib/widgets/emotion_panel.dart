@@ -88,7 +88,7 @@ class EmotionPanel extends StatelessWidget {
     final runner = live.runnerUp;
 
     return Panel(
-      title: 'Crowd emotion · live · µs → minutes',
+      title: 'Crowd emotion · live · a confidence modifier, never a vote',
       trailing: Text(
         '${live.asset.isNotEmpty ? live.asset : state.asset} · every '
         '${live.intervalSeconds.toStringAsFixed(1)} s · ${live.resolutionLabel} · '
@@ -173,6 +173,16 @@ class EmotionPanel extends StatelessWidget {
                 item: item,
                 dominant: item.name == dominant.name,
               )),
+          const SizedBox(height: 8),
+
+          // ---- Round L: the emotion's formula with the live terms ---------
+          _EmotionFormulas(emotions: live.emotions, dominantName: dominant.name),
+          const SizedBox(height: 12),
+
+          // ---- Round L: the crowd against the 22 formulas ----------------
+          _label('VS THE 22 FORMULAS', 'who has the vote'),
+          const SizedBox(height: 6),
+          _AgreementBlock(agreement: live.formulaAgreement),
           const SizedBox(height: 10),
 
           // ---- temperature ----------------------------------------------
@@ -863,6 +873,199 @@ class _DeepBlock extends StatelessWidget {
           Expanded(flex: 9, child: Text(e, style: style)),
         ],
       ),
+    );
+  }
+}
+
+
+/// Round L: the eight emotions are printed formulas - weighted sums of
+/// bounded ramps over the tape's own surprise units, times a gate.  This block
+/// prints the selected emotion's formula with every term's weight, live value
+/// and contribution.  Tap a chip to switch emotion; the dominant one is shown
+/// by default.
+class _EmotionFormulas extends StatefulWidget {
+  const _EmotionFormulas({required this.emotions, required this.dominantName});
+
+  final List<EmotionScore> emotions;
+  final String dominantName;
+
+  @override
+  State<_EmotionFormulas> createState() => _EmotionFormulasState();
+}
+
+class _EmotionFormulasState extends State<_EmotionFormulas> {
+  String? _selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = _selected ?? widget.dominantName;
+    EmotionScore? item;
+    for (final row in widget.emotions) {
+      if (row.name == name) item = row;
+    }
+    item ??= widget.emotions.isNotEmpty ? widget.emotions.first : null;
+    if (item == null || item.formula.isEmpty) return const SizedBox.shrink();
+    final raw = item.terms.fold<double>(0.0, (acc, t) => acc + t.contribution);
+    const mono = TextStyle(
+        color: AppTheme.textMuted,
+        fontSize: 10.5,
+        fontFamily: 'mono',
+        fontFeatures: [FontFeature.tabularFigures()]);
+    const monoStrong = TextStyle(
+        color: AppTheme.textPrimary,
+        fontSize: 10.5,
+        fontFamily: 'mono',
+        fontFeatures: [FontFeature.tabularFigures()]);
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0x08FFFFFF),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: widget.emotions
+                .map((row) => ChoiceChip(
+                      label: Text(row.label,
+                          style: const TextStyle(fontSize: 10.5)),
+                      selected: row.name == item!.name,
+                      visualDensity: VisualDensity.compact,
+                      onSelected: (_) => setState(() => _selected = row.name),
+                    ))
+                .toList(),
+          ),
+          const SizedBox(height: 8),
+          Text('${item.label} · formula · live terms',
+              style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          SelectableText(item.formula,
+              style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 10.5,
+                  fontFamily: 'mono',
+                  height: 1.4)),
+          const SizedBox(height: 6),
+          Table(
+            columnWidths: const {
+              0: FixedColumnWidth(40),
+              1: FlexColumnWidth(),
+              2: FixedColumnWidth(52),
+              3: FixedColumnWidth(56),
+            },
+            children: [
+              const TableRow(children: [
+                Text('w', style: mono),
+                Text('term', style: mono),
+                Text('value', style: mono, textAlign: TextAlign.right),
+                Text('w·value', style: mono, textAlign: TextAlign.right),
+              ]),
+              ...item.terms.map((t) => TableRow(children: [
+                    Text(t.weight.toStringAsFixed(2), style: monoStrong),
+                    Text(t.term, style: mono),
+                    Text(t.value.toStringAsFixed(3),
+                        style: monoStrong, textAlign: TextAlign.right),
+                    Text(t.contribution.toStringAsFixed(3),
+                        style: monoStrong, textAlign: TextAlign.right),
+                  ])),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Σ = ${raw.toStringAsFixed(3)} × gate ${item.gate.toStringAsFixed(3)} '
+            '→ ramp ${item.ramp.toStringAsFixed(3)} · Bayesian belief '
+            '${(item.belief * 100).toStringAsFixed(0)}% · shown '
+            '${item.percent.toStringAsFixed(0)}% '
+            '(0.65·ramp + 0.35·min(1, 2.5·belief), band-lifted, EMA-smoothed)',
+            style: mono,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Round L: the crowd against the 22 formulas.  The formulas carry the vote
+/// (40% of the fusion, the largest weight); the crowd is a bounded confidence
+/// modifier.  The block says whether the two agree and repeats the rule.
+class _AgreementBlock extends StatelessWidget {
+  const _AgreementBlock({required this.agreement});
+
+  final FormulaAgreement agreement;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!agreement.hasVerdict) {
+      return const Text('waiting for the first formula pass…',
+          style: TextStyle(color: AppTheme.textMuted, fontSize: 11));
+    }
+    final color = agreement.verdict == 'aligned'
+        ? AppTheme.buy
+        : agreement.verdict == 'conflict'
+            ? AppTheme.sell
+            : AppTheme.textMuted;
+    final names = [
+      ...agreement.upNames.map((n) => '$n↑'),
+      ...agreement.downNames.map((n) => '$n↓'),
+    ].take(6).join(' ');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(agreement.verdict.toUpperCase(),
+            style: TextStyle(
+                color: color,
+                fontSize: 12,
+                letterSpacing: 1.1,
+                fontWeight: FontWeight.w800)),
+        const SizedBox(height: 6),
+        _gaugeRow('formulas', agreement.consensus),
+        const SizedBox(height: 4),
+        _gaugeRow('crowd', agreement.crowdTone),
+        const SizedBox(height: 6),
+        Text(agreement.note,
+            style: const TextStyle(
+                color: AppTheme.textPrimary, fontSize: 11.5, height: 1.4)),
+        if (names.isNotEmpty)
+          Text(names,
+              style: const TextStyle(
+                  color: AppTheme.textMuted, fontSize: 10.5, fontFamily: 'mono')),
+        const SizedBox(height: 2),
+        Text(agreement.rule,
+            style: const TextStyle(
+                color: AppTheme.textMuted, fontSize: 10.5, height: 1.4)),
+      ],
+    );
+  }
+
+  Widget _gaugeRow(String label, double value) {
+    return Row(
+      children: [
+        SizedBox(
+            width: 58,
+            child: Text(label,
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 11))),
+        Expanded(child: _ToneGauge(value: value)),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 48,
+          child: Text(
+            '${value >= 0 ? '+' : ''}${value.toStringAsFixed(2)}',
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 11,
+                fontFamily: 'mono',
+                fontFeatures: [FontFeature.tabularFigures()]),
+          ),
+        ),
+      ],
     );
   }
 }

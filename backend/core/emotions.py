@@ -51,6 +51,7 @@ from typing import Any
 import numpy as np
 
 from backend.core import deep_micro
+from backend.core.prediction import consensus
 from backend.core.timebase import format_us, now_us, us_to_iso
 
 # ---------------------------------------------------------------------------
@@ -125,6 +126,97 @@ def _weighted(parts: list[tuple[float, float]]) -> float:
     return float(sum(w * v for w, v in parts) / total)
 
 
+def _terms(parts: list[tuple[float, str, float]]) -> tuple[float, list[dict]]:
+    """``_weighted`` that also returns every term, so the panel can print the
+    emotion's formula with the live numbers substituted (the user's "show me
+    the emotion formulas" ask)."""
+    total = sum(w for w, _, _ in parts) or 1.0
+    value = float(sum(w * v for w, _, v in parts) / total)
+    rows = [
+        {
+            "weight": w,
+            "term": name,
+            "value": round(float(v), 4),
+            "contribution": round(float(w * v / total), 4),
+        }
+        for w, name, v in parts
+    ]
+    return value, rows
+
+
+#: The symbolic formula of each emotion - the same expression ``score_emotions``
+#: evaluates, printed.  ``ramp(x; a, b)`` is the linear ramp clipped to [0, 1]
+#: between ``a`` and ``b``; every ``z_*`` is a move in multiples of the tape's
+#: own typical move, so the emotions are surprise measures, not volatility.
+EMOTION_FORMULAS: dict[str, str] = {
+    "FEAR": (
+        "FEAR = [0.30·sell + 0.25·vol_rise + 0.20·max(down_5s, down_60s) "
+        "+ 0.15·bid_thin + 0.10·blowout] × (1 − 0.50·top)"
+    ),
+    "PANIC": "PANIC = 0.30·down_1s + 0.25·surge + 0.20·blowout + 0.15·jitter + 0.10·climax",
+    "CAPITULATION": (
+        "CAPITULATION = fall_gate × [0.35·drawdown_extreme + 0.25·climax "
+        "+ 0.25·settling + 0.15·vol_calm],  fall_gate = ramp(z_drawdown; 0.8, 2.0)"
+    ),
+    "DENIAL": (
+        "DENIAL = 0.40·divergence + 0.35·dip_buying + 0.25·bottom,  "
+        "divergence = news_pos·down_5s,  dip_buying = min(buy, down_5s)"
+    ),
+    "HOPE": (
+        "HOPE = [0.35·recovery + 0.25·max(up_1s, up_60s) + 0.20·buy "
+        "+ 0.20·max(news_pos, vol_calm)] × (1 − 0.60·top)"
+    ),
+    "EUPHORIA": (
+        "EUPHORIA = [0.30·top + 0.25·up_1s + 0.20·buy + 0.15·vol_calm "
+        "+ 0.10·news_pos] × (1 − 0.60·bottom)"
+    ),
+    "FOMO": (
+        "FOMO = [0.30·up_5s + 0.25·climax + 0.20·buy + 0.15·ask_thin "
+        "+ 0.10·surge] × (1 − 0.30·bottom)"
+    ),
+    "COMPLACENCY": (
+        "COMPLACENCY = [0.35·calm_moves + 0.20·no_aggression + 0.20·middle "
+        "+ 0.15·tight + 0.10·max(slow_tape, vol_calm)] "
+        "× (1 − 0.70·max(fear, panic, fomo, ½·up_1s, ½·down_1s))"
+    ),
+}
+
+#: What each term in the formulas above is, in the same notation.
+TERM_DEFINITIONS: dict[str, str] = {
+    "sell": "ramp(−aggression_5s; 0.15, 0.65) - the share of prints crossing to the bid",
+    "buy": "ramp(+aggression_5s; 0.15, 0.65)",
+    "down_1s": "ramp(−z_1s; 1.2, 3.5) - the 1 s move in typical 1 s moves",
+    "up_1s": "ramp(+z_1s; 1.2, 3.5)",
+    "down_5s": "ramp(−z_5s; 1.0, 3.0)",
+    "up_5s": "ramp(+z_5s; 1.0, 3.0)",
+    "down_60s": "ramp(−z_60s; 0.8, 2.5)",
+    "up_60s": "ramp(+z_60s; 0.8, 2.5)",
+    "vol_rise": "ramp(σ_now/σ_baseline; 1.15, 1.80)",
+    "vol_calm": "1 − ramp(σ_now/σ_baseline; 0.85, 1.30)",
+    "climax": "ramp(volume / its own pace; 2.0, 8.0)",
+    "surge": "ramp(tick rate / its own pace; 1.5, 5.0)",
+    "slow_tape": "1 − ramp(tick rate / its own pace; 0.6, 1.6)",
+    "jitter": "ramp(inter-arrival jitter; 5 ms, 200 ms)",
+    "blowout": "ramp(spread / its baseline; 1.6, 4.0) × min(1, movement) × (½ if spread < 1 bp)",
+    "tight": "max(1 − ramp(spread/baseline; 0.9, 1.8), 1 − ramp(spread_bps; 1, 8))",
+    "calm_moves": "1 − ramp(max|z_1s, z_5s, z_60s|; 0.8, 2.5)",
+    "no_aggression": "1 − ramp(|aggression_5s|; 0.10, 0.50)",
+    "top": "ramp(range_position; 0.70, 0.98)",
+    "bottom": "1 − ramp(range_position; 0.05, 0.35)",
+    "middle": "max(0, 1 − 4·|range_position − ½|)",
+    "drawdown_extreme": "ramp(z_drawdown; 2.0, 5.0)",
+    "run_up": "ramp(z_run_up; 1.5, 4.0)",
+    "settling": "1 − ramp(|z_1s|; 0.8, 2.5)",
+    "recovery": "min(up_5s, 1 − ramp(range_position; 0.45, 0.80))",
+    "news_pos": "ramp(news_sentiment; 0.15, 0.70)",
+    "news_neg": "ramp(−news_sentiment; 0.15, 0.70)",
+    "bid_thin": "ramp(+depth_imbalance; 0.10, 0.55)",
+    "ask_thin": "ramp(−depth_imbalance; 0.10, 0.55)",
+    "divergence": "news_pos × down_5s",
+    "dip_buying": "min(buy, down_5s)",
+}
+
+
 @dataclass
 class EmotionScore:
     """One emotion, on one tape, at one instant."""
@@ -141,12 +233,20 @@ class EmotionScore:
     belief: float = 0.0
     #: the ramp reading before the belief was blended in
     ramp: float = 0.0
+    #: the symbolic formula and its live terms (weight, term, value, contribution)
+    formula: str = ""
+    terms: tuple[dict, ...] = ()
+    #: the multiplicative gate / contrast factor applied after the weighted sum
+    gate: float = 1.0
 
     def to_dict(self) -> dict:
         return {
             "name": self.name,
             "belief": round(self.belief, 4),
             "ramp": round(self.ramp, 4),
+            "formula": self.formula,
+            "terms": list(self.terms),
+            "gate": round(self.gate, 4),
             "label": self.label,
             "tone": self.tone,
             "family": self.family,
@@ -181,6 +281,10 @@ class EmotionTracker:
     switch_dwell: int = 2
     history_size: int = 300
     emotions: dict[str, float] = field(default_factory=dict)
+    #: EMA of the 22-formula consensus the live reading is checked against
+    #: (the formulas are refreshed every 2 s; the verdict must not flicker on a
+    #: single pass that crosses zero).  ``None`` until the first vote.
+    consensus_ema: float | None = None
     samples: int = 0
     history: list[dict] = field(default_factory=list)
     last_dominant: str = ""
@@ -310,6 +414,8 @@ class EmotionReport:
     manipulation: dict = field(default_factory=dict)
     tracker: dict = field(default_factory=dict)
     deep: dict = field(default_factory=dict)
+    #: how the crowd reading sits against the 22 formulas' vote (Round L)
+    formula_agreement: dict = field(default_factory=dict)
 
     # -- convenience ----------------------------------------------------
     @property
@@ -362,6 +468,9 @@ class EmotionReport:
                     f"; the Bayesian filter leans {post['argmax'].capitalize()} "
                     f"({belief:.0f}% belief)"
                 )
+        agree = self.formula_agreement or {}
+        if agree.get("note"):
+            text += f"; {agree['note']}"
         return text + "."
 
     def to_dict(self) -> dict:
@@ -420,6 +529,8 @@ class EmotionReport:
             "features": {k: round(v, 6) for k, v in self.features.items()},
             "manipulation": dict(self.manipulation),
             "deep": dict(self.deep),
+            "formula_agreement": dict(self.formula_agreement),
+            "formula_glossary": dict(TERM_DEFINITIONS),
             "history": tracker.get("history", []),
         }
         if top is not None:
@@ -442,6 +553,7 @@ def compact(payload: dict) -> dict:
         "resolution_label", "measured_over_label", "emotions", "dominant", "runner_up",
         "tone_bias", "emotional_volatility_per_s", "churn_per_minute", "samples",
         "held_seconds", "read", "hint", "interval_seconds", "measured_at_us",
+        "formula_agreement",
     )
     out = {key: payload[key] for key in keep if key in payload}
     out["deep"] = deep_micro.compact(payload.get("deep") or {})
@@ -505,6 +617,9 @@ class EmotionMonitor:
     hub: Any
     asset: str = "BTC"
     news_provider: Any = None  # callable -> tuple[NewsItem, ...]
+    #: callable -> (formula values, directional map): the live 22-formula pass
+    #: the crowd reading is cross-checked against
+    formula_provider: Any = None
     interval_seconds: float = 0.5
     history_size: int = 720
     tracker: EmotionTracker = field(default_factory=EmotionTracker)
@@ -527,8 +642,18 @@ class EmotionMonitor:
                 news = tuple(self.news_provider() or ())
             except Exception:  # noqa: BLE001 - news must never break the panel
                 news = ()
+        formulas: dict = {}
+        directional: dict = {}
+        if callable(self.formula_provider):
+            try:
+                formulas, directional = self.formula_provider()
+            except Exception:  # noqa: BLE001 - the formulas must never break the panel
+                formulas, directional = {}, {}
         tape = LiveTapeView(self.hub, news_items=news)
-        report = analyze(tape, self.asset, tracker=self.tracker, at_us=at_us_value)
+        report = analyze(
+            tape, self.asset, tracker=self.tracker, at_us=at_us_value,
+            formulas=formulas, directional=directional,
+        )
         self.last_report = report
         payload = report.to_dict()
         # The panel needs to know how fresh the reading is and how often it is
@@ -945,55 +1070,77 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
     candle_down = _ramp(-f.get("candle_trend_bps", 0.0), 20.0, 250.0)
 
     # --- FEAR: sellers in control, volatility rising, the bid thinning ----
-    fear = _weighted([
-        (0.30, sell), (0.25, vol_rise), (0.20, max(down_5s, down_60s)),
-        (0.15, bid_thin), (0.10, blowout),
+    fear, fear_terms = _terms([
+        (0.30, "sell", sell), (0.25, "vol_rise", vol_rise),
+        (0.20, "max(down_5s, down_60s)", max(down_5s, down_60s)),
+        (0.15, "bid_thin", bid_thin), (0.10, "blowout", blowout),
     ])
     # --- PANIC: the acute form, on the fast bands -------------------------
-    panic = _weighted([
-        (0.30, down_1s), (0.25, surge), (0.20, blowout), (0.15, jitter), (0.10, climax),
+    panic, panic_terms = _terms([
+        (0.30, "down_1s", down_1s), (0.25, "surge", surge), (0.20, "blowout", blowout),
+        (0.15, "jitter", jitter), (0.10, "climax", climax),
     ])
     # --- CAPITULATION: the fall is over - surrender, then quiet -----------
     # Gated on the fall actually having happened: a quiet second on a flat tape
     # is not surrender, it is a quiet second.
     fall_gate = _ramp(f.get("z_drawdown", 0.0), 0.8, 2.0)
-    capitulation = fall_gate * _weighted([
-        (0.35, drawdown_extreme), (0.25, climax), (0.25, settling), (0.15, vol_calm),
+    capitulation, capitulation_terms = _terms([
+        (0.35, "drawdown_extreme", drawdown_extreme), (0.25, "climax", climax),
+        (0.25, "settling", settling), (0.15, "vol_calm", vol_calm),
     ])
+    capitulation *= fall_gate
     # --- DENIAL: buys absorbing a falling tape, or good news vs bad price --
     dip_buying = min(buy, down_5s)
     divergence = news_pos * down_5s
-    denial = _weighted([
-        (0.40, divergence), (0.35, dip_buying), (0.25, bottom),
+    denial, denial_terms = _terms([
+        (0.40, "divergence", divergence), (0.35, "dip_buying", dip_buying), (0.25, "bottom", bottom),
     ])
     # --- HOPE: a constructive drift, still under the mean -----------------
     recovery = min(up_5s, 1.0 - _ramp(pos, 0.45, 0.80))
-    hope = _weighted([
-        (0.35, recovery), (0.25, max(up_1s, up_60s)), (0.20, buy),
-        (0.20, max(news_pos, vol_calm)),
+    hope, hope_terms = _terms([
+        (0.35, "recovery", recovery), (0.25, "max(up_1s, up_60s)", max(up_1s, up_60s)),
+        (0.20, "buy", buy), (0.20, "max(news_pos, vol_calm)", max(news_pos, vol_calm)),
     ])
     # --- EUPHORIA: "happy" - pinned at the highs, calm, still buying ------
-    euphoria = _weighted([
-        (0.30, top), (0.25, up_1s), (0.20, buy), (0.15, vol_calm), (0.10, news_pos),
+    euphoria, euphoria_terms = _terms([
+        (0.30, "top", top), (0.25, "up_1s", up_1s), (0.20, "buy", buy),
+        (0.15, "vol_calm", vol_calm), (0.10, "news_pos", news_pos),
     ])
     # --- FOMO: chasing - fast up-move, volume surge, thin asks ------------
-    fomo = _weighted([
-        (0.30, up_5s), (0.25, climax), (0.20, buy), (0.15, ask_thin), (0.10, surge),
+    fomo, fomo_terms = _terms([
+        (0.30, "up_5s", up_5s), (0.25, "climax", climax), (0.20, "buy", buy),
+        (0.15, "ask_thin", ask_thin), (0.10, "surge", surge),
     ])
     # --- COMPLACENCY: nothing is happening --------------------------------
-    complacency = _weighted([
-        (0.35, calm_moves), (0.20, no_aggression), (0.20, middle),
-        (0.15, tight), (0.10, max(slow_tape, vol_calm)),
+    complacency, complacency_terms = _terms([
+        (0.35, "calm_moves", calm_moves), (0.20, "no_aggression", no_aggression),
+        (0.20, "middle", middle), (0.15, "tight", tight),
+        (0.10, "max(slow_tape, vol_calm)", max(slow_tape, vol_calm)),
     ])
 
     # Contrast: a crowd cannot be terrified and euphoric at once, and a tape
     # that is genuinely dead is not "afraid" - it is asleep.  These are
     # continuous transforms, not thresholds.
-    fear *= 1.0 - 0.50 * top
-    euphoria *= 1.0 - 0.60 * bottom
-    hope *= 1.0 - 0.60 * top
-    fomo *= 1.0 - 0.30 * bottom
-    complacency *= 1.0 - 0.70 * max(fear, panic, fomo, up_1s * 0.5, down_1s * 0.5)
+    gates = {
+        "FEAR": 1.0 - 0.50 * top,
+        "PANIC": 1.0,
+        "CAPITULATION": fall_gate,
+        "DENIAL": 1.0,
+        "HOPE": 1.0 - 0.60 * top,
+        "EUPHORIA": 1.0 - 0.60 * bottom,
+        "FOMO": 1.0 - 0.30 * bottom,
+    }
+    fear *= gates["FEAR"]
+    euphoria *= gates["EUPHORIA"]
+    hope *= gates["HOPE"]
+    fomo *= gates["FOMO"]
+    gates["COMPLACENCY"] = 1.0 - 0.70 * max(fear, panic, fomo, up_1s * 0.5, down_1s * 0.5)
+    complacency *= gates["COMPLACENCY"]
+    terms = {
+        "FEAR": fear_terms, "PANIC": panic_terms, "CAPITULATION": capitulation_terms,
+        "DENIAL": denial_terms, "HOPE": hope_terms, "EUPHORIA": euphoria_terms,
+        "FOMO": fomo_terms, "COMPLACENCY": complacency_terms,
+    }
 
     by_band = {
         "micro": {
@@ -1117,6 +1264,9 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
                 by_timescale={k: round(min(1.0, max(0.0, v)), 4) for k, v in bands.items()},
                 dominant_timescale=peak_band,
                 drivers=tuple(drivers[name]),
+                formula=EMOTION_FORMULAS[name],
+                terms=tuple(terms[name]),
+                gate=float(gates[name]),
             )
         )
     return out
@@ -1208,6 +1358,8 @@ def analyze(
     tracker: EmotionTracker | None = None,
     at_us: int | None = None,
     recent: int = 600,
+    formulas: dict | None = None,
+    directional: dict | None = None,
 ) -> EmotionReport:
     """Measure the crowd's emotions on one tape.
 
@@ -1237,8 +1389,21 @@ def analyze(
     # posterior is blended into the ramp intensities (the ramps say how *big*
     # the behaviour is, the filter how *consistent* the whole tape is with the
     # emotion), and its detectors feed the manipulation read.
+    agreement = consensus(formulas or {}, directional or {})
+    if tracker is not None and agreement["voters"] >= 3:
+        # Smooth the live vote with the same time constant as the emotions,
+        # so "aligned" / "conflict" is a state, not a flicker.
+        raw = float(agreement["score"])
+        tracker.consensus_ema = (
+            raw if tracker.consensus_ema is None
+            else tracker.consensus_ema + tracker.alpha * (raw - tracker.consensus_ema)
+        )
+        agreement = {**agreement, "score": tracker.consensus_ema, "raw_score": raw}
     report.deep = deep_micro.analyze(
-        tape, asset, f, state=tracker.deep_state if tracker is not None else None
+        tape, asset, f,
+        state=tracker.deep_state if tracker is not None else None,
+        formula_consensus=agreement["score"],
+        formula_voters=agreement["voters"],
     )
     posterior = (report.deep.get("posterior") or {}).get("posterior") or {}
     for score in report.scores:
@@ -1260,4 +1425,70 @@ def analyze(
         for score in report.scores:
             if score.name in smoothed:
                 score.intensity = float(min(1.0, max(0.0, smoothed[score.name])))
+    report.formula_agreement = formula_agreement(agreement, _tone_bias(report.intensity))
     return report
+
+
+def formula_agreement(agreement: dict, tone_bias: float) -> dict:
+    """How the crowd's tone sits against the 22 formulas' weighted vote.
+
+    ``alignment`` is in [-1, 1]: the product of the two signs times the
+    smaller magnitude, so a strong vote with a flat crowd is *not* a conflict
+    and a flat vote with an excited crowd is not agreement.  The note is the
+    sentence the panel prints, and it always says who has the vote: the
+    formulas carry 40% of the fusion and the crowd is a bounded confidence
+    modifier - it never picks the side.
+    """
+    score = float(agreement.get("score", 0.0))
+    voters = int(agreement.get("voters", 0))
+    tone = float(tone_bias)
+    aligned = score * tone
+    alignment = (1.0 if aligned > 0 else -1.0 if aligned < 0 else 0.0) * min(abs(score), abs(tone))
+    side = "BUY" if score > 0 else "SELL" if score < 0 else "split"
+    crowd = "buying" if tone > 0.05 else "selling" if tone < -0.05 else "flat"
+    up = int(agreement.get("up", 0))
+    down = int(agreement.get("down", 0))
+    vote = f"the weighted vote of {voters} formulas leans {side}, {up} up / {down} down"
+    if voters < 3:
+        verdict, note = "formulas silent", "fewer than 3 formulas voted - the crowd stands alone"
+    elif abs(score) < 0.08:
+        verdict, note = "formulas split", f"{voters} formulas are split; the crowd is {crowd}"
+    elif abs(tone) < 0.08:
+        verdict = "crowd flat"
+        note = f"{vote}, while the crowd is flat"
+    elif aligned > 0:
+        verdict = "aligned"
+        note = f"the crowd is {crowd} with the formulas ({vote}) - confidence stands"
+    else:
+        verdict = "conflict"
+        note = (
+            f"the crowd is {crowd} against the formulas ({vote}) - "
+            "the formulas keep the vote, the crowd only trims confidence"
+        )
+    return {
+        "available": voters >= 3,
+        "consensus": round(score, 4),
+        "consensus_raw": round(float(agreement.get("raw_score", score)), 4),
+        "voters": voters,
+        "up": up,
+        "down": down,
+        "up_names": list(agreement.get("up_names", []))[:4],
+        "down_names": list(agreement.get("down_names", []))[:4],
+        "formula_side": side,
+        "crowd_tone": round(tone, 4),
+        "crowd_side": crowd,
+        "alignment": round(alignment, 4),
+        "verdict": verdict,
+        "note": note,
+        "weights": {
+            "formulas": 0.40,
+            "agents": 0.25,
+            "brain": 0.20,
+            "news": 0.15,
+            "crowd_max_confidence_cut": 0.25,
+        },
+        "rule": (
+            "the 22 formulas carry 40% of the direction vote; the crowd never votes - "
+            "it can only cut confidence by at most 25% when it disagrees"
+        ),
+    }

@@ -298,3 +298,49 @@ def test_the_pulse_cadence_matches_the_spec():
     assert production.news_poll_seconds == 30.0
     marks = _grid_offsets(production.formula_refresh_seconds, production.cycle_period_seconds)
     assert marks == [15.0, 30.0, 45.0]
+
+
+# ---------------------------------------------------------------------------
+# 4. Round L: the two-stage lock - agents early, everything fast at the boundary
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_the_final_freeze_rebuilds_the_fast_half_on_fresh_data(manager: CycleManager):
+    """The prediction the user sees must be computed from data that is fresh at
+    the boundary, not eight seconds old: after the prefetch (agents) the
+    ``_refreeze`` pass takes a new snapshot, re-runs the 22 formulas, the crowd
+    and the fusion, and re-stamps ``computed_at`` - keeping the agents' votes."""
+    deadline = time.time() + 5.0
+    await manager._prefetch(deadline)
+    draft = manager._pending_signal
+    assert draft is not None
+    first_computed = draft.computed_at
+    first_agents = manager._prefetch_agents
+    await asyncio.sleep(0.05)
+    await manager._refreeze(deadline)
+    final = manager._pending_signal
+    assert final is not None and final is not draft
+    assert final.computed_at >= first_computed
+    assert final.valid_from == draft.valid_from and final.valid_until == draft.valid_until
+    assert final.signal in ("BUY", "SELL")
+    # the agents were not re-run; the formulas and the crowd were
+    assert manager._prefetch_agents is first_agents
+    assert manager.final_freeze_at >= manager.prefetch_at - 1e-6
+    assert manager.final_freeze_ms < 2000
+    assert manager.emotion_locked and "formula_agreement" in manager.emotion_locked
+    # the lock block in the window payload describes the two stages
+    lock = manager.window_status()["lock"]
+    assert lock["stages"] == 2
+    assert 0 < lock["final_lock_lead_seconds"] <= lock["agents_lead_seconds"]
+    manager._pending_signal = None
+
+
+def test_the_loop_freezes_again_right_before_the_boundary():
+    src = CYCLE_PY.read_text(encoding="utf-8")
+    loop = src[src.index("async def _pipelined_loop"):src.index("async def _open_window")]
+    assert "await self._prefetch(deadline)" in loop
+    assert "await self._refreeze(deadline)" in loop
+    assert loop.index("_prefetch(deadline)") < loop.index("_refreeze(deadline)")
+    assert loop.index("_refreeze(deadline)") < loop.index("await self._sleep_until(deadline)\n")
+    assert cfg.Settings().final_lock_lead_seconds < cfg.Settings().lock_deadline_seconds

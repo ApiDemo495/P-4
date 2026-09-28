@@ -224,7 +224,7 @@ def test_the_likelihood_table_only_uses_known_evidence() -> None:
 # ---------------------------------------------------------------------------
 # 3. the whole layer on a tape
 # ---------------------------------------------------------------------------
-def test_analyze_produces_every_block_and_a_fourteen_step_chain() -> None:
+def test_analyze_produces_every_block_and_a_fifteen_step_chain() -> None:
     snap = _snapshot("IMPULSE_DOWN")
     f = E.features(snap, "BTC")
     deep = D.analyze(snap, "BTC", f)
@@ -235,11 +235,11 @@ def test_analyze_produces_every_block_and_a_fourteen_step_chain() -> None:
     assert set(deep["bands"]) == {"micro", "seconds", "window"}
     for band in deep["bands"].values():
         assert 0.0 <= band["hurst"] <= 1.0 and band["variance_ratio"] > 0 and 0.0 <= band["entropy"] <= 1.0
-    assert len(deep["chain"]) == 14
+    assert len(deep["chain"]) == 15
     for step in deep["chain"]:
         assert {"step", "name", "formula", "inputs", "value", "unit", "reads", "timescale", "feeds"} <= set(step)
         assert step["reads"]
-    assert [s["step"] for s in deep["chain"]] == list(range(1, 15))
+    assert [s["step"] for s in deep["chain"]] == list(range(1, 16))
     assert deep["compute_us"] < 200_000            # well under one emotion interval
     assert set(deep["manipulation"]) >= {"ignition", "stuffing", "spoofing", "toxicity", "pushable"}
 
@@ -271,7 +271,7 @@ def test_compact_keeps_the_chain_and_drops_the_raw_arrays() -> None:
     snap = _snapshot("BULL")
     deep = D.analyze(snap, "BTC", E.features(snap, "BTC"))
     small = D.compact(deep)
-    assert len(small["chain"]) == 14 and "inputs" not in small["chain"][0]
+    assert len(small["chain"]) == 15 and "inputs" not in small["chain"][0]
     assert "energy" not in small["spectrum"][0] and "share" in small["spectrum"][0]
     assert "log_likelihood" not in small["posterior"] and "evidence_for" in small["posterior"]
     assert D.compact({"available": False, "reason": "x"}) == {"available": False, "reason": "x"}
@@ -305,7 +305,7 @@ def test_the_tracker_carries_the_filter_between_samples() -> None:
 def test_the_streamed_reading_includes_a_compact_deep_block() -> None:
     payload = _report("BEAR")
     small = E.compact(payload)
-    assert small["deep"]["available"] and len(small["deep"]["chain"]) == 14
+    assert small["deep"]["available"] and len(small["deep"]["chain"]) == 15
     assert "inputs" not in small["deep"]["chain"][0]
     assert "features" not in small
 
@@ -322,7 +322,7 @@ def test_the_dashboard_renders_the_deep_layer() -> None:
                        "deep-detectors", "deep-spectrum", "deep-chain"):
         assert f'id="{element_id}"' in html, element_id
     js = (ROOT / "backend" / "web" / "app.js").read_text()
-    assert "function renderDeep(" in js and "renderDeep(e.deep, top)" in js
+    assert "function renderDeep(" in js and "renderDeep(state.emotionsDeep, top)" in js
     assert "function deepLockedHtml(" in js and "deepLockedHtml(crowd.deep)" in js
     css = (ROOT / "backend" / "web" / "styles.css").read_text()
     assert ".deep-chain li::before" in css
@@ -347,3 +347,25 @@ def test_the_prediction_reasoning_carries_the_deep_read() -> None:
     manager = (ROOT / "backend" / "core" / "cycle_manager.py").read_text()
     assert "_crowd_deep_summary" in manager and '"deep": self._crowd_deep_summary' in manager
     assert math.isfinite(float(crowd["deep"]["posterior"]["argmax_probability"]))
+
+
+def test_formula_consensus_pulls_the_filter_toward_the_formulas_side():
+    """Round L: the 22-formula vote is evidence for the crowd filter.  With the
+    same tape, a bullish consensus must raise the buying emotions' likelihood
+    and a bearish one the selling emotions' - and with fewer than three voters
+    the formulas must not move the filter at all."""
+    tape = _snapshot("FLAT")
+    f = E.features(tape, "BTC")
+    bull = D.analyze(tape, "BTC", f, formula_consensus=0.6, formula_voters=12)
+    bear = D.analyze(tape, "BTC", f, formula_consensus=-0.6, formula_voters=12)
+    silent = D.analyze(tape, "BTC", f, formula_consensus=0.9, formula_voters=2)
+    assert bull["evidence"]["formula_up"] == 1.0 and bull["evidence"]["formula_down"] == 0.0
+    assert bear["evidence"]["formula_down"] == 1.0
+    assert silent["evidence"]["formula_up"] == 0.0 and silent["evidence"]["formula_conviction"] == 0.0
+    ll_bull = bull["posterior"]["log_likelihood"]
+    ll_bear = bear["posterior"]["log_likelihood"]
+    assert ll_bull["HOPE"] > ll_bear["HOPE"] and ll_bull["EUPHORIA"] > ll_bear["EUPHORIA"]
+    assert ll_bear["FEAR"] > ll_bull["FEAR"] and ll_bear["PANIC"] > ll_bull["PANIC"]
+    last = bull["chain"][-1]
+    assert last["name"] == "22-formula cross-check" and last["value"] == 0.6
+    assert "12 formulas lean BUY" in last["reads"]

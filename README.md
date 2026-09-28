@@ -440,6 +440,21 @@ tail -f server.log
   and it only re-anchors when the window id changes - a late message can never
   make the number jump, repeat or restart. `tools/clock_check.js` watches a real
   browser-DOM session cross a boundary and asserts exactly that.
+* **In sync, and locked (Round L).** The lock has two stages: the slow half
+  (the AI agents, with their 7 s timeouts) is prepared 8 s before the boundary;
+  the fast half — a fresh tape snapshot, the 22 formulas, the crowd reading and
+  the fusion — is frozen again **0.4 s** before the boundary, so the prediction
+  you see was built on data a fraction of a second old (`window.lock.
+  data_age_at_open_seconds`). Both clients snap their clock to the arrival of
+  the boundary SIGNAL, so the reveal and the countdown's zero are the same
+  instant — a prediction can never appear early, and nothing inside the locked
+  cell (side, confidence, levels, the crowd at lock) changes until the window
+  ends. The crowd is cross-checked against the 22 formulas every 2 s
+  (`formula_agreement`: aligned / conflict / crowd flat / formulas split), the
+  formula consensus is evidence inside the crowd's Bayesian filter, and the rule
+  is printed on every panel: *the 22 formulas carry 40 % of the direction vote;
+  the crowd never votes — it can only cut confidence by at most 25 %*. Every
+  emotion is shown as its formula with the live terms substituted.
 * **Everything refreshes together.** The backend owns one schedule: a `SIGNAL`
   snapshot at the boundary and one `PULSE` at every grid mark inside the window
   (t+15, t+30, t+45), each carrying the formulas, the news feed, the agents, the

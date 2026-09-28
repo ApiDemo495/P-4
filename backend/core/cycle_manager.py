@@ -157,6 +157,7 @@ class CycleManager:
             hub=self.market,
             asset=self.asset,
             news_provider=lambda: self.news.cache.latest(30),
+            formula_provider=lambda: (self.last_live_formulas, self._directional_map()),
             interval_seconds=self.settings.emotion_interval_seconds,
             history_size=self.settings.emotion_history_size,
         )
@@ -169,6 +170,11 @@ class CycleManager:
 
         # --- pipelined publication (Sections 10.4) ----------------------
         self._pending_signal: FrozenSignal | None = None
+        self._prefetch_agents: dict = {}
+        self._prefetch_context: dict = {}
+        #: when the final (fast) freeze of the pending signal happened
+        self.final_freeze_at: float = 0.0
+        self.final_freeze_ms: float = 0.0
         self._pending_vol_bps: float = 0.0
         self.pending_formula_result: FormulaResult | None = None
         self.prefetch_ready: bool = False
@@ -367,6 +373,20 @@ class CycleManager:
                     break
                 await self._prefetch(deadline)
 
+                # --- the final freeze: the fast half of the pipeline again, on
+                # a snapshot taken a fraction of a second before the boundary.
+                # The agents' votes are kept from the prefetch; the tape, the
+                # 22 formulas, the crowd and the fusion are all re-done, so the
+                # locked prediction describes the market *at* the lock.
+                final_lead = min(max(self.settings.final_lock_lead_seconds, 0.05), lead)
+                await self._sleep_until(deadline - final_lead)
+                if self._stop.is_set():
+                    break
+                try:
+                    await self._refreeze(deadline)
+                except Exception as exc:  # noqa: BLE001 - the prefetch draft still stands
+                    log.exception("final freeze failed - publishing the prefetch draft: %s", exc)
+
                 # --- the boundary: publish what was just prepared ------------
                 await self._sleep_until(deadline)
                 if self._stop.is_set():
@@ -556,14 +576,20 @@ class CycleManager:
             drg_outcomes=self.outcomes.array(),
         )
         self._pending_vol_bps = realized_volatility_bps(snapshot, self.asset)
-        self.emotion_locked = analyze_emotions(snapshot, self.asset).to_dict()
         formula_result = self.formulas.run(snapshot, self.asset)
         self.pending_formula_result = formula_result
         self.last_live_formulas = dict(formula_result.values)
         self.last_live_result = formula_result
+        self.emotion_locked = analyze_emotions(
+            snapshot, self.asset,
+            formulas=formula_result.values, directional=self._directional_map(),
+        ).to_dict()
 
         context = self._agent_context(snapshot, formula_result)
         agent_results = await self.agents.run_all(context)
+        # Kept for the final freeze (the agents are the slow half).
+        self._prefetch_agents = agent_results
+        self._prefetch_context = context
 
         warnings = list(snapshot.warnings)
         if formula_result.insufficient_evidence:
@@ -618,10 +644,89 @@ class CycleManager:
                     "compute_ms": round(self.prefetch_ms, 1),
                     "lead_seconds": round(max(0.0, publish_deadline_wall - time.time()), 1),
                     "lock_state": "LOCKED",
-                    "message": "next signal computed and held until the countdown ends",
+                    "message": (
+                        "agents ready - the tape, formulas and crowd are frozen again "
+                        "at the boundary"
+                    ),
+                    "final_lock_lead_seconds": self.settings.final_lock_lead_seconds,
                 },
             }
         )
+
+    async def _refreeze(self, publish_deadline_wall: float) -> None:
+        """The fast half of the pipeline, again, right before the boundary.
+
+        Everything that costs milliseconds - a fresh frozen snapshot, the 22
+        formulas, the crowd reading, the fusion - is recomputed so the locked
+        prediction and the locked crowd describe the market at the lock
+        instant.  The agents' votes (seconds) come from the prefetch.  Nothing
+        is published here; ``_open_window`` publishes at the boundary.
+        """
+        if self._pending_signal is None:
+            return
+        started = time.perf_counter()
+        snapshot = self.market.freeze(
+            news_items=self.news.cache.latest(30),
+            drg_outcomes=self.outcomes.array(),
+        )
+        self._pending_vol_bps = realized_volatility_bps(snapshot, self.asset)
+        formula_result = self.formulas.run(snapshot, self.asset)
+        self.pending_formula_result = formula_result
+        self.last_live_formulas = dict(formula_result.values)
+        self.last_live_result = formula_result
+        # The crowd at lock time is read with the same formulas it is being
+        # locked against, so the two blocks of the payload can be compared.
+        self.emotion_locked = analyze_emotions(
+            snapshot, self.asset,
+            formulas=formula_result.values, directional=self._directional_map(),
+        ).to_dict()
+
+        agent_results = self._prefetch_agents or {}
+        context = self._prefetch_context or self._agent_context(snapshot, formula_result)
+        warnings = list(snapshot.warnings)
+        if formula_result.insufficient_evidence:
+            warnings.append("Insufficient formula evidence: 11+ formulas returned zero.")
+        for name, result in agent_results.items():
+            if result.status.value == "TIMEOUT":
+                warnings.append(f"{name} timed out this cycle.")
+
+        from backend.agents import fusion as fusion_module
+
+        agreement = consensus(formula_result.values, self._directional_map())
+        fusion = fusion_module.fuse(
+            agents=agent_results,
+            ccs_value=float(formula_result.values.get("CCSv2", 0.0)),
+            ccs_confidence=formula_result.ccs_confidence,
+            hsi=float(formula_result.values.get("HSI", 0.0)),
+            settings=self.settings,
+            warnings=warnings,
+            insufficient_evidence=formula_result.insufficient_evidence,
+            emergency=self.lock.emergency_active(),
+            previous_signal=self._previous_direction(),
+            formula_consensus=agreement["score"],
+            consensus_voters=agreement["voters"],
+            recent_accuracy=self.accuracy_block(),
+            crowd=self.emotion_locked,
+        )
+        self.last_fusion = fusion.to_dict()
+        self.conviction_note = fusion_module.conviction_note(fusion.direction, fusion.confidence)
+        self.warnings = warnings
+        self.degradation = self._compute_degradation(snapshot)
+
+        draft = self._build_frozen_signal(snapshot, formula_result, agent_results, fusion, context)
+        draft = draft._replace(
+            computed_at=_iso(time.time()),
+            valid_from=_iso(publish_deadline_wall),
+            valid_until=_iso(publish_deadline_wall + self.settings.cycle_period_seconds),
+            window_seconds=self.settings.cycle_period_seconds,
+        )
+        self._pending_signal = draft
+        self.final_freeze_ms = (time.perf_counter() - started) * 1000.0
+        self.final_freeze_at = time.time()
+        # The "computed X s before it opened" line must describe the freeze
+        # the user is looking at, not the agent prefetch.
+        self.prefetch_at = self.final_freeze_at
+        self.prefetch_ms = self.final_freeze_ms
 
     async def _wait_for_cycle_start(self) -> None:
         """Sleep until the next boundary.
@@ -670,7 +775,10 @@ class CycleManager:
         # The crowd, measured on the frozen tape - the same immutable inputs the
         # formulas see, so the reading that dampens this window's confidence is
         # reproducible from the snapshot alone.
-        self.emotion_locked = analyze_emotions(snapshot, self.asset).to_dict()
+        self.emotion_locked = analyze_emotions(
+            snapshot, self.asset,
+            formulas=self.last_live_formulas, directional=self._directional_map(),
+        ).to_dict()
         self.warnings = list(snapshot.warnings)
         self.degradation = self._compute_degradation(snapshot)
         await self.broadcast(
@@ -991,10 +1099,35 @@ class CycleManager:
         last 600 ticks) and purely read-only, so it cannot disturb the cycle.
         """
         interval = max(0.1, float(self.settings.emotion_interval_seconds))
+        # The 22 formulas cost ~6 ms, so the live pass the crowd is checked
+        # against is refreshed every fourth sample (2 s at the default 0.5 s)
+        # rather than only on the 15 s PULSE grid.  The heavy ``deep`` block
+        # (~8 KB) rides along on the same samples only: the four-per-second
+        # bars stay small so the socket never queues behind them - that queue
+        # was what made the countdown stutter.
+        sample_no = 0
         while not self._stop.is_set():
             try:
                 if self.market.tick_count(self.asset) >= 15:
+                    sample_no += 1
+                    full = sample_no % 4 == 1
+                    if full:
+                        try:
+                            snapshot = self.market.freeze(
+                                news_items=self.news.cache.latest(30),
+                                drg_outcomes=self.outcomes.array(),
+                            )
+                            result = self.formulas.run(snapshot, self.asset)
+                            self.last_live_result = result
+                            self.last_live_formulas = {
+                                k: round(v, 6) for k, v in result.values.items()
+                            }
+                        except Exception as exc:  # noqa: BLE001 - keep the crowd loop alive
+                            log.debug("live formula refresh failed: %s", exc)
                     reading = self.emotions.sample()
+                    streamed = compact_emotions(reading)
+                    if not full:
+                        streamed.pop("deep", None)
                     # Streamed as its own small message so the panel moves
                     # between the PULSE marks.  The client has no timer of its
                     # own for this - the backend is still the only schedule.
@@ -1009,7 +1142,8 @@ class CycleManager:
                                     if self.lock.current_signal
                                     else None
                                 ),
-                                "emotions": compact_emotions(reading),
+                                "deep_included": full,
+                                "emotions": streamed,
                                 "dampening": {
                                     "applied": (self.last_fusion or {}).get("crowd_adjustment", 1.0),
                                     "note": (self.last_fusion or {}).get("crowd_note", ""),
@@ -1710,6 +1844,9 @@ class CycleManager:
                     for item in crowd_emotions
                 ],
                 "drivers": crowd_dominant.get("drivers") or [],
+                # Round L: the locked crowd against the lock-time formulas, and
+                # the rule that the formulas keep the vote.
+                "formula_agreement": dict(crowd.get("formula_agreement") or {}),
                 # The deep layer at lock time: the filter's belief, the
                 # microstructure verdicts and the reasoning chain (round K).
                 "deep": self._crowd_deep_summary(crowd.get("deep") or {}),
@@ -1915,6 +2052,24 @@ class CycleManager:
                 else None
             ),
             "compute_ms": round(self.published_compute_ms, 1),
+            # Round L: the two-stage lock.  Agents are prepared ``lock_lead``
+            # seconds early; the tape, the 22 formulas, the crowd and the fusion
+            # are frozen again ``final_lock_lead`` seconds before the boundary.
+            "lock": {
+                "stages": 2,
+                "agents_lead_seconds": round(self.prefetch_lead, 1),
+                "final_lock_lead_seconds": self.settings.final_lock_lead_seconds,
+                "final_freeze_ms": round(self.final_freeze_ms, 1),
+                "data_age_at_open_seconds": (
+                    round(max(0.0, started - self.final_freeze_at), 2)
+                    if self.final_freeze_at and started >= self.final_freeze_at
+                    else None
+                ),
+                "rule": (
+                    "the side, confidence, crowd and formulas of a window are frozen "
+                    "at its boundary and never change until it ends"
+                ),
+            },
             "prefetch_ready": self.prefetch_ready,
             "prefetch_ms": round(self.prefetch_ms, 1),
             "next_window": self.stats.cycle_number + 1 if self.prefetch_ready else None,

@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>Drosophila Trader v2.0</title>
-<link rel="stylesheet" href="/static/styles.css?v=2.4.0" />
+<link rel="stylesheet" href="/static/styles.css?v=2.5.0" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪰</text></svg>" />
 </head>
 <body>
@@ -117,9 +117,10 @@
              instant in microseconds, the target instant and what is left. -->
         <div class="horizon-line" id="w-horizon-line">forecast: the next 60 seconds — waiting for the first release</div>
         <div class="micro-line" id="w-micro-line">tape resolution — waiting for the first tick</div>
-        <!-- Round J: the crowd's dominant emotion, live, next to the side it
-             is pushing.  The full read-out is the Crowd Emotion card below. -->
-        <div class="crowd-line" id="w-crowd-line"><span class="crowd-dot neutral" id="w-crowd-dot"></span><span id="w-crowd-text">crowd — measuring the tape…</span></div>
+        <!-- Round L: the crowd *as it was at the lock*.  Nothing inside the
+             prediction cell may move during a window, so this line is the
+             frozen reading; the live one is in the Crowd Emotion card. -->
+        <div class="crowd-line" id="w-crowd-line"><span class="crowd-dot neutral" id="w-crowd-dot"></span><span id="w-crowd-text">crowd at lock — waiting for the first lock…</span></div>
         <button class="btn tiny ghost detail-toggle" id="w-detail-toggle" type="button">▸ prediction detail</button>
         <div class="prediction-detail hidden" id="w-detail"></div>
         <!-- Why this side: the same bullets the API returns. -->
@@ -195,6 +196,34 @@
     </div>
   </section>
 
+  <!-- ===================== SIGNAL DETAIL (locked) ===================== -->
+  <section class="card signal-card">
+    <div class="card-head">
+      <h2>🔒 Locked signal detail</h2>
+      <span class="muted" id="signal-frozen">—</span>
+    </div>
+    <div id="signal-body">
+      <div class="signal-meta">
+        <span id="signal-icon">🔒</span>
+        <span id="signal-note">locked for this window</span>
+        <span class="badge" id="signal-cycle-badge">cycle —</span>
+      </div>
+      <div class="confidence-row">
+        <span>Confidence</span>
+        <b id="confidence-value">0%</b>
+      </div>
+      <div class="bar"><div class="bar-fill" id="confidence-bar"></div></div>
+      <div class="reasoning" id="reasoning">—</div>
+      <ul class="reason-list" id="reasoning-list"></ul>
+      <div class="weights" id="weights"></div>
+    </div>
+    <div id="conviction-note" class="hold-warning hidden">
+      <div class="hw-title">⚠️ Conviction note</div>
+      <div class="hw-text" id="hw-text"></div>
+      <div class="hw-lean" id="hw-lean"></div>
+    </div>
+  </section>
+
   <!-- ===================== CROWD EMOTION (live) ===================== -->
   <!-- The user's premise: a 60-second market is easily pushed around by
        retail emotion.  This card says which emotion is dominant right now,
@@ -204,7 +233,7 @@
        on the backend's schedule - the client has no timer of its own. -->
   <section class="card emotion-card" id="emotion-card">
     <div class="card-head">
-      <h2>🎭 Crowd Emotion <span class="muted">live · µs → minutes</span></h2>
+      <h2>🎭 Crowd Emotion <span class="muted">live · µs → minutes · a confidence modifier, never a vote</span></h2>
       <span class="muted" id="emotion-meta">waiting for the first sample…</span>
     </div>
     <div class="emotion-grid">
@@ -216,8 +245,15 @@
         <div class="emotion-read" id="emotion-read">—</div>
         <ul class="emotion-drivers" id="emotion-drivers"></ul>
       </div>
-      <div class="emotion-bars" id="emotion-bars"></div>
+      <div class="emotion-bars-wrap">
+        <div class="emotion-bars" id="emotion-bars"></div>
+        <!-- Round L: the emotion's formula with the live terms substituted.
+             Click a bar to switch which emotion is printed. -->
+        <div class="emotion-formula" id="emotion-formula"></div>
+      </div>
       <div class="emotion-side">
+        <div class="cell-label">VS THE 22 FORMULAS <span class="muted">who has the vote</span></div>
+        <div class="formula-agreement" id="emotion-agreement">—</div>
         <div class="cell-label">TEMPERATURE <span class="muted">fear ← 0 → euphoria</span></div>
         <div class="tone-gauge"><div class="tone-zero"></div><div class="tone-marker" id="emotion-tone-marker"></div></div>
         <div class="tone-value" id="emotion-tone">—</div>
@@ -245,34 +281,6 @@
         <summary>reasoning chain <span class="muted" id="deep-chain-meta">step by step</span></summary>
         <ol class="deep-chain" id="deep-chain"></ol>
       </details>
-    </div>
-  </section>
-
-  <!-- ===================== SIGNAL DETAIL (locked) ===================== -->
-  <section class="card signal-card">
-    <div class="card-head">
-      <h2>🔒 Locked signal detail</h2>
-      <span class="muted" id="signal-frozen">—</span>
-    </div>
-    <div id="signal-body">
-      <div class="signal-meta">
-        <span id="signal-icon">🔒</span>
-        <span id="signal-note">locked for this window</span>
-        <span class="badge" id="signal-cycle-badge">cycle —</span>
-      </div>
-      <div class="confidence-row">
-        <span>Confidence</span>
-        <b id="confidence-value">0%</b>
-      </div>
-      <div class="bar"><div class="bar-fill" id="confidence-bar"></div></div>
-      <div class="reasoning" id="reasoning">—</div>
-      <ul class="reason-list" id="reasoning-list"></ul>
-      <div class="weights" id="weights"></div>
-    </div>
-    <div id="conviction-note" class="hold-warning hidden">
-      <div class="hw-title">⚠️ Conviction note</div>
-      <div class="hw-text" id="hw-text"></div>
-      <div class="hw-lean" id="hw-lean"></div>
     </div>
   </section>
 
@@ -446,6 +454,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=2.4.0"></script>
+<script src="/static/app.js?v=2.5.0"></script>
 </body>
 </html>

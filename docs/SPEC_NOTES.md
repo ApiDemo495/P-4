@@ -776,3 +776,101 @@ Found by running the hooks the way a Codespace does (overlapping, detached):
    the lock's real buffer (1440) instead of 240.
 
 Guarded by four new tests in `backend/tests/test_autostart.py`.
+
+## L — In sync: the two-stage lock, the reveal at zero, and formulas over emotions
+
+**Symptom (verbatim).** "nothing is in sinc. like predictions coming early
+before time, emotions and formulas are not co relating. And why the hell
+emotions formulas are not powerful … why their is no prediction lock
+predictions changing in middle … why app is not giving formulas more value
+than emotions … lag in countdown."
+
+**Causes found.**
+
+1. *Predictions were eight seconds stale, and announced early.* The whole
+   pipeline (snapshot → 22 formulas → crowd → agents → fusion) ran once, at
+   t−8 s, because the agents' 7 s timeouts need that lead. The formulas take
+   ~6 ms, so the prediction was built on a tape eight seconds older than the
+   boundary it was supposed to describe, and `computed_at` said so.
+2. *The client's clock offset came from one sample.* The first HELLO's
+   half-RTT set the offset and every later message could only nudge it by
+   120 ms. On a proxied Codespace socket the first round trip is long and
+   asymmetric, so the countdown ran ahead or behind the server by up to a few
+   seconds: the SIGNAL landed while the digits still showed 2–3 ("coming
+   early", "changing in the middle") or after the digits had sat on 0 ("lag").
+3. *The countdown stuttered under the emotion stream.* EMOTION was ~10 KB of
+   bars plus ~8 KB of deep block, twice a second, and the client rebuilt the
+   entire card (including the 14-step chain) on every message.
+4. *The prediction cell had a live line in it.* `crowd now: …` changed every
+   half second inside the locked prediction, so the lock looked broken even
+   though side, confidence and levels never moved.
+5. *The emotions never saw the formulas.* The crowd engine read only the tape;
+   nothing coupled it to the 22-formula vote, so the two could not correlate
+   by construction, and nothing on screen said who had the vote.
+6. *The emotion formulas were invisible.* Each emotion was a weighted sum of
+   bounded ramps - real formulas - but the payload carried only the result.
+
+**Decisions.**
+
+1. **Two-stage lock** (`cycle_manager._pipelined_loop`). Stage 1 at
+   t−`LOCK_DEADLINE_SECONDS` (8 s): the slow half - the agents - on a
+   provisional snapshot; `NEXT_WINDOW_READY` says "agents ready". Stage 2 at
+   t−`FINAL_LOCK_LEAD_SECONDS` (0.4 s, new): `_refreeze()` takes a fresh
+   snapshot and re-runs the formulas, the crowd, the fusion and the level
+   geometry with the agents' votes carried over, re-stamping `computed_at`.
+   The boundary publishes the stage-2 signal. The window payload gains
+   `lock{stages, agents_lead_seconds, final_lock_lead_seconds,
+   final_freeze_ms, data_age_at_open_seconds, rule}`; live it reads
+   `data_age_at_open_seconds: 0.38`. If stage 2 fails the stage-1 draft is
+   published (logged), so a boundary is never missed.
+2. **Snap on the boundary SIGNAL, nudge otherwise** (web `applyClock`,
+   Flutter `_applyWindow(boundary: true)`). The boundary SIGNAL is sent at
+   the exact instant the window opens, so its arrival is the one clock sample
+   worth trusting outright. The offset is anchored to the *arrival* (not
+   arrival minus half an RTT), which keeps the client behind the server by
+   the one-way latency: the countdown can only reach 0 when the next SIGNAL
+   is already there. Reveal and zero are the same instant; a prediction can
+   never appear early.
+3. **A lighter stream, repainted only where it changed.** The emotion loop
+   sends the deep block on every fourth sample (2 s) and flags it
+   (`deep_included`); the bars still move twice a second. The web client
+   keeps the last deep block and repaints it only when a new one arrives
+   (`emotionsDeepDirty`); Flutter carries it with `EmotionReading.withDeep`.
+   The same every-fourth sample re-runs the 22 formulas (6 ms) so
+   `last_live_formulas` is 2 s fresh instead of 15 s.
+4. **Nothing live inside the locked cell.** `w-crowd-line` / `_CrowdLine`
+   now show the crowd *at the lock* with the verdict against the lock-time
+   formulas and the confidence cut - frozen for the window. The live crowd
+   card moved below the locked-signal card in the page order.
+5. **Formulas into the crowd filter, and the rule on screen.** The 22-formula
+   consensus (`prediction.consensus`, EMA-smoothed with the emotions' time
+   constant) enters the Bayesian filter as three evidence variables
+   (`formula_up`, `formula_down`, `formula_conviction`; step 15 of the chain,
+   "22-formula cross-check"), pulling the buying emotions up when the
+   formulas lean BUY and the selling ones when they lean SELL - with fewer
+   than three voters the formulas do not move the filter. Every reading now
+   carries `formula_agreement{verdict: aligned | conflict | crowd flat |
+   formulas split | formulas silent, consensus, voters, up/down, crowd_tone,
+   alignment, note, weights, rule}`; the note is appended to `read`. The rule
+   printed everywhere: *the 22 formulas carry 40 % of the direction vote; the
+   crowd never votes - it can only cut confidence by at most 25 % when it
+   disagrees* (that is what `fuse(crowd=)` has always done; now it is said).
+6. **Emotion formulas, printed.** `EMOTION_FORMULAS` gives each emotion's
+   symbolic expression, `TERM_DEFINITIONS` (31 terms) the ramps behind it,
+   and every `EmotionScore` carries `formula`, `terms[{weight, term, value,
+   contribution}]`, `gate`, `ramp`, `belief`. The web card prints the
+   selected emotion's formula with the live numbers substituted (click a bar
+   to switch); Flutter has the same block with chips.
+
+**Verification.** `backend/tests/test_countdown.py` (two-stage lock: fresh
+`computed_at`, same window, agents carried, the loop order), `test_emotions.py`
+(formula + terms on every emotion, the agreement verdicts, the live
+cross-check), `test_deep_micro.py` (consensus evidence moves the filter the
+right way, silent under three voters, 15-step chain);
+`tools/dashboard_payload_check.js` 69/69 against the live engine, including
+`data_age_at_open_seconds ≤ 1.5`. A 135 s socket capture: SIGNAL at
+`:00.013`, `lock=0.38`, `computed_at :59`, side constant within each window.
+
+**Escape hatches.** `FINAL_LOCK_LEAD_SECONDS` (0.05 … `LOCK_DEADLINE_SECONDS`)
+moves the final freeze; setting it equal to the agents' lead restores the
+single-stage behaviour.

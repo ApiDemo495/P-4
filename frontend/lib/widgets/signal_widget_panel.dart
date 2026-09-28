@@ -260,16 +260,18 @@ class SignalWidgetPanel extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             ready
-                ? 'next signal #${state.cycleNumber + 1} ready — revealed at the boundary'
-                : 'computing signal #${state.cycleNumber + 1} … '
+                ? 'agents for #${state.cycleNumber + 1} ready — tape, formulas and '
+                    'crowd freeze at the boundary, revealed at 0'
+                : 'preparing signal #${state.cycleNumber + 1} … '
                     '${(state.nextComputeProgress * 100).round()}%',
             textAlign: TextAlign.center,
             style: const TextStyle(color: AppTheme.textMuted, fontSize: 10.5),
           ),
-          if (w?.computedSecondsAgo != null)
+          if (w?.dataAgeAtOpenSeconds != null)
             Text(
-              'this window was computed '
-              '${w!.computedSecondsAgo!.round()}s before it opened',
+              'this window was frozen '
+              '${w!.dataAgeAtOpenSeconds!.toStringAsFixed(1)}s before it opened '
+              '(agents ${w.agentsLeadSeconds.round()}s early)',
               textAlign: TextAlign.center,
               style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
             ),
@@ -901,11 +903,14 @@ class _CrowdLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final live = state.crowd.live;
-    final top = live.dominant;
-    if (!live.hasData || top == null) {
+    // Round L: the crowd *at the lock*.  Nothing inside the prediction cell
+    // may move during a window, so this is the frozen reading; the live one
+    // is in the Crowd Emotion card.
+    final locked = state.crowd.locked;
+    final top = locked.dominant;
+    if (!locked.hasData || top == null) {
       return const Text(
-        'crowd — measuring the tape…',
+        'crowd at lock — waiting for the first lock…',
         style: TextStyle(color: AppTheme.textMuted, fontSize: 11, fontFamily: 'mono'),
       );
     }
@@ -914,10 +919,8 @@ class _CrowdLine extends StatelessWidget {
         : top.tone == 'positive'
             ? AppTheme.buy
             : AppTheme.hold;
-    final manipulation = live.manipulation;
-    final held = live.heldSeconds >= 60
-        ? '${live.heldSeconds ~/ 60}m'
-        : '${live.heldSeconds.toStringAsFixed(0)} s';
+    final agree = locked.formulaAgreement;
+    final cut = state.crowd.dampeningApplied;
     return Row(
       children: [
         Container(
@@ -933,14 +936,15 @@ class _CrowdLine extends StatelessWidget {
               style: const TextStyle(
                   color: AppTheme.textMuted, fontSize: 11.5, fontFamily: 'mono'),
               children: [
-                const TextSpan(text: 'crowd now: '),
+                const TextSpan(text: 'crowd at lock: '),
                 TextSpan(
                   text: '${top.label} ${top.percent.toStringAsFixed(0)}%',
                   style: TextStyle(color: color, fontWeight: FontWeight.w700),
                 ),
                 TextSpan(
-                  text: ' · ${top.dominantTimescale} · held $held'
-                      '${manipulation.score >= 0.45 ? ' · ${(manipulation.score * 100).toStringAsFixed(0)}% ${manipulation.kind}' : ''}',
+                  text: '${agree.hasVerdict ? ' · vs formulas: ${agree.verdict}' : ''}'
+                      '${cut < 0.999 ? ' · confidence x${cut.toStringAsFixed(2)}' : ' · no confidence cut'}'
+                      ' · frozen for this window',
                 ),
               ],
             ),
@@ -1047,6 +1051,27 @@ class _PredictionDetailToggleState extends State<_PredictionDetailToggle> {
                   'manipulation ${(detail.crowdManipulation * 100).toStringAsFixed(0)}% '
                   '(${detail.crowdManipulationKind})'
                   '${detail.crowdDampening < 0.999 ? ' · confidence x${detail.crowdDampening.toStringAsFixed(2)}' : ' · no crowd dampening'}',
+                  style: const TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 10.5,
+                    fontFamily: 'mono',
+                  ),
+                ),
+              ),
+            // Round L: the locked crowd against the lock-time formulas, and
+            // who decided - the formulas keep the vote.
+            if (detail.crowdAgreement.hasVerdict)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  'crowd vs the 22 formulas at lock: ${detail.crowdAgreement.verdict} · '
+                  'formulas ${detail.crowdAgreement.consensus >= 0 ? '+' : ''}'
+                  '${detail.crowdAgreement.consensus.toStringAsFixed(2)} '
+                  '(${detail.crowdAgreement.voters} voted, ${detail.crowdAgreement.up} up / '
+                  '${detail.crowdAgreement.down} down) · crowd '
+                  '${detail.crowdAgreement.crowdTone >= 0 ? '+' : ''}'
+                  '${detail.crowdAgreement.crowdTone.toStringAsFixed(2)} — '
+                  '${detail.crowdAgreement.note}. ${detail.crowdAgreement.rule}',
                   style: const TextStyle(
                     color: AppTheme.textMuted,
                     fontSize: 10.5,

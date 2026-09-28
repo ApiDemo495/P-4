@@ -29,6 +29,9 @@ const state = {
   emotionsLocked: null,  // the reading taken on the frozen snapshot at lock time
   emotionDampening: null,
   lastEmotionDominant: null,
+  emotionsDeep: null,        // the last deep block received (streamed every 4th sample)
+  emotionsDeepDirty: false,  // repaint the deep block only when a new one arrived
+  emotionFormulaFor: null,   // which emotion's formula is printed (default: dominant)
   formulaTraces: {},
   formulaReadings: {},
   formulaMeta: [],
@@ -248,9 +251,23 @@ function applyClock(payload, opts = {}) {
   // One-way delay estimate: half the round trip of the request that carried it.
   const rttMs = typeof opts.rttMs === "number" ? opts.rttMs : 0;
   const sample = (clock.server_time_ms + rttMs / 2) - Date.now();
+  const arrival = clock.server_time_ms - Date.now();
   if (state.serverOffsetMs === null) {
     state.serverOffsetMs = sample;
     state.clockSamples = 1;
+  } else if (opts.boundary) {
+    // A boundary SIGNAL is sent at the exact instant the window opens, so its
+    // arrival is the one clock sample worth trusting outright.  Snapping here
+    // (and only here) is what keeps the reveal and the zero of the countdown
+    // on the same instant: had the first sample been wrong (a proxied
+    // Codespace socket has a long, asymmetric first round trip), the prediction
+    // used to land while the digits still showed 2 or 3 - "coming early".
+    // Anchoring to the arrival (not arrival minus half an RTT) means the client
+    // runs *behind* the server by the one-way latency, so the countdown can only
+    // ever reach zero when the next SIGNAL is already here - never before.
+    state.serverOffsetMs = arrival;
+    state.clockSamples += 1;
+    state.lastBoundarySnapMs = Date.now();
   } else {
     // Trust the new sample slowly: at most 120 ms per message, so the numbers
     // on screen never lurch, and never enough to move this window's deadline.
@@ -542,8 +559,19 @@ function crowdDetailHtml(crowd) {
     `</div>` +
     (bars ? `<div class="detail-line" style="font-size:10.5px">${bars}</div>` : "") +
     (crowd.read ? `<div class="muted" style="font-size:11px">${escapeHtml(String(crowd.read))}</div>` : "") +
+    agreementLockedHtml(crowd.formula_agreement) +
     deepLockedHtml(crowd.deep) +
     `</div>`;
+}
+
+/* Round L: the locked crowd against the lock-time formulas, and who decided. */
+function agreementLockedHtml(agree) {
+  if (!agree || !agree.verdict) return "";
+  return `<div class="logic-h" style="margin-top:8px">Crowd vs the 22 formulas at lock time</div>` +
+    `<div class="detail-line">verdict <b>${escapeHtml(String(agree.verdict))}</b> · formulas ${fmtSigned(Number(agree.consensus || 0), 2)} ` +
+    `(${agree.voters || 0} voted, ${agree.up || 0} up / ${agree.down || 0} down) · crowd ${fmtSigned(Number(agree.crowd_tone || 0), 2)} · ` +
+    `alignment ${fmtSigned(Number(agree.alignment || 0), 2)}</div>` +
+    `<div class="muted" style="font-size:11px">${escapeHtml(String(agree.note || ""))} — ${escapeHtml(String(agree.rule || ""))}</div>`;
 }
 
 /* Round K: the deep-reasoning layer as it was when the side was locked -
@@ -573,6 +601,13 @@ function adoptEmotions(data) {
   const block = data?.emotions;
   if (!block || typeof block !== "object") return;
   state.emotions = block;
+  // The deep block is heavy, so the stream carries it on every fourth sample
+  // only; the bars and the read-out still move twice a second.  The last deep
+  // block is kept and repainted only when a new one arrives.
+  if (block.deep && block.deep.available !== undefined) {
+    state.emotionsDeep = block.deep;
+    state.emotionsDeepDirty = true;
+  }
   if (block.locked !== undefined) state.emotionsLocked = block.locked;
   if (block.dampening) state.emotionDampening = block.dampening;
   if (data.dampening) state.emotionDampening = data.dampening;
@@ -635,7 +670,8 @@ function renderEmotions() {
   const rows = (e.emotions || []).map((item) => {
     const cls = toneClass(item.tone);
     const isTop = item.name === top.name;
-    return `<div class="emotion-row">` +
+    const selected = (state.emotionFormulaFor || top.name) === item.name;
+    return `<div class="emotion-row${selected ? " selected" : ""}" data-emotion="${escapeHtml(item.name)}" title="click to print this emotion's formula">` +
       `<span class="name${isTop ? " dominant" : ""}">${escapeHtml(item.label || item.name)}<span class="fam">${escapeHtml(item.family || "")}</span></span>` +
       `<div class="bar"><div class="bar-fill ${cls}" style="width:${clamp(Number(item.percent || 0), 0, 100)}%"></div></div>` +
       `<span class="pct">${Number(item.percent || 0).toFixed(0)}%</span>` +
@@ -643,6 +679,8 @@ function renderEmotions() {
       `</div>`;
   });
   bars.innerHTML = rows.join("");
+  renderEmotionFormula(e, top);
+  renderFormulaAgreement(e.formula_agreement);
 
   /* temperature */
   const toneBias = clamp(Number(e.tone_bias || 0), -1, 1);
@@ -682,14 +720,76 @@ function renderEmotions() {
       `<span class="muted">${escapeHtml(String(state.emotionDampening?.note || "no crowd dampening on this signal"))}</span>`
     : `<span class="muted">the first locked window will record the crowd's mood</span>`;
 
-  /* inline line in the prediction cell */
-  if (line) {
-    line.innerHTML = `crowd now: <b>${escapeHtml(top.label || top.name)}</b> ${Number(top.percent || 0).toFixed(0)}% ` +
-      `· ${emotionTimescaleLabel(top.dominant_timescale)} · held ${held >= 60 ? `${Math.floor(held / 60)}m` : `${held.toFixed(0)} s`}` +
-      (score >= 0.45 ? ` · <b>${fmtPct(score)}</b> ${escapeHtml(String(manip.kind || ""))}` : "");
+  /* inline line in the prediction cell: the crowd *at the lock*, which does
+     not move during the window - the live reading is the card above. */
+  renderLockedCrowdLine(line, dot);
+  if (state.emotionsDeepDirty) {
+    state.emotionsDeepDirty = false;
+    renderDeep(state.emotionsDeep, top);
   }
-  if (dot) dot.className = `crowd-dot ${tone}`;
-  renderDeep(e.deep, top);
+}
+
+function renderLockedCrowdLine(line, dot) {
+  if (!line) return;
+  const locked = state.emotionsLocked;
+  const lockedTop = locked?.dominant;
+  if (!lockedTop) {
+    line.textContent = "crowd at lock — waiting for the first lock…";
+    if (dot) dot.className = "crowd-dot neutral";
+    return;
+  }
+  const agree = locked.formula_agreement || {};
+  const damp = Number(state.emotionDampening?.applied ?? 1);
+  const verdict = agree.verdict ? ` · vs formulas: <b>${escapeHtml(agree.verdict)}</b>` : "";
+  line.innerHTML = `crowd at lock: <b>${escapeHtml(lockedTop.label || lockedTop.name)}</b> ` +
+    `${Number(lockedTop.percent || 0).toFixed(0)}%${verdict}` +
+    (damp < 0.999 ? ` · confidence x${damp.toFixed(2)}` : " · no confidence cut") +
+    ` · <span class="muted">frozen for this window</span>`;
+  if (dot) dot.className = `crowd-dot ${toneClass(lockedTop.tone)}`;
+}
+
+/* Round L: the emotion's formula, printed with the live numbers.  The eight
+   emotions are weighted sums of bounded ramps over the tape's own surprise
+   units, times a gate; every term is shown with its weight, its live value and
+   its contribution so the reading can be checked by hand. */
+function renderEmotionFormula(e, top) {
+  const el = $("emotion-formula");
+  if (!el) return;
+  const name = state.emotionFormulaFor || top.name;
+  const item = (e.emotions || []).find((row) => row.name === name) || (e.emotions || [])[0];
+  if (!item || !item.formula) { el.innerHTML = ""; return; }
+  const terms = (item.terms || []).map((t) =>
+    `<tr><td class="w">${Number(t.weight).toFixed(2)}</td><td class="t">${escapeHtml(t.term)}</td>` +
+    `<td class="v">${Number(t.value).toFixed(3)}</td><td class="c">${Number(t.contribution).toFixed(3)}</td></tr>`).join("");
+  const raw = (item.terms || []).reduce((acc, t) => acc + Number(t.contribution || 0), 0);
+  const gate = Number(item.gate ?? 1);
+  el.innerHTML =
+    `<div class="formula-head"><b>${escapeHtml(item.label || item.name)}</b> <span class="muted">formula · live terms</span></div>` +
+    `<code class="formula-text">${escapeHtml(item.formula)}</code>` +
+    `<table class="term-table"><thead><tr><th>w</th><th>term</th><th>value</th><th>w·value</th></tr></thead><tbody>${terms}</tbody></table>` +
+    `<div class="formula-foot">Σ = <b>${raw.toFixed(3)}</b> × gate <b>${gate.toFixed(3)}</b>` +
+    ` → ramp <b>${Number(item.ramp ?? 0).toFixed(3)}</b> · Bayesian belief <b>${(Number(item.belief || 0) * 100).toFixed(0)}%</b>` +
+    ` · shown <b>${Number(item.percent || 0).toFixed(0)}%</b> <span class="muted">(0.65·ramp + 0.35·min(1, 2.5·belief), band-lifted, EMA-smoothed)</span></div>`;
+}
+
+/* Round L: the crowd against the 22 formulas.  The formulas carry the vote
+   (40% of the fusion, the largest weight); the crowd is a bounded confidence
+   modifier.  This block says whether the two agree and repeats the rule. */
+function renderFormulaAgreement(agree) {
+  const el = $("emotion-agreement");
+  if (!el) return;
+  if (!agree || !agree.verdict) { el.innerHTML = `<span class="muted">waiting for the first formula pass…</span>`; return; }
+  const consensus = clamp(Number(agree.consensus || 0), -1, 1);
+  const tone = clamp(Number(agree.crowd_tone || 0), -1, 1);
+  const cls = agree.verdict === "aligned" ? "positive" : agree.verdict === "conflict" ? "negative" : "neutral";
+  const names = [...(agree.up_names || []).map((n) => `${n}↑`), ...(agree.down_names || []).map((n) => `${n}↓`)].slice(0, 6).join(" ");
+  el.innerHTML =
+    `<div class="agree-verdict ${cls}">${escapeHtml(agree.verdict)}</div>` +
+    `<div class="agree-row"><span>formulas</span><div class="agree-gauge"><div class="tone-zero"></div><div class="tone-marker" style="left:${50 + consensus * 50}%"></div></div><b>${fmtSigned(consensus, 2)}</b></div>` +
+    `<div class="agree-row"><span>crowd</span><div class="agree-gauge"><div class="tone-zero"></div><div class="tone-marker" style="left:${50 + tone * 50}%"></div></div><b>${fmtSigned(tone, 2)}</b></div>` +
+    `<div class="agree-note">${escapeHtml(agree.note || "")}</div>` +
+    (names ? `<div class="agree-names muted">${escapeHtml(names)}</div>` : "") +
+    `<div class="agree-rule muted">${escapeHtml(agree.rule || "")}</div>`;
 }
 
 /* ------------------------------------------------------------ deep --------
@@ -855,13 +955,14 @@ function renderPipelineProgress() {
   fill.style.width = `${Math.round(progress * 100)}%`;
   fill.classList.toggle("ready", ready);
   const nextCycle = (state.cycleNumber || 0) + 1;
-  const computedAgo = state.window?.computed_seconds_ago;
-  const proof = computedAgo
-    ? ` · this window's signal was computed <b>${Math.round(computedAgo)}s</b> before it opened`
+  const lock = w.lock || {};
+  const age = lock.data_age_at_open_seconds;
+  const proof = typeof age === "number"
+    ? ` · this window was frozen <b>${age.toFixed(1)}s</b> before it opened (agents prepared ${Math.round(lock.agents_lead_seconds || lead)}s early, formulas + crowd re-frozen at the boundary)`
     : "";
   $("w-next").innerHTML = ready
-    ? `next signal <b>#${nextCycle}</b> computed and held — revealed at the boundary${proof}`
-    : `computing signal <b>#${nextCycle}</b> … ${Math.round(progress * 100)}%${proof}`;
+    ? `agents for <b>#${nextCycle}</b> ready — tape, formulas and crowd freeze at the boundary, revealed at 0${proof}`
+    : `preparing signal <b>#${nextCycle}</b> … ${Math.round(progress * 100)}%${proof}`;
 }
 
 /* ---------------------------------------------------------------- renders */
@@ -1007,8 +1108,10 @@ function renderSignal() {
   if ($("weights")) {
     const w = s.fusion?.weights_used || {};
     const parts = Object.keys(w).map((k) => `${k} ${fmtPct(w[k])}`);
+    const crowdCut = Number(s.fusion?.crowd_adjustment ?? 1);
+    const crowd = ` · crowd: confidence x${crowdCut.toFixed(2)} (a modifier of at most 25%, never a vote)`;
     $("weights").textContent = parts.length
-      ? `fusion weights: ${parts.join(" · ")} · window #${s.cycle_number}`
+      ? `who decides: ${parts.join(" · ")}${crowd} · window #${s.cycle_number} · frozen at the boundary`
       : `window #${s.cycle_number}`;
   }
 
@@ -1836,6 +1939,12 @@ $("w-emergency-clear").addEventListener("click", async () => {
   renderEmergency();
 });
 
+$("emotion-bars").addEventListener("click", (event) => {
+  const row = event.target.closest(".emotion-row");
+  if (!row || !row.dataset.emotion) return;
+  state.emotionFormulaFor = state.emotionFormulaFor === row.dataset.emotion ? null : row.dataset.emotion;
+  renderEmotions();
+});
 $("brain-toggle").addEventListener("click", () => {
   state.wiringOpen = !state.wiringOpen;
   $("brain-wiring").classList.toggle("hidden", !state.wiringOpen);
@@ -1869,7 +1978,7 @@ function isSignalPayload(value) {
    panel at a time on a timer of its own. */
 function applySnapshot(data, opts = {}) {
   if (!data || data.error) return;
-  const anchored = applyClock(data, { rttMs: opts.rttMs, force: opts.force });
+  const anchored = applyClock(data, { rttMs: opts.rttMs, force: opts.force, boundary: !!opts.boundary });
   if (data.asset) state.asset = data.asset;
   if ("pending_asset" in data) state.pendingAsset = data.pending_asset;
   if (data.lock_state) state.lockState = data.lock_state;

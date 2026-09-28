@@ -471,6 +471,7 @@ class PredictionDetail {
     this.crowdDampening = 1.0,
     this.crowdDeep = const {},
     this.crowdChain = const [],
+    this.crowdAgreement = FormulaAgreement.none,
   });
 
   final String side;
@@ -503,6 +504,9 @@ class PredictionDetail {
   /// ordered reasoning chain.
   final Map<String, dynamic> crowdDeep;
   final List<DeepStep> crowdChain;
+
+  /// Round L: the locked crowd against the lock-time formulas.
+  final FormulaAgreement crowdAgreement;
 
   bool get hasData => side.isNotEmpty || supporters.isNotEmpty;
   bool get hasCrowd => crowdDominant.isNotEmpty;
@@ -549,6 +553,10 @@ class PredictionDetail {
       crowdManipulationKind: _s(crowd?['manipulation_kind']),
       crowdRead: _s(crowd?['read']),
       crowdDampening: _d(parts['crowd_dampening'], 1.0),
+      crowdAgreement: crowd?['formula_agreement'] is Map
+          ? FormulaAgreement.fromJson(
+              Map<String, dynamic>.from(crowd!['formula_agreement'] as Map))
+          : FormulaAgreement.none,
       crowdDeep: crowd?['deep'] is Map
           ? Map<String, dynamic>.from(crowd!['deep'] as Map)
           : const {},
@@ -573,10 +581,25 @@ class EmotionScore {
     this.byTimescale = const {},
     this.dominantTimescale = '',
     this.drivers = const [],
+    this.formula = '',
+    this.terms = const [],
+    this.gate = 1.0,
+    this.ramp = 0.0,
+    this.belief = 0.0,
   });
 
   final String name;
   final String label;
+
+  /// Round L: the emotion's printed formula, its live terms
+  /// (weight / term / value / contribution), the multiplicative gate, the raw
+  /// ramp reading and the Bayesian filter's belief - so the number on the bar
+  /// can be checked by hand.
+  final String formula;
+  final List<EmotionTerm> terms;
+  final double gate;
+  final double ramp;
+  final double belief;
 
   /// `negative` (fear family), `positive` (chase family) or `neutral` (calm).
   final String tone;
@@ -604,7 +627,106 @@ class EmotionScore {
         drivers: ((json['drivers'] as List?) ?? const [])
             .map((item) => item.toString())
             .toList(),
+        formula: _s(json['formula']),
+        terms: ((json['terms'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((row) => EmotionTerm.fromJson(Map<String, dynamic>.from(row)))
+            .toList(),
+        gate: _d(json['gate'], 1.0),
+        ramp: _d(json['ramp']),
+        belief: _d(json['belief']),
       );
+}
+
+/// One term of an emotion's formula: `weight · term = contribution`.
+class EmotionTerm {
+  const EmotionTerm({
+    this.weight = 0.0,
+    this.term = '',
+    this.value = 0.0,
+    this.contribution = 0.0,
+  });
+
+  final double weight;
+  final String term;
+  final double value;
+  final double contribution;
+
+  factory EmotionTerm.fromJson(Map<String, dynamic> json) => EmotionTerm(
+        weight: _d(json['weight']),
+        term: _s(json['term']),
+        value: _d(json['value']),
+        contribution: _d(json['contribution']),
+      );
+}
+
+/// Round L: the crowd reading against the 22 formulas' weighted vote - the
+/// verdict (aligned / conflict / crowd flat / formulas split / formulas
+/// silent), both readings, and the rule that the formulas keep the vote.
+class FormulaAgreement {
+  const FormulaAgreement({
+    this.available = false,
+    this.consensus = 0.0,
+    this.voters = 0,
+    this.up = 0,
+    this.down = 0,
+    this.upNames = const [],
+    this.downNames = const [],
+    this.formulaSide = '',
+    this.crowdTone = 0.0,
+    this.crowdSide = '',
+    this.alignment = 0.0,
+    this.verdict = '',
+    this.note = '',
+    this.rule = '',
+    this.formulaWeight = 0.40,
+    this.crowdMaxCut = 0.25,
+  });
+
+  final bool available;
+  final double consensus;
+  final int voters;
+  final int up;
+  final int down;
+  final List<String> upNames;
+  final List<String> downNames;
+  final String formulaSide;
+  final double crowdTone;
+  final String crowdSide;
+  final double alignment;
+  final String verdict;
+  final String note;
+  final String rule;
+  final double formulaWeight;
+  final double crowdMaxCut;
+
+  static const FormulaAgreement none = FormulaAgreement();
+
+  bool get hasVerdict => verdict.isNotEmpty;
+
+  factory FormulaAgreement.fromJson(Map<String, dynamic> json) {
+    final weights = (json['weights'] as Map?) ?? const {};
+    List<String> names(dynamic raw) =>
+        ((raw as List?) ?? const []).map((item) => item.toString()).toList();
+    return FormulaAgreement(
+      available: json['available'] == true,
+      consensus: _d(json['consensus']),
+      voters: _i(json['voters']),
+      up: _i(json['up']),
+      down: _i(json['down']),
+      upNames: names(json['up_names']),
+      downNames: names(json['down_names']),
+      formulaSide: _s(json['formula_side']),
+      crowdTone: _d(json['crowd_tone']),
+      crowdSide: _s(json['crowd_side']),
+      alignment: _d(json['alignment']),
+      verdict: _s(json['verdict']),
+      note: _s(json['note']),
+      rule: _s(json['rule']),
+      formulaWeight: _d(weights['formulas'], 0.40),
+      crowdMaxCut: _d(weights['crowd_max_confidence_cut'], 0.25),
+    );
+  }
 }
 
 /// The manipulation signature of the minute: how crowded the tape looks and by
@@ -664,6 +786,7 @@ class EmotionReading {
     this.intervalSeconds = 0.5,
     this.manipulation = ManipulationRead.none,
     this.deep = DeepReasoning.none,
+    this.formulaAgreement = FormulaAgreement.none,
   });
 
   final bool available;
@@ -693,9 +816,37 @@ class EmotionReading {
   /// the reading.
   final DeepReasoning deep;
 
+  /// Round L: how this reading sits against the 22 formulas.
+  final FormulaAgreement formulaAgreement;
+
   static const EmotionReading none = EmotionReading();
 
   bool get hasData => available && emotions.isNotEmpty;
+
+  /// The stream carries the heavy deep block on every fourth sample only;
+  /// the samples in between keep the last one.
+  EmotionReading withDeep(DeepReasoning carried) => EmotionReading(
+        available: available,
+        reason: reason,
+        asset: asset,
+        atUs: atUs,
+        ticks: ticks,
+        resolutionUs: resolutionUs,
+        resolutionLabel: resolutionLabel,
+        emotions: emotions,
+        dominant: dominant,
+        runnerUp: runnerUp,
+        toneBias: toneBias,
+        heldSeconds: heldSeconds,
+        churnPerMinute: churnPerMinute,
+        samples: samples,
+        read: read,
+        hint: hint,
+        intervalSeconds: intervalSeconds,
+        manipulation: manipulation,
+        deep: carried,
+        formulaAgreement: formulaAgreement,
+      );
 
   factory EmotionReading.fromJson(Map<String, dynamic> json) {
     final ranked = ((json['emotions'] as List?) ?? const [])
@@ -736,6 +887,10 @@ class EmotionReading {
       deep: json['deep'] is Map
           ? DeepReasoning.fromJson(Map<String, dynamic>.from(json['deep'] as Map))
           : DeepReasoning.none,
+      formulaAgreement: json['formula_agreement'] is Map
+          ? FormulaAgreement.fromJson(
+              Map<String, dynamic>.from(json['formula_agreement'] as Map))
+          : FormulaAgreement.none,
     );
   }
 }
@@ -1117,7 +1272,18 @@ class WindowInfo {
     this.phase = '',
     this.computeProgress = 0.0,
     this.clock,
+    this.dataAgeAtOpenSeconds,
+    this.agentsLeadSeconds = 8.0,
+    this.finalLockLeadSeconds = 0.4,
   });
+
+  /// Round L: the two-stage lock - the agents are prepared
+  /// [agentsLeadSeconds] early, the tape / formulas / crowd / fusion are
+  /// frozen again [finalLockLeadSeconds] before the boundary, so the window
+  /// opened on data [dataAgeAtOpenSeconds] old (null until the first lock).
+  final double? dataAgeAtOpenSeconds;
+  final double agentsLeadSeconds;
+  final double finalLockLeadSeconds;
 
   final String validFrom;
   final String validUntil;
@@ -1152,6 +1318,14 @@ class WindowInfo {
             ? MasterClock.fromJson(
                 Map<String, dynamic>.from(json['clock'] as Map))
             : null,
+        dataAgeAtOpenSeconds:
+            (json['lock'] as Map?)?['data_age_at_open_seconds'] == null
+                ? null
+                : _d((json['lock'] as Map)['data_age_at_open_seconds']),
+        agentsLeadSeconds:
+            _d((json['lock'] as Map?)?['agents_lead_seconds'], 8.0),
+        finalLockLeadSeconds:
+            _d((json['lock'] as Map?)?['final_lock_lead_seconds'], 0.4),
       );
 }
 
