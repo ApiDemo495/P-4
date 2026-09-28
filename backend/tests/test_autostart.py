@@ -146,3 +146,51 @@ def test_the_restart_path_is_documented_for_the_user() -> None:
     readme = (ROOT / "README.md").read_text()
     assert "codespace_autostart" in readme or "zero commands" in readme.lower()
     assert "AUTO_FLUTTER" in readme, "the Flutter opt-out must be documented"
+
+
+# ---------------------------------------------------------------------------
+# "requirements and other stuff are not automatically downloading"
+# ---------------------------------------------------------------------------
+def test_the_hooks_cannot_run_two_installs_at_once() -> None:
+    """postCreate / postStart / postAttach overlap in a Codespace; the
+    provisioning and the engine start are serialised by a lock, and the
+    editor is not attached until postCreateCommand has finished."""
+    text = AUTOSTART.read_text()
+    assert "flock -w" in text and "with_lock provision" in text
+    assert "with_lock start_engine" in text
+    config = (ROOT / ".devcontainer" / "devcontainer.json").read_text()
+    assert '"waitFor": "postCreateCommand"' in config
+
+
+def test_long_lived_children_never_inherit_the_lock() -> None:
+    """The supervisor and setup.sh must be started with fd 9 closed; a child
+    that inherits the lock holds it for as long as the engine runs, and every
+    later hook waits on it (seen live: a 15-minute hang)."""
+    text = AUTOSTART.read_text()
+    for line in text.splitlines():
+        if "run.sh\" --bg" in line or "setup.sh\" <" in line or "run.sh\" --clean" in line:
+            assert "9>&-" in line, line
+
+
+def test_provisioning_retries_and_checks_every_requirement() -> None:
+    text = AUTOSTART.read_text()
+    assert "for attempt in 1 2 3" in text and 'rm -rf "$VENV"' in text
+    for module in ("pydantic", "dotenv", "redis", "ntplib", "msgpack", "multipart", "pytest"):
+        assert f'"{module}"' in text, module
+    run_sh = (ROOT / "run.sh").read_text()
+    for module in ("pydantic", "dotenv", "redis", "ntplib", "msgpack", "multipart", "pytest"):
+        assert module in run_sh.split("REQUIRED_MODULES=")[1].split("\n")[0], module
+
+
+def test_nothing_in_the_automatic_path_can_wait_for_a_keyboard() -> None:
+    setup = (ROOT / ".devcontainer" / "setup.sh").read_text()
+    assert "DEBIAN_FRONTEND=noninteractive" in setup
+    assert "sudo -n" in setup and "\n  $sudo_opt apt-get" not in setup.replace("sudo -n", "")
+    web = (ROOT / "frontend" / "run_web.sh").read_text()
+    # the prompt is skipped outright when INSTALL_FLUTTER=1, and even an
+    # interactive prompt times out instead of blocking for ever
+    assert '[ "${INSTALL_FLUTTER:-0}" != "1" ] && [ -t 0 ]' in web
+    assert "read -r -t 60 answer" in web
+    assert "FLUTTER_SUPPRESS_ANALYTICS=true" in web and "precache --web" in web
+    auto = AUTOSTART.read_text()
+    assert "run_web.sh\" </dev/null" in auto

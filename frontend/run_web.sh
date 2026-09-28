@@ -92,9 +92,12 @@ FLUTTER="$(find_flutter || true)"
 if [ -z "$FLUTTER" ]; then
   warn "flutter is not installed (this is why 'nothing happened' before)"
   answer=""
-  if [ -t 0 ]; then
+  # Only ask when a person is actually there.  The automatic start runs this
+  # script detached (INSTALL_FLUTTER=1, stdin from /dev/null); a prompt in that
+  # situation would stop the download for ever without anyone seeing it.
+  if [ "${INSTALL_FLUTTER:-0}" != "1" ] && [ -t 0 ] && [ -t 1 ]; then
     printf '    Clone the stable Flutter SDK into ~/flutter now? [y/N] '
-    read -r answer || answer=""
+    read -r -t 60 answer || answer=""
   fi
   if [ "${answer:-}" != "y" ] && [ "${answer:-}" != "Y" ] && [ "${INSTALL_FLUTTER:-0}" != "1" ]; then
     cat <<'EOF'
@@ -150,6 +153,17 @@ EOF
 fi
 export PATH="$(dirname "$FLUTTER"):$PATH"
 ok "flutter at $FLUTTER"
+# No analytics prompt, no "welcome" banner, no first-run questions: the
+# automatic start must never wait on a keyboard.
+export FLUTTER_SUPPRESS_ANALYTICS=true CI=true
+"$FLUTTER" --disable-analytics >/dev/null 2>&1 || true
+# The Dart SDK and the web engine are fetched on first use; do it explicitly so
+# a failure is reported here (with a retry) instead of half-way through a build.
+for attempt in 1 2 3; do
+  if "$FLUTTER" precache --web >/tmp/flutter_precache.log 2>&1; then break; fi
+  warn "flutter precache --web failed (attempt $attempt) - retrying"
+  sleep 5
+done
 
 step "2/4  Preparing the project"
 "$FLUTTER" config --enable-web >/dev/null 2>&1 || warn "could not set --enable-web (continuing)"

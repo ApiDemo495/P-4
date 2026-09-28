@@ -76,7 +76,7 @@ VENV="$REPO_ROOT/.venv"
 RUN_DIR="$REPO_ROOT/.run"
 PIDFILE="$RUN_DIR/supervisor.pid"
 SERVER_LOG="$REPO_ROOT/server.log"
-REQUIRED_MODULES="fastapi uvicorn numpy scipy httpx feedparser websockets"
+REQUIRED_MODULES="fastapi uvicorn numpy scipy httpx feedparser websockets pydantic dotenv redis ntplib msgpack multipart pytest"
 PY=""
 
 py_ok() { "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' 2>/dev/null; }
@@ -472,7 +472,7 @@ pip_install() {  # $1 = interpreter, rest = extra pip flags
 }
 
 if has_deps "$PY"; then
-  ok "fastapi, uvicorn, numpy, scipy, httpx, feedparser, websockets already present"
+  ok "every module in requirements.txt is already importable"
 else
   say "${DIM}installing requirements.txt (first run only, ~1 minute)${R}"
   "$PY" -m pip install --quiet --upgrade pip wheel >/dev/null 2>&1 || true

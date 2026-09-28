@@ -27,6 +27,9 @@
   //                      changed requirements.txt, then (re)starts the engine
   //   postAttachCommand  every editor attach - the same, plus the URL banner
   // ---------------------------------------------------------------------------
+  // The editor is not handed over until provisioning is done, so the first
+  // thing the user sees is a running dashboard, not a half-installed venv.
+  "waitFor": "postCreateCommand",
   "postCreateCommand": "bash tools/codespace_autostart.sh --provision",
   "postStartCommand": "bash tools/codespace_autostart.sh --start",
   "postAttachCommand": "bash tools/codespace_autostart.sh --attach",

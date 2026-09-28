@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.api.state import get_manager
 from backend.news.critical_event_detector import CriticalEvent
@@ -15,6 +15,8 @@ class EmergencyRequest(BaseModel):
     headline: str = "Manual test event"
     reason: str = "Triggered manually from the dashboard"
     severity: str = "CRITICAL"
+    #: how long the override holds; ``None`` = the configured default (180 s).
+    duration_seconds: float | None = Field(default=None, ge=10.0, le=900.0)
 
 
 @router.get("/api/news")
@@ -46,7 +48,7 @@ async def trigger_emergency(request: EmergencyRequest) -> dict:
         source="manual",
         tier=1,
     )
-    data = await manager.trigger_emergency(event)
+    data = await manager.trigger_emergency(event, duration_seconds=request.duration_seconds)
     return {"triggered": True, "event": data}
 
 

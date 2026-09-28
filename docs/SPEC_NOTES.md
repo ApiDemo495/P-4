@@ -744,3 +744,35 @@ served pages, prediction reasoning). `tools/dashboard_payload_check.js` gains
 **Escape hatches.** `DeepState.forgetting` / `temperature`, the `LIKELIHOOD`
 table and `BANDS` in `deep_micro.py`; the blend weights in
 `emotions.analyze`.
+
+## K.1 — Auto-provisioning fixes ("requirements are not automatically downloading")
+
+Found by running the hooks the way a Codespace does (overlapping, detached):
+
+1. **The lock leak.** `run.sh --bg` started the supervisor from inside the
+   locked section, so it inherited fd 9 and held the autostart lock for as
+   long as the engine ran; every later hook waited (up to 15 min) and looked
+   hung. All long-lived children are now started with `9>&-`.
+2. **Overlapping hooks.** postCreate / postStart / postAttach can run at the
+   same time; two `pip install`s into one `.venv` produce a half-written
+   environment. Provisioning and the engine start are serialised with
+   `flock`, and `"waitFor": "postCreateCommand"` keeps the editor away until
+   the first pass is done.
+3. **Provisioning declared "done" too early.** The import check covered seven
+   modules; `pydantic`, `python-dotenv`, `redis`, `ntplib`, `msgpack`,
+   `python-multipart` and `pytest` were never verified. Both the autostart
+   check and `run.sh`'s `REQUIRED_MODULES` now cover every requirement, and
+   provisioning retries up to three passes (clean `.venv` on the second).
+4. **Things that could wait for a keyboard.** `setup.sh` used plain `sudo`
+   (a password prompt hangs postCreate on any image without NOPASSWD) and
+   interactive apt; now `sudo -n`, `DEBIAN_FRONTEND=noninteractive`,
+   `--force-confold`. `run_web.sh` asked "[y/N]" *before* checking
+   `INSTALL_FLUTTER=1`, so the detached Flutter download could block on
+   stdin; the prompt is now skipped when unattended (and times out at 60 s
+   when not), the script runs with `</dev/null`, analytics are disabled,
+   and `flutter precache --web` is run explicitly with retries.
+5. **Small engine fixes.** `POST /api/news/emergency` accepts
+   `duration_seconds` (10-900) and honours it; `/api/signal/history` clamps at
+   the lock's real buffer (1440) instead of 240.
+
+Guarded by four new tests in `backend/tests/test_autostart.py`.

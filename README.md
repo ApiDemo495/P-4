@@ -66,6 +66,16 @@ the rest by itself:
 | every start / wake | `--start`: self-heals a missing `.venv` or a changed `requirements.txt`, then starts the engine under its supervisor |
 | every editor attach | `--attach`: the same, plus it waits until the first prediction is locked and prints the URL |
 
+The three hooks are serialised by a lock (they overlap in a Codespace, and two
+pip installs into one `.venv` is how "requirements did not download" used to
+happen), the editor is only handed over after `postCreateCommand` finishes,
+provisioning makes up to three passes (a clean `.venv` on the second) and
+checks that **every** module in `requirements.txt` imports before it calls the
+environment ready. Nothing in the automatic path can wait for a keyboard: apt
+is non-interactive, `sudo` never asks for a password, and the Flutter download
+runs detached with no prompt. Logs: `.devcontainer/logs/setup-*.log`,
+`/tmp/pip-install.log`, `flutter-setup.log`.
+
 Port **8000** is forwarded, made **public** and opened in your browser for you,
 so the dashboard appears on its own. Everything else is on that one URL:
 `/` dashboard · `/settings` API keys · `/matrix` connectome · `/docs` API ·
@@ -333,7 +343,20 @@ If pip itself is blocked (proxy, VPN, private index):
 ```
 
 Setup writes the full pip log to `/tmp/pip-install.log`; the launcher prints the
-last lines of it when an install fails.
+last lines of it when an install fails. In a Codespace the automatic passes are
+logged to `.devcontainer/logs/setup-1.log` … `setup-3.log`; to force a fresh
+provisioning pass without recreating the container:
+
+```bash
+rm -f .devcontainer/.provisioned && bash tools/codespace_autostart.sh --attach
+```
+
+If the Flutter build did not appear at `/flutter`, its log is `flutter-setup.log`;
+restart the download with:
+
+```bash
+rm -f .devcontainer/flutter.pid && bash tools/codespace_autostart.sh --attach
+```
 
 ---
 

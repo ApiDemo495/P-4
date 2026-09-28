@@ -31,14 +31,24 @@ INSTALL_NEUPRINT="${INSTALL_NEUPRINT:-0}"
 # -----------------------------------------------------------------------------
 # 1. System packages
 # -----------------------------------------------------------------------------
+export DEBIAN_FRONTEND=noninteractive
 if command -v apt-get >/dev/null 2>&1; then
-  log "installing system packages (needs sudo if not root)"
   sudo_opt=""
-  [ "$(id -u)" -ne 0 ] && sudo_opt="sudo"
-  $sudo_opt apt-get update -qq || warn "apt-get update failed - continuing"
-  $sudo_opt apt-get install -y -qq \
-      python3 python3-venv python3-dev build-essential curl git unzip \
-      redis-server || warn "some system packages failed to install"
+  if [ "$(id -u)" -ne 0 ]; then
+    # `sudo -n` never asks for a password: if it cannot run, we say so and go
+    # on to the Python steps, which only need what is already installed.
+    if sudo -n true 2>/dev/null; then sudo_opt="sudo -n"; else sudo_opt=""; fi
+  fi
+  if [ "$(id -u)" -eq 0 ] || [ -n "$sudo_opt" ]; then
+    log "installing system packages (non-interactive apt)"
+    $sudo_opt apt-get update -qq >/tmp/apt-update.log 2>&1 || warn "apt-get update failed - continuing (see /tmp/apt-update.log)"
+    $sudo_opt apt-get install -y -qq --no-install-recommends \
+        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+        python3 python3-venv python3-dev build-essential curl git unzip \
+        redis-server >/tmp/apt-install.log 2>&1 || warn "some system packages failed to install (see /tmp/apt-install.log)"
+  else
+    warn "no password-less sudo here - skipping apt; python3 + venv must already exist"
+  fi
 fi
 
 # -----------------------------------------------------------------------------
@@ -149,7 +159,8 @@ fi
 log "verifying imports"
 PYTHONPATH="$REPO_ROOT" "$PY" - <<'PYEOF' || warn "import check failed - inspect the traceback above"
 import importlib, sys
-mods = ["numpy", "scipy", "fastapi", "uvicorn", "httpx", "feedparser", "websockets"]
+mods = ["numpy", "scipy", "fastapi", "uvicorn", "httpx", "feedparser", "websockets",
+        "pydantic", "dotenv", "redis", "ntplib", "msgpack", "multipart", "pytest"]
 missing = []
 for m in mods:
     try:

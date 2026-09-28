@@ -57,7 +57,7 @@ ok()   { printf '%s[auto]%s %s\n' "$GRN" "$R" "$*"; }
 warn() { printf '%s[auto]%s %s\n' "$YEL" "$R" "$*"; }
 bad()  { printf '%s[auto]%s %s\n' "$RED" "$R" "$*"; }
 
-mkdir -p "$STATE_DIR"
+mkdir -p "$STATE_DIR" "$STATE_DIR/logs"
 
 # -----------------------------------------------------------------------------
 # URLs - the Codespace URL when there is one, localhost otherwise
@@ -86,7 +86,8 @@ imports_ok() {
   [ -x "$PY" ] || return 1
   PYTHONPATH="$REPO_ROOT" "$PY" - <<'PYEOF' >/dev/null 2>&1
 import importlib, sys
-for name in ("numpy", "scipy", "fastapi", "uvicorn", "httpx", "feedparser", "websockets"):
+for name in ("numpy", "scipy", "fastapi", "uvicorn", "httpx", "feedparser", "websockets",
+             "pydantic", "dotenv", "redis", "ntplib", "msgpack", "multipart", "pytest"):
     try:
         importlib.import_module(name)
     except Exception:
@@ -114,14 +115,40 @@ provision() {
   fi
   log "provisioning (system packages, virtualenv, requirements, .env, redis)"
   log "the download log for pip is /tmp/pip-install.log; this is the slow step, once"
-  bash "$STATE_DIR/setup.sh" || warn "setup.sh reported problems - carrying on"
-  if imports_ok; then
-    requirements_fingerprint > "$STAMP"
-    ok "provisioned: $(requirements_fingerprint | cut -c1-12)"
-  else
-    warn "the engine is still missing dependencies; run:  bash .devcontainer/setup.sh"
-  fi
+  # Up to three passes: a flaky index or a half-written wheel on the first
+  # attempt must not leave the codespace "created" but unusable.
+  local attempt
+  for attempt in 1 2 3; do
+    bash "$STATE_DIR/setup.sh" </dev/null >"$STATE_DIR/logs/setup-$attempt.log" 2>&1 9>&- \
+      || warn "setup.sh reported problems on pass $attempt (log: .devcontainer/logs/setup-$attempt.log)"
+    if imports_ok; then
+      requirements_fingerprint > "$STAMP"
+      ok "provisioned on pass $attempt: $(requirements_fingerprint | cut -c1-12)"
+      return 0
+    fi
+    warn "dependencies still missing after pass $attempt - retrying"
+    # A broken .venv (interrupted create, wrong interpreter) is the usual
+    # cause; the second pass starts from a clean one.
+    [ "$attempt" -eq 1 ] && rm -rf "$VENV"
+    sleep 5
+  done
+  bad "the engine is still missing dependencies after three passes"
+  bad "last log: .devcontainer/logs/setup-3.log  - and /tmp/pip-install.log"
+  return 1
 }
+
+# Only one copy of the provisioning / engine start may run at a time.  In a
+# Codespace postCreateCommand, postStartCommand and postAttachCommand can
+# overlap (the editor attaches while the container is still being created);
+# two concurrent pip installs into one .venv is exactly how "requirements did
+# not download" happens.
+LOCK_FILE="$STATE_DIR/.autostart.lock"
+with_lock() {
+  if command -v flock >/dev/null 2>&1; then
+    flock -w 900 9 || { warn "another autostart has held the lock for 15 min - continuing without it"; }
+  fi
+  "$@"
+} 9>"$LOCK_FILE"
 
 # -----------------------------------------------------------------------------
 # 2. Flutter: download the SDK and build the web client, in the background
@@ -153,9 +180,10 @@ start_flutter() {
   fi
   log "starting the Flutter SDK download + web build in the background"
   log "it needs no input and does not block the dashboard; watch: tail -f flutter-setup.log"
-  nohup env INSTALL_FLUTTER=1 bash "$REPO_ROOT/frontend/run_web.sh" \
-    >"$FLUTTER_LOG" 2>&1 &
+  nohup env INSTALL_FLUTTER=1 AUTO_FLUTTER=1 PORT="$PORT" \
+    bash "$REPO_ROOT/frontend/run_web.sh" </dev/null >"$FLUTTER_LOG" 2>&1 &
   echo $! > "$FLUTTER_PID"
+  disown 2>/dev/null || true
 }
 
 # -----------------------------------------------------------------------------
@@ -180,10 +208,13 @@ start_engine() {
   fi
   if port_occupied; then
     warn "port ${PORT} is held by something that does not answer - clearing it"
-    bash "$REPO_ROOT/run.sh" --clean >/dev/null 2>&1 || true
+    bash "$REPO_ROOT/run.sh" --clean >/dev/null 2>&1 9>&- || true
   fi
   log "starting the engine on port ${PORT} (background, supervised)"
-  bash "$REPO_ROOT/run.sh" --bg --port "$PORT" || warn "run.sh returned non-zero - see server.log"
+  # 9>&- : the supervisor must NOT inherit the autostart lock (fd 9), or it
+  # would hold it for as long as the engine runs and every later hook would
+  # wait on it.
+  bash "$REPO_ROOT/run.sh" --bg --port "$PORT" 9>&- || warn "run.sh returned non-zero - see server.log"
 }
 
 wait_until_ready() {
@@ -290,20 +321,21 @@ case "$MODE" in
     # `wait` on it here: postCreateCommand would then hang for the minutes the
     # Flutter SDK takes, and the user would stare at a frozen "creating
     # container" screen for a step that is entirely optional.
-    provision
+    with_lock provision
+    with_lock start_engine
     start_flutter
-    ok "provisioning finished - the engine starts on the next attach"
+    ok "provisioning finished - the engine is starting; the attach hook prints the URL"
     ;;
   start)
-    provision
-    start_engine
+    with_lock provision
+    with_lock start_engine
     open_port
     start_flutter
     wait_until_ready 150 || true
     ;;
   attach)
-    provision
-    start_engine
+    with_lock provision
+    with_lock start_engine
     open_port
     start_flutter
     wait_until_ready 150 || true

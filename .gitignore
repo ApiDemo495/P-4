@@ -78,3 +78,4 @@ frontend/.packages
 .devcontainer/.provisioned
 .devcontainer/flutter.pid
 .devcontainer/logs/
+.devcontainer/.autostart.lock

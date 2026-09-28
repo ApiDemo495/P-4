@@ -1051,15 +1051,24 @@ class CycleManager:
     async def _on_critical_event(self, event: CriticalEvent) -> None:
         await self.trigger_emergency(event)
 
-    async def trigger_emergency(self, event: CriticalEvent | dict) -> dict:
+    async def trigger_emergency(
+        self, event: CriticalEvent | dict, duration_seconds: float | None = None
+    ) -> dict:
         payload = event.to_dict() if isinstance(event, CriticalEvent) else dict(event)
+        # The caller may shorten or lengthen the hold (the manual trigger does);
+        # a detected critical event always uses the configured default.
+        hold = (
+            float(duration_seconds)
+            if duration_seconds is not None and duration_seconds > 0
+            else self.settings.scaled(self.settings.emergency_duration_seconds)
+        )
         previous = self.lock.current_signal.signal if self.lock.current_signal else "COMPUTING"
         from backend.core.direction import opposite as _opposite
 
         exit_side = _opposite(previous)
         overridden = self.lock.emergency_override(
             payload,
-            duration_seconds=self.settings.scaled(self.settings.emergency_duration_seconds),
+            duration_seconds=hold,
             timestamp=self.clock.iso(),
         )
         self.stats.emergency_count += 1
@@ -1076,9 +1085,7 @@ class CycleManager:
                 "overridden_to": overridden.signal,
                 "exit_side": exit_side,
                 "closes_position": exit_side is not None,
-                "emergency_duration_seconds": self.settings.scaled(
-                    self.settings.emergency_duration_seconds
-                ),
+                "emergency_duration_seconds": hold,
                 "remaining_seconds": self.lock.emergency_remaining(),
                 "signal": self.signal_payload(overridden),
             },
@@ -1197,7 +1204,9 @@ class CycleManager:
         return self.brain.status_dict()
 
     def history_payload(self, limit: int = 72) -> dict:
-        return {"history": self.lock.recent_history(min(max(limit, 1), 240))}
+        # The lock keeps 1440 windows (a day at 60 s, x6 data); the clamp
+        # matches it instead of silently cutting the request at 240.
+        return {"history": self.lock.recent_history(min(max(int(limit), 1), 1440))}
 
     def outcomes_payload(self, limit: int = 72) -> dict:
         rows = self.outcomes.array()
