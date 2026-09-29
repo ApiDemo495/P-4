@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.api import (
@@ -32,6 +32,7 @@ from backend.api import (
     routes_signals,
     state,
 )
+from backend.api import flutter_build
 from backend.core import config as cfg
 from backend.core.cycle_manager import CycleManager
 
@@ -89,6 +90,10 @@ async def lifespan(app: FastAPI):
     manager.mark_started()
 
     warm_task = asyncio.create_task(_warm_up(manager), name="warm-up")
+    # The Flutter client builds itself (Codespaces, or AUTO_FLUTTER=1): the
+    # engine supervises the download so it no longer depends on a devcontainer
+    # hook staying alive.  /flutter shows its progress until it lands.
+    flutter_build.ensure_started()
     log.info("=" * 78)
     log.info(" DROSOPHILA TRADER v2.0 - port is live, engine warming up in the background")
     log.info("   dashboard  : http://0.0.0.0:%d/   (reload if it says 'warming up')", cfg.SETTINGS.port)
@@ -237,17 +242,32 @@ else:  # pragma: no cover - only if the web assets were stripped
 FLUTTER_BUILD_DIR = cfg.REPO_ROOT / "frontend" / "build" / "web"
 
 
+@app.get("/api/flutter/status")
+async def flutter_status():
+    """Is the Flutter web client built, building, or stuck - and where."""
+    return flutter_build.status()
+
+
+@app.post("/api/flutter/build")
+async def flutter_start_build(redirect: int = 0, force: int = 0):
+    """(Re)start the SDK download + web build in the background."""
+    result = flutter_build.start(force=bool(force))
+    if redirect:
+        return RedirectResponse(url="/flutter", status_code=303)
+    return result
+
+
 @app.get("/flutter")
 @app.get("/flutter/")
 async def flutter_index():
-    if not FLUTTER_BUILD_DIR.exists():
-        return _flutter_missing()
+    if not flutter_build.built():
+        return HTMLResponse(flutter_build.status_page(cfg.SETTINGS.port), status_code=200)
     return FileResponse(str(FLUTTER_BUILD_DIR / "index.html"))
 
 
 @app.get("/flutter/{path:path}")
 async def flutter_asset(path: str):
-    if not FLUTTER_BUILD_DIR.exists():
+    if not flutter_build.built():
         return _flutter_missing()
     candidate = (FLUTTER_BUILD_DIR / path).resolve()
     root = FLUTTER_BUILD_DIR.resolve()
@@ -265,7 +285,9 @@ def _flutter_missing() -> JSONResponse:
             "detail": "The Flutter web build has not been created yet.",
             "build": "bash frontend/run_web.sh",
             "web_dashboard": "/",
-            "install_flutter": "INSTALL_FLUTTER=1 bash .devcontainer/setup.sh",
+            "install_flutter": "INSTALL_FLUTTER=1 bash frontend/run_web.sh",
+            "status": "/api/flutter/status",
+            "start": "POST /api/flutter/build",
         },
     )
 

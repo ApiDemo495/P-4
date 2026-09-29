@@ -88,12 +88,14 @@ const getJSON = async (pathname) => {
     "microseconds_to_target is missing");
   check(horizon.scored_at_us - horizon.released_at_us === spanUs,
     "the outcome is not scored one window after the release");
-  check(APP.includes("h.target_at_us") && APP.includes("serverNowMs() * 1000"),
-    "the horizon line does not count down on the shared server clock");
+  check(APP.includes("frozen until") && !APP.includes("s left in this window</"),
+    "the horizon line must not print a running countdown inside the prediction cell");
 
   // 3. the detail block the panel renders behind the toggle -------------------
   const detail = prediction.detail || {};
-  check((detail.formulas_evaluated || 0) >= 23,
+  // Exactly the 22 registered formulas (Round M: helpers such as _hsi used to
+  // be counted, so the panel said "24 formulas evaluated").
+  check((detail.formulas_evaluated || 0) === 22,
     `formulas_evaluated = ${detail.formulas_evaluated}`);
   check(Object.keys(detail.category_scores || {}).length === 8,
     `${Object.keys(detail.category_scores || {}).length} category scores`);

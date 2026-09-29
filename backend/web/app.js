@@ -442,12 +442,16 @@ function renderHorizon(prediction) {
     ? Math.max(0, (h.scored_at_us ? (h.scored_at_us - nowUs) / 1e6 : h.scored_in_seconds))
     : h.scored_in_seconds;
   el.className = "horizon-line";
+  // Round L.1: no per-second numbers inside the prediction cell.  The ring is
+  // the only countdown; this line states the fixed instants of the forecast
+  // and how the window is scored.  (``left``/``scored`` stay in the tooltip.)
   el.innerHTML =
     `forecast <b>${escapeHtml(h.forecast_for || h.label || "the next 60 seconds")}</b>` +
     ` · released <b>${fmtClockUs(h.released_at_precise || h.released_at)}</b>` +
     ` · targets <b>${fmtClockUs(h.target_at_precise || h.target_at)}</b>` +
-    ` · <b>${Number(left).toFixed(1)}s</b> left` +
-    (scored !== undefined ? ` · scored in <b>${Number(scored).toFixed(1)}s</b>` : "");
+    ` · <span class="muted">side, confidence and levels are frozen until then</span>`;
+  el.title = `${Number(left).toFixed(1)}s left in this window` +
+    (scored !== undefined ? ` · scored in ${Number(scored).toFixed(1)}s` : "");
 }
 
 /* The tape itself: how fast quotes arrive and how finely the engine can see.
@@ -456,17 +460,19 @@ function renderHorizon(prediction) {
 function renderMicro(prediction) {
   const el = $("w-micro-line");
   if (!el) return;
-  const micro = state.liveMicro?.resolution_us
-    ? state.liveMicro
-    : (prediction?.detail?.micro || null);
+  // Round L.1: this line sits inside the locked prediction cell, so it shows
+  // the tape *as it was at the lock* (from the prediction detail) and never
+  // the live pass - nothing in the cell may move during a window.  The live
+  // tape numbers stay in the Formula Explorer.
+  const micro = prediction?.detail?.micro || null;
   if (!micro || !micro.resolution_us) {
-    el.textContent = "tape resolution — waiting for the first tick";
+    el.textContent = "tape at lock — waiting for the first lock";
     el.className = "micro-line muted";
     return;
   }
   el.className = "micro-line";
   el.innerHTML =
-    `tape <b>${escapeHtml(micro.resolution_label || fmtUs(micro.resolution_us))}</b> per tick` +
+    `tape at lock <b>${escapeHtml(micro.resolution_label || fmtUs(micro.resolution_us))}</b> per tick` +
     ` · <b>${Number(micro.tick_rate_hz || 0).toFixed(1)}</b> Hz` +
     ` · jitter <b>${fmtUs(micro.jitter_us)}</b>` +
     ` · quote life <b>${fmtUs(micro.quote_lifetime_us)}</b>` +
@@ -496,7 +502,14 @@ function renderPredictionDetail(prediction) {
     return;
   }
   const cats = Object.entries(detail.category_scores || {})
-    .map(([key, value]) => `<span class="kv"><span>${key}</span><b class="${value >= 0 ? "pos" : "neg"}">${fmtSigned(value, 3)}</b></span>`)
+    .map(([key, raw]) => {
+      // Each category is {count, sum, mean, directional} (Round I); older
+      // payloads carried a bare number.
+      const value = typeof raw === "number" ? raw : Number(raw?.mean ?? 0);
+      const count = typeof raw === "object" && raw ? raw.count : null;
+      return `<span class="kv"><span>${escapeHtml(key)}${count ? `×${count}` : ""}</span>` +
+        `<b class="${value >= 0 ? "pos" : "neg"}">${fmtSigned(value, 3)}</b></span>`;
+    })
     .join(" ");
   const parts = Object.entries(detail.confidence_parts || {})
     .map(([key, value]) => `<li><span class="trace-label">${escapeHtml(key.replace(/_/g, " "))}</span><b>${fmtSigned(value, 3)}</b></li>`)
@@ -907,11 +920,16 @@ function renderFreshness(prediction) {
     return;
   }
   const stale = age > maxAge;
+  // Round L.1: the chip is static for the whole window - a ticking "updated
+  // Ns ago" inside the prediction cell read as "the prediction is changing".
+  // It names the lock instant and only ever flips to STALE (red) if the
+  // engine misses a boundary; the age is in the tooltip.
+  const lockedAt = fmtClockUs(p.horizon?.released_at_precise || p.horizon?.released_at || p.computed_at).slice(0, 8);
   chip.textContent = stale
     ? `STALE ${Math.round(age)}s > ${Math.round(maxAge)}s`
-    : `updated ${Math.round(age)}s ago · max ${Math.round(maxAge)}s`;
+    : `🔒 locked ${lockedAt}Z`;
   chip.className = "fresh-chip " + (stale ? "stale" : "live");
-  chip.title = `computed ${p.computed_at} · expires ${p.expires_at || "—"}`;
+  chip.title = `computed ${p.computed_at} · age ${Math.round(age)}s · max ${Math.round(maxAge)}s · expires ${p.expires_at || "—"}`;
 }
 
 /* The reasoning bullets: what supports the side (▸) and what argues against
@@ -1551,8 +1569,15 @@ function renderTimings(data) {
   const total = data.total_us ? fmtUs(data.total_us)
     : (data.total_ms !== undefined ? `${Number(data.total_ms).toFixed(2)}ms` : "?");
   const resolution = data.resolution_us ? ` · tape resolution ${fmtUs(data.resolution_us)}` : "";
+  // The live tape (rate, jitter, quote life, aggression) belongs here, with
+  // the live formulas - not inside the locked prediction cell.
+  const m = state.liveMicro || {};
+  const tape = m.resolution_us
+    ? ` · live tape ${Number(m.tick_rate_hz || 0).toFixed(1)} Hz · jitter ${fmtUs(m.jitter_us)}` +
+      ` · quote life ${fmtUs(m.quote_lifetime_us)} · aggression ${fmtSigned(m.aggression || 0, 2)}`
+    : "";
   $("timings").textContent =
-    `total formula pass ${total} (budget ${data.budget_ms}ms)${resolution} · slowest: ${top}`;
+    `total formula pass ${total} (budget ${data.budget_ms}ms)${resolution}${tape} · slowest: ${top}`;
 }
 
 async function refreshTimings() {
@@ -1597,7 +1622,6 @@ function renderLiveFormulas(data) {
     if (note) note.textContent = "live values " + data.note;
   }
   if (data.timings_ms || data.timings_us) renderTimings(data);
-  renderMicro(state.prediction);
   renderFormulas();
 }
 

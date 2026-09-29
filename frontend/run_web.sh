@@ -159,11 +159,15 @@ export FLUTTER_SUPPRESS_ANALYTICS=true CI=true
 "$FLUTTER" --disable-analytics >/dev/null 2>&1 || true
 # The Dart SDK and the web engine are fetched on first use; do it explicitly so
 # a failure is reported here (with a retry) instead of half-way through a build.
-for attempt in 1 2 3; do
-  if "$FLUTTER" precache --web >/tmp/flutter_precache.log 2>&1; then break; fi
-  warn "flutter precache --web failed (attempt $attempt) - retrying"
-  sleep 5
+say "${DIM}   downloading the Dart SDK + web engine (flutter precache --web, 1-3 min)${R}"
+precache_ok=0
+for attempt in 1 2 3 4 5; do
+  if "$FLUTTER" precache --web >/tmp/flutter_precache.log 2>&1; then precache_ok=1; break; fi
+  warn "flutter precache --web failed (attempt $attempt) - retrying in $((attempt * 5)) s"
+  tail -n 3 /tmp/flutter_precache.log 2>/dev/null | sed 's/^/      /'
+  sleep $((attempt * 5))
 done
+[ "$precache_ok" = 1 ] || warn "precache kept failing - continuing; the build step will download what it needs"
 
 step "2/4  Preparing the project"
 "$FLUTTER" config --enable-web >/dev/null 2>&1 || warn "could not set --enable-web (continuing)"

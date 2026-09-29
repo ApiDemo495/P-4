@@ -50,7 +50,7 @@ document.querySelectorAll("[data-test]").forEach((btn) => {
 
 $("save-keys").onclick = async () => {
   const persist = $("persist").checked;
-  const slots = ["gemini", "github", "cryptopanic", "newsapi"];
+  const slots = ["gemini", "github", "cryptopanic", "newsapi", "neuprint", "cave"];
   const saved = [];
   for (const slot of slots) {
     const input = $(`key-${slot}`);
@@ -63,6 +63,12 @@ $("save-keys").onclick = async () => {
     if (!res.error) saved.push(slot);
   }
   line("keys-note", saved.length ? `saved: ${saved.join(", ")}` : "nothing to save", "ok");
+  // A brain token only matters once the 5-step verification runs again.
+  if (saved.includes("neuprint") || saved.includes("cave")) {
+    line("keys-note", `saved: ${saved.join(", ")} · re-verifying the brain…`, "ok");
+    await getJSON("/api/brain/reconnect", { method: "POST" });
+    await refreshBrain();
+  }
   setTimeout(() => { location.href = "/"; }, 700);
 };
 
@@ -133,7 +139,8 @@ async function refreshBrain() {
   steps.innerHTML = "";
   (res.steps || []).forEach((step) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${step.ok ? "✅" : "❌"}</td><td>${step.step}</td>` +
+    const icon = step.state === "skip" ? "⏭️" : (step.ok ? "✅" : "❌");
+    tr.innerHTML = `<td title="${step.state || (step.ok ? "pass" : "fail")}">${icon}</td><td>${step.step}</td>` +
       `<td>${escapeHtml(step.detail || "")}</td><td>${step.elapsed_ms}ms</td>`;
     steps.appendChild(tr);
   });

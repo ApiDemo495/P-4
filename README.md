@@ -167,10 +167,33 @@ bash run.sh --public
 bash run.sh --urls
 ```
 
-### Optional — build the Flutter client (≈700 MB, once)
+### The Flutter client builds itself — watch it, or restart it, in the browser
+
+In a Codespace the engine starts the SDK download and the web build on its
+own. Open `/flutter` on the same port: until the build lands it is a status
+page (stage, the tail of `flutter-setup.log`, a **Start / Restart** button) and
+it turns into the app by itself. The same information as JSON:
+
+```bash
+curl -s localhost:8000/api/flutter/status | python3 -m json.tool
+```
+
+Restart the download without a terminal (the button does exactly this):
+
+```bash
+curl -s -X POST localhost:8000/api/flutter/build
+```
+
+Or run it by hand (≈700 MB, once):
 
 ```bash
 INSTALL_FLUTTER=1 bash frontend/run_web.sh
+```
+
+Watch it:
+
+```bash
+tail -f flutter-setup.log
 ```
 
 ### Optional — hot reload while editing the Flutter UI
@@ -440,6 +463,29 @@ tail -f server.log
   and it only re-anchors when the window id changes - a late message can never
   make the number jump, repeat or restart. `tools/clock_check.js` watches a real
   browser-DOM session cross a boundary and asserts exactly that.
+* **Nothing inside the prediction cell moves (Round M).** The lock was
+  always real server-side; what *looked* like "the prediction changing every
+  few seconds" was text inside the cell that repainted every second — an
+  "updated 7s ago" chip, a "43.0s left" line and the live tape line. Those are
+  gone: the chip prints `🔒 locked HH:MM:SSZ` (it only ever flips to red
+  STALE), the horizon line states the fixed release/target instants, the tape
+  line shows the tape *as it was at the lock*, and the live tape moved to the
+  Formula Explorer. The ring is the only thing that counts. Proof, in a real
+  DOM against the live engine (`npm install --no-save jsdom ws` first):
+
+  ```bash
+  node tools/lock_watch.js 100
+  ```
+
+  It samples every element of the cell four times a second and exits non-zero
+  if any of them changes between two boundaries.
+* **Brain verification tells skipped from failed (Round M).** A missing
+  optional token (`NEUPRINT_APPLICATION_CREDENTIALS`, `CAVE_TOKEN`) and an
+  empty cache on the very first start are *skips* (⏭️), not ❌; both tokens
+  have fields on `/settings` and saving one re-verifies the brain at once. The
+  fallback matrix is cached too (marked as fallback), so `0-cache` passes from
+  the second start on — and a token added later still wins, because step 0
+  re-runs the live steps whenever credentials are present.
 * **In sync, and locked (Round L).** The lock has two stages: the slow half
   (the AI agents, with their 7 s timeouts) is prepared 8 s before the boundary;
   the fast half — a fresh tape snapshot, the 22 formulas, the crowd reading and

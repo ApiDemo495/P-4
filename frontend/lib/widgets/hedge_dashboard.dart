@@ -55,6 +55,14 @@ class HedgeDashboard extends StatelessWidget {
             value: (state.brainStatus['matrix']?['checksum'] ?? '—').toString(),
           ),
           StatRow(label: 'DRG reward', value: value('DRG').toStringAsFixed(3)),
+          // The live tape rides with the live formulas (Round L.1): the
+          // prediction cell prints only the tape as it was at the lock.
+          if (state.liveMicro.hasData)
+            StatRow(
+              label: 'live tape',
+              value: '${state.liveMicro.tickRateHz.toStringAsFixed(1)} Hz · '
+                  'aggression ${state.liveMicro.aggression.toStringAsFixed(2)}',
+            ),
           StatRow(
             label: 'win rate',
             value:

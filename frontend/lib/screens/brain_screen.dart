@@ -238,13 +238,17 @@ class BrainScreen extends StatelessWidget {
           ...(source['steps'] as List).map((step) {
             final s = Map<String, dynamic>.from(step as Map);
             final ok = s['ok'] == true;
+            final skipped = s['state'] == 'skip';
             return Padding(
               padding: const EdgeInsets.symmetric(vertical: 2),
               child: Row(
                 children: [
-                  Text(ok ? '✔' : '✘',
+                  Text(skipped ? '–' : (ok ? '✔' : '✘'),
                       style: TextStyle(
-                          color: ok ? AppTheme.buy : AppTheme.textMuted, fontSize: 11)),
+                          color: skipped
+                              ? AppTheme.textMuted
+                              : (ok ? AppTheme.buy : AppTheme.sell),
+                          fontSize: 11)),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(

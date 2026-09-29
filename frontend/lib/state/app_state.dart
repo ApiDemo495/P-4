@@ -89,12 +89,16 @@ class AppState extends ChangeNotifier {
   CrowdEmotions crowd = CrowdEmotions.none;
   String? _lastEmotionDominant;
 
-  /// The tape as the engine measured it: the live formula pass if one has run,
-  /// otherwise whatever the prediction carried.
-  MicroReading get micro =>
-      lastMicro.hasData ? lastMicro : (prediction.detail.micro.hasData
-          ? prediction.detail.micro
-          : prediction.micro);
+  /// The tape *as it was at the lock* - what the prediction cell prints.
+  /// Nothing inside that cell may move during a window (Round L.1), so the
+  /// live pass ([lastMicro]) is deliberately not consulted here; it is shown
+  /// with the live formulas instead.
+  MicroReading get micro => prediction.detail.micro.hasData
+      ? prediction.detail.micro
+      : prediction.micro;
+
+  /// The live tape from the last formula pass (falls back to the lock).
+  MicroReading get liveMicro => lastMicro.hasData ? lastMicro : micro;
   Map<String, dynamic> buyAccuracy = const {};
   Map<String, dynamic> sellAccuracy = const {};
   double winRate = 0.0;

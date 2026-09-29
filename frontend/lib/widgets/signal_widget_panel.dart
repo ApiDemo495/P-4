@@ -310,7 +310,7 @@ class SignalWidgetPanel extends StatelessWidget {
             : signal == null
                 ? ''
                 : 'confidence ${(signal.confidence * 100).toStringAsFixed(0)}% · '
-                    '1:1 levels · updated ${(state.prediction.ageSeconds).toStringAsFixed(0)}s ago',
+                    '1:1 levels · frozen for this window',
       ),
     );
   }
@@ -849,19 +849,11 @@ class _HorizonLine extends StatelessWidget {
         style: TextStyle(color: AppTheme.textMuted, fontSize: 11, fontFamily: 'mono'),
       );
     }
-    // Counted down against the shared server clock (the same one the ring
-    // uses), never frozen at the value the payload carried.
-    final nowUs = state.serverNowMs() * 1000;
-    final left = horizon.targetAtUs > 0
-        ? (horizon.targetAtUs - nowUs) / 1000000
-        : horizon.secondsToTarget;
-    final scored = horizon.scoredAtUs > 0
-        ? (horizon.scoredAtUs - nowUs) / 1000000
-        : horizon.scoredInSeconds;
+    // Round L.1: no per-second numbers inside the prediction cell - the ring
+    // is the only countdown.  This line states the fixed instants only.
     return Text(
       'forecast ${horizon.label} · released ${horizon.releaseClock} · '
-      '${left.clamp(0, horizon.seconds).toStringAsFixed(1)}s left · '
-      'scored in ${scored.clamp(0, horizon.scoringSeconds).toStringAsFixed(1)}s',
+      'side, confidence and levels are frozen until the window ends',
       style: const TextStyle(color: AppTheme.textMuted, fontSize: 11, fontFamily: 'mono'),
     );
   }
@@ -879,7 +871,7 @@ class _MicroLine extends StatelessWidget {
     final micro = state.micro;
     if (!micro.hasData) {
       return const Text(
-        'tape resolution — waiting for the first tick',
+        'tape at lock — waiting for the first lock',
         style: TextStyle(color: AppTheme.textMuted, fontSize: 11, fontFamily: 'mono'),
       );
     }
@@ -887,7 +879,7 @@ class _MicroLine extends StatelessWidget {
         ? _formatUs(micro.resolutionUs)
         : micro.resolutionLabel;
     return Text(
-      'tape $label per tick · ${micro.tickRateHz.toStringAsFixed(1)} Hz · '
+      'tape at lock $label per tick · ${micro.tickRateHz.toStringAsFixed(1)} Hz · '
       'jitter ${_formatUs(micro.jitterUs)} · quote life ${_formatUs(micro.quoteLifetimeUs)} · '
       'aggression ${micro.aggression.toStringAsFixed(2)}',
       style: const TextStyle(color: AppTheme.textMuted, fontSize: 11, fontFamily: 'mono'),
@@ -1176,9 +1168,10 @@ class _FreshnessChip extends StatelessWidget {
       return const SizedBox.shrink();
     }
     final stale = state.predictionStale;
+    // Static for the whole window (Round L.1): the lock instant, or STALE.
     final label = stale
         ? 'STALE ${state.predictionAgeSeconds.toStringAsFixed(0)}s'
-        : 'updated ${state.predictionAgeSeconds.toStringAsFixed(0)}s ago';
+        : 'locked ${prediction.horizon.releaseClock.split('.').first}Z';
     final color = stale ? AppTheme.sell : AppTheme.buy;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),

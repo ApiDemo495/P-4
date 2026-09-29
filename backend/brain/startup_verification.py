@@ -74,31 +74,65 @@ async def run_verification(
     steps: list[dict] = []
     force = settings.brain_force_fallback if force_fallback is None else force_fallback
 
-    def record(step: str, ok: bool, detail: str, elapsed: float) -> None:
+    def record(step: str, ok: bool, detail: str, elapsed: float, *, skipped: bool = False) -> None:
+        # ``ok`` is True for a pass *and* for a skip: a step that cannot run
+        # because an optional token is absent, or a cache that is empty on
+        # the very first start, is not a failure and must not print as one.
+        # ``state`` tells the UIs which of the two it is.
         steps.append(
-            {"step": step, "ok": ok, "detail": detail, "elapsed_ms": round(elapsed * 1000, 1)}
+            {
+                "step": step,
+                "ok": ok,
+                "state": "skip" if skipped else ("pass" if ok else "fail"),
+                "detail": detail,
+                "elapsed_ms": round(elapsed * 1000, 1),
+            }
         )
+
+    has_credentials = bool(settings.neuprint_token or settings.cave_token)
 
     # -- Step 0 (optimisation, implied by 6.3e/6.4): reuse a fresh cache ----
     if cache is not None and not force:
         t0 = time.perf_counter()
         try:
-            cached = await cache.get_pickle("brain:adjacency:80x80")
+            cached = await cache.get_pickle(CACHE_KEY)
+            source = await cache.get_pickle(CACHE_SOURCE_KEY)
         except Exception as exc:  # noqa: BLE001
-            cached = None
+            cached, source = None, None
             log.debug("brain cache read failed: %s", exc)
+        source = str(source or "live")
         if isinstance(cached, np.ndarray) and cached.shape == (80, 80):
-            record("0-cache", True, "fresh 80x80 matrix from Redis", time.perf_counter() - t0)
-            return VerificationResult(
-                status=BrainStatus.CACHED,
-                matrix=cached,
-                message="Loaded cached mushroom-body matrix",
-                dataset=settings.neuprint_dataset,
-                steps=steps,
-                elapsed_seconds=time.perf_counter() - started,
-                cache_hit=True,
-            )
-        record("0-cache", False, "no cached matrix", time.perf_counter() - t0)
+            if source == "live":
+                record("0-cache", True, "fresh 80x80 matrix from the cache (live source)", time.perf_counter() - t0)
+                return VerificationResult(
+                    status=BrainStatus.CACHED,
+                    matrix=cached,
+                    message="Loaded cached mushroom-body matrix",
+                    dataset=settings.neuprint_dataset,
+                    steps=steps,
+                    elapsed_seconds=time.perf_counter() - started,
+                    cache_hit=True,
+                )
+            if not has_credentials:
+                # The cached copy is the committed fallback: reuse it (the
+                # cache step passes) - there is no token that could do better.
+                record("0-cache", True, "80x80 matrix from the cache (fallback source; "
+                       "add a neuPrint or CAVE token on /settings for live data)",
+                       time.perf_counter() - t0)
+                return VerificationResult(
+                    status=BrainStatus.FALLBACK_CSV,
+                    matrix=cached,
+                    message="Using cached fallback matrix",
+                    dataset="fallback",
+                    steps=steps,
+                    elapsed_seconds=time.perf_counter() - started,
+                    cache_hit=True,
+                )
+            record("0-cache", True, "cached fallback matrix found - a token is configured, "
+                   "so the live sources are tried first", time.perf_counter() - t0)
+        else:
+            record("0-cache", True, "empty on this first start - filled by the steps below",
+                   time.perf_counter() - t0, skipped=True)
 
     if not force:
         # ---- Step 1: connectivity --------------------------------------
@@ -108,8 +142,14 @@ async def run_verification(
         if reachable:
             # ---- Step 2: authentication --------------------------------
             t0 = time.perf_counter()
-            client, auth_error = await _step2_authenticate(settings)
-            record("2-auth", client is not None, auth_error, time.perf_counter() - t0)
+            if not settings.neuprint_token:
+                client = None
+                record("2-auth", True, "optional - no NEUPRINT_APPLICATION_CREDENTIALS; "
+                       "paste one on /settings to query the live hemibrain",
+                       time.perf_counter() - t0, skipped=True)
+            else:
+                client, auth_error = await _step2_authenticate(settings)
+                record("2-auth", client is not None, auth_error, time.perf_counter() - t0)
             if client is not None:
                 # ---- Step 3: query, cluster, build, cache --------------
                 t0 = time.perf_counter()
@@ -134,9 +174,14 @@ async def run_verification(
     if not force:
         # ---- Step 4: FlyWire / CAVE ------------------------------------
         t0 = time.perf_counter()
-        matrix, error = await _step4_flywire(settings)
-        ok = matrix is not None
-        record("4-flywire", ok, error or "FlyWire via CAVE", time.perf_counter() - t0)
+        if not settings.cave_token:
+            matrix, ok = None, False
+            record("4-flywire", True, "optional - no CAVE_TOKEN; paste one on /settings "
+                   "to use FlyWire", time.perf_counter() - t0, skipped=True)
+        else:
+            matrix, error = await _step4_flywire(settings)
+            ok = matrix is not None
+            record("4-flywire", ok, error or "FlyWire via CAVE", time.perf_counter() - t0)
         if ok:
             await _cache_matrix(cache, matrix)
             _persist_fallback(matrix)
@@ -155,6 +200,10 @@ async def run_verification(
         matrix = load_fallback_matrix()
         record("5-fallback", True, str(mb.default_fallback_path()), time.perf_counter() - t0)
         log.warning("Drosophila brain: using pre-computed fallback matrix")
+        # Cache it too (marked as fallback) so step 0 passes from the next
+        # start on; a token added later still wins because step 0 re-runs
+        # the live steps whenever credentials are present.
+        await _cache_matrix(cache, matrix, source="fallback")
         return VerificationResult(
             status=BrainStatus.FALLBACK_CSV,
             matrix=matrix,
@@ -296,11 +345,16 @@ def load_fallback_matrix(path: Path | None = None) -> np.ndarray:
     return matrix
 
 
-async def _cache_matrix(cache, matrix: np.ndarray) -> None:
+CACHE_KEY = "brain:adjacency:80x80"
+CACHE_SOURCE_KEY = "brain:adjacency:source"
+
+
+async def _cache_matrix(cache, matrix: np.ndarray, source: str = "live") -> None:
     if cache is None:
         return
     try:
-        await cache.set_pickle("brain:adjacency:80x80", matrix, ttl=86_400)
+        await cache.set_pickle(CACHE_KEY, matrix, ttl=86_400)
+        await cache.set_pickle(CACHE_SOURCE_KEY, source, ttl=86_400)
     except Exception as exc:  # noqa: BLE001
         log.debug("could not cache brain matrix: %s", exc)
 

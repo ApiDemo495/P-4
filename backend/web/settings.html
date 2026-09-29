@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Settings · Drosophila Trader v2.0</title>
-<link rel="stylesheet" href="/static/styles.css?v=2.5.0" />
+<link rel="stylesheet" href="/static/styles.css?v=2.6.0" />
 </head>
 <body>
 <header class="topbar">
@@ -59,6 +59,24 @@
         <button class="btn" data-test="newsapi" data-input="key-newsapi">Test</button>
       </div>
       <div class="status-line" id="status-newsapi">—</div>
+    </div>
+
+    <div class="field">
+      <label>neuPrint token — NEUPRINT_APPLICATION_CREDENTIALS (optional, live hemibrain)</label>
+      <div class="row">
+        <input type="password" id="key-neuprint" placeholder="eyJ… from neuprint.janelia.org → Account" />
+        <button class="btn tiny ghost" data-reveal="key-neuprint">👁</button>
+      </div>
+      <div class="status-line" id="status-neuprint">brain step 2-auth is skipped (not failed) while this is empty</div>
+    </div>
+
+    <div class="field">
+      <label>FlyWire CAVE token — CAVE_TOKEN (optional)</label>
+      <div class="row">
+        <input type="password" id="key-cave" placeholder="token from global.daf-apis.com" />
+        <button class="btn tiny ghost" data-reveal="key-cave">👁</button>
+      </div>
+      <div class="status-line" id="status-cave">brain step 4-flywire is skipped (not failed) while this is empty</div>
     </div>
 
     <div class="row" style="justify-content:flex-end">
@@ -128,6 +146,6 @@
   </div>
 </main>
 
-<script src="/static/settings.js?v=2.0.1"></script>
+<script src="/static/settings.js?v=2.6.0"></script>
 </body>
 </html>

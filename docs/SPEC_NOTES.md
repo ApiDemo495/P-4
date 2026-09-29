@@ -874,3 +874,60 @@ right way, silent under three voters, 15-step chain);
 **Escape hatches.** `FINAL_LOCK_LEAD_SECONDS` (0.05 … `LOCK_DEADLINE_SECONDS`)
 moves the final freeze; setting it equal to the agents' lead restores the
 single-stage behaviour.
+
+## M. "Still changing every few seconds", the Flutter download, and the brain ❌ rows
+
+**Complaint 1 — the prediction still changes.** The server payload for a
+window was already byte-identical apart from `age_*`/`now_us` (Round L probe),
+so the cause had to be client-side. A headless DOM run of the real `app.js`
+against the live engine (jsdom, now `tools/lock_watch.js`) sampled every
+element inside the PREDICTION cell four times a second for 95 s: the side and
+confidence changed only at the boundary, but three things repainted
+constantly — `w-fresh` ("updated Ns ago", 1 s), `w-horizon-line` ("N.0s left ·
+scored in N.0s", 1 s) and `w-micro-line` (the *live* tape from every PULSE,
+~2 s). To a person that is "the prediction is changing". Two real bugs sat in
+the detail block too: the category line printed `ANaN BNaN…` (category scores
+are `{count,sum,mean,directional}` dicts, rendered as numbers) and it said
+"24 formulas evaluated" (`len(values)` counted helper keys such as `_hsi`).
+
+*Fix.* The chip is `🔒 locked HH:MM:SSZ` (age in the tooltip; still flips to
+red STALE past `max_age`); the horizon line states the fixed release/target
+instants and "frozen until then" (`left`/`scored in` in the tooltip); the tape
+line reads `prediction.detail.micro` — the tape at the lock — and
+`renderLiveFormulas` no longer touches it; the live tape numbers moved to the
+Formula Explorer's timings line. `formula_count` counts `ALL_FORMULAS` names
+only (= 22); categories print `mean ×count`. Flutter mirrors all of it:
+`AppState.micro` is the lock's tape, `liveMicro` the live one (shown on the
+hedge dashboard), the horizon/freshness lines have no running numbers.
+Re-run of the watcher after the fix: 3 boundaries, 0 mid-window changes.
+
+**Complaint 2 — "sdk and flutter is not downloading".** The download ran as a
+`nohup … &` child of a devcontainer lifecycle hook; when the hook finishes its
+process group can be reaped, and a Codespace that sleeps mid-clone leaves a
+dead pid file — either way nothing said so, and `/flutter` was a bare 404
+JSON. Now `backend/api/flutter_build.py` makes the engine the supervisor: on
+start-up (in a Codespace, or `AUTO_FLUTTER=1`) it launches
+`frontend/run_web.sh` in its own session if the build is absent and nothing is
+running; `GET /api/flutter/status` gives `{built, running, stage, sdk_present,
+log_tail, last_error, …}`; `POST /api/flutter/build` restarts it; `/flutter`
+is a self-refreshing status page with a Restart button until the bundle
+exists. The hook itself uses `setsid`, and `run_web.sh` retries `precache`
+five times with a growing back-off and prints the failing lines.
+`AUTO_FLUTTER=0` still disables all of it (tests, sandboxes).
+
+**Complaint 3 — ❌ 0-cache / 2-auth / 4-flywire.** Those were never failures:
+the cache is empty on the first start by definition, and the two tokens are
+optional. Steps now carry `state: pass | skip | fail` (with `ok` true for a
+skip so older renderers do not paint ❌); the settings table shows ⏭️, the
+Flutter brain screen "–". Fallback matrices are cached too under a
+`brain:adjacency:source = fallback` marker: without credentials step 0 passes
+and reuses it (status stays the honest `FALLBACK_CSV`); with a token present
+the live steps run again so a token pasted on `/settings` (new fields for
+both, save triggers `/api/brain/reconnect`) takes effect immediately.
+
+**Verification.** `backend/tests/test_round_m.py` (14 tests: static cell in
+both clients, skip semantics, cache pass on second run, token bypass,
+settings fields, Flutter supervisor + routes, `setsid`); full suite 189
+passed; `tools/dashboard_payload_check.js` 69/69 (now asserts exactly 22
+formulas and no running countdown inside the cell); `tools/lock_watch.js 100`
+→ `OK: the prediction cell was static inside every window`.

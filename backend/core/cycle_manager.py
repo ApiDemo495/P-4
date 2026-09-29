@@ -1851,7 +1851,7 @@ class CycleManager:
                 # microstructure verdicts and the reasoning chain (round K).
                 "deep": self._crowd_deep_summary(crowd.get("deep") or {}),
             },
-            formula_count=len(values),
+            formula_count=sum(1 for spec in ALL_FORMULAS if spec.name in values),
         )
 
     def _computed_wall(self, signal: FrozenSignal | None) -> float:
