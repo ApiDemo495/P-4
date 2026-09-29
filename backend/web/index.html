@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>Drosophila Trader v2.0</title>
-<link rel="stylesheet" href="/static/styles.css?v=2.6.0" />
+<link rel="stylesheet" href="/static/styles.css?v=2.7.0" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪰</text></svg>" />
 </head>
 <body>
@@ -20,7 +20,13 @@
     <a href="/flutter" id="flutter-link" class="hidden" target="_blank">📱 Flutter app</a>
     <a href="/docs" target="_blank">API</a>
   </nav>
-  <div class="conn"><span id="ws-dot" class="dot"></span><span id="ws-label">connecting…</span></div>
+  <div class="conn">
+    <span id="update-chip" class="update-chip hidden" title="this checkout is behind its own branch on GitHub">
+      ⬆ <span id="update-text">update available</span>
+      <button class="btn tiny" id="update-apply">Apply</button>
+    </span>
+    <span id="ws-dot" class="dot"></span><span id="ws-label">connecting…</span>
+  </div>
 </header>
 
 <main class="wrap">
@@ -454,6 +460,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=2.6.0"></script>
+<script src="/static/app.js?v=2.7.0"></script>
 </body>
 </html>

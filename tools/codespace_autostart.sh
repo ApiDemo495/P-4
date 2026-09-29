@@ -33,7 +33,7 @@ cd "$REPO_ROOT"
 MODE=""
 for arg in "$@"; do
   case "$arg" in
-    --provision|--start|--attach|--status) MODE="${arg#--}" ;;
+    --provision|--start|--attach|--status|--update) MODE="${arg#--}" ;;
     -h|--help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   esac
 done
@@ -154,6 +154,28 @@ with_lock() {
   fi
   "$@"
 } 9>"$LOCK_FILE"
+
+# -----------------------------------------------------------------------------
+# 1b. Self-update: fast-forward this branch from origin (never a checkout, never
+#     a branch switch, never main).  A Codespace therefore picks up new commits
+#     on its own at every start - no `git pull`, which is how people end up on
+#     the wrong branch.  SELF_UPDATE=0 disables it.
+# -----------------------------------------------------------------------------
+self_update() {
+  [ "${SELF_UPDATE:-1}" = "1" ] || { log "SELF_UPDATE=0 - not fetching"; return 0; }
+  local before after
+  before="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "")"
+  [ -n "$before" ] || return 0
+  PORT="$PORT" bash "$REPO_ROOT/tools/self_update.sh" --apply --no-restart 9>&- || true
+  after="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "")"
+  if [ "$before" != "$after" ]; then
+    ok "updated ${before} -> ${after} ($(git -C "$REPO_ROOT" log -1 --format=%s | cut -c1-70))"
+    # The running engine (if any) is old code now: restart it below.
+    bash "$REPO_ROOT/run.sh" --stop 9>&- >/dev/null 2>&1 || true
+  else
+    log "branch is up to date (${after})"
+  fi
+}
 
 # -----------------------------------------------------------------------------
 # 2. Flutter: download the SDK and build the web client, in the background
@@ -342,6 +364,7 @@ case "$MODE" in
     ok "provisioning finished - the engine is starting; the attach hook prints the URL"
     ;;
   start)
+    with_lock self_update
     with_lock provision
     with_lock start_engine
     open_port
@@ -349,6 +372,7 @@ case "$MODE" in
     wait_until_ready 150 || true
     ;;
   attach)
+    with_lock self_update
     with_lock provision
     with_lock start_engine
     open_port
@@ -356,6 +380,12 @@ case "$MODE" in
     wait_until_ready 150 || true
     wait_until_locked
     banner
+    ;;
+  update)
+    with_lock self_update
+    with_lock provision
+    with_lock start_engine
+    wait_until_ready 150 || true
     ;;
   status)
     printf 'engine: %s\n' "$(engine_answers && echo "answering on ${PORT}" || echo 'not answering')"

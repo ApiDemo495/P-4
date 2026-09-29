@@ -950,3 +950,19 @@ official release archive from `storage.googleapis.com` (the same file
 flutter.dev's download button serves); the exact failing lines are printed
 into `flutter-setup.log`, which `/flutter` shows. Verified from a sandbox: a
 junk `~/flutter` is detected and removed, the clone completes in ~40 s.
+
+**No `git pull` (Round M.3).** "Pull usually removes your connection": a
+pull that stops to ask (diverged branch, dirty file) leaves the Codespace on
+a detached HEAD or a different branch. So the checkout now updates *itself*,
+by fast-forward only: `tools/self_update.sh --check|--apply` fetches its own
+branch by explicit refspec, `merge --ff-only`, re-runs setup if
+`requirements.txt` changed, restarts the engine; it never checks out, never
+switches, never touches `main`, and leaves local edits alone (a refused
+fast-forward changes nothing). It runs from the autostart hooks at every
+start/attach (`--update` mode too), from the engine (`GET /api/update/status`,
+`POST /api/update/apply`, both detached/setsid) and automatically every 10 min
+in a Codespace (`backend/api/self_update.py`, `AUTO_UPDATE=0` to disable). The
+dashboard top bar shows an "⬆ update available · Apply" chip, checked from the
+single safety-net timer every 5 min; after Apply the page reloads in 15 s.
+Verified end to end in the sandbox: checkout rolled back one commit, engine's
+apply fast-forwarded it and restarted on the new code.

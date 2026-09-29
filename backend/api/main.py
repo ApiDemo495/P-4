@@ -32,7 +32,7 @@ from backend.api import (
     routes_signals,
     state,
 )
-from backend.api import flutter_build
+from backend.api import flutter_build, self_update
 from backend.core import config as cfg
 from backend.core.cycle_manager import CycleManager
 
@@ -94,6 +94,10 @@ async def lifespan(app: FastAPI):
     # engine supervises the download so it no longer depends on a devcontainer
     # hook staying alive.  /flutter shows its progress until it lands.
     flutter_build.ensure_started()
+    # Self-update: in a Codespace the checkout fast-forwards its own branch on
+    # its own (never a checkout, never main); AUTO_UPDATE=0 turns it off.
+    update_task = asyncio.create_task(self_update.auto_loop(), name="auto-update") \
+        if self_update.auto_enabled() else None
     log.info("=" * 78)
     log.info(" DROSOPHILA TRADER v2.0 - port is live, engine warming up in the background")
     log.info("   dashboard  : http://0.0.0.0:%d/   (reload if it says 'warming up')", cfg.SETTINGS.port)
@@ -102,6 +106,10 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        if update_task is not None and not update_task.done():
+            update_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await update_task
         if not warm_task.done():
             warm_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -240,6 +248,20 @@ else:  # pragma: no cover - only if the web assets were stripped
 # ---------------------------------------------------------------------------
 
 FLUTTER_BUILD_DIR = cfg.REPO_ROOT / "frontend" / "build" / "web"
+
+
+@app.get("/api/update/status")
+async def update_status(force: int = 0):
+    """Is this checkout behind its own branch on origin?"""
+    result = await self_update.check(force=bool(force))
+    result["log_tail"] = self_update.log_tail()
+    return result
+
+
+@app.post("/api/update/apply")
+async def update_apply():
+    """Fetch + fast-forward + restart, detached.  Never a checkout or a merge."""
+    return self_update.apply()
 
 
 @app.get("/api/flutter/status")

@@ -191,3 +191,54 @@ def test_the_autostart_hook_uses_its_own_session() -> None:
     text = (ROOT / "tools" / "codespace_autostart.sh").read_text(encoding="utf-8")
     block = text.split("start_flutter()", 1)[1].split("\n}", 1)[0]
     assert "setsid" in block
+
+
+# ---------------------------------------------------------------------------
+# 4. self-update: the checkout fast-forwards its own branch, never a checkout
+# ---------------------------------------------------------------------------
+def test_the_self_update_script_never_switches_branches() -> None:
+    text = (ROOT / "tools" / "self_update.sh").read_text(encoding="utf-8")
+    code = "\n".join(line for line in text.splitlines() if not line.strip().startswith("#"))
+    assert "git checkout" not in code and "git switch" not in code
+    assert "git reset" not in code and "git stash" not in code
+    assert "--ff-only" in code, "fast-forward only"
+    assert "main" not in code.replace("domain", "").replace("remain", ""), "never touches main"
+    assert '+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}' in code, "explicit refspec fetch"
+
+
+def test_the_self_update_check_returns_json() -> None:
+    import json
+    import subprocess
+
+    out = subprocess.run(
+        ["bash", str(ROOT / "tools" / "self_update.sh"), "--check"],
+        cwd=str(ROOT), capture_output=True, text=True, timeout=120,
+    ).stdout.strip().splitlines()
+    data = json.loads(out[-1])
+    assert "behind" in data and "branch" in data
+
+
+def test_the_update_routes_and_hook_are_wired() -> None:
+    from backend.api.main import app
+
+    paths = {getattr(route, "path", "") for route in app.routes}
+    assert "/api/update/status" in paths and "/api/update/apply" in paths
+    hook = (ROOT / "tools" / "codespace_autostart.sh").read_text(encoding="utf-8")
+    assert "self_update.sh" in hook
+    for mode in ("start)", "attach)"):
+        block = hook.split(mode, 1)[1].split(";;", 1)[0]
+        assert "self_update" in block, f"{mode} must fast-forward before provisioning"
+    html = (ROOT / "backend" / "web" / "index.html").read_text(encoding="utf-8")
+    assert 'id="update-apply"' in html
+
+
+def test_auto_update_is_on_in_a_codespace_only(monkeypatch) -> None:
+    from backend.api import self_update as su
+
+    monkeypatch.delenv("AUTO_UPDATE", raising=False)
+    monkeypatch.delenv("CODESPACE_NAME", raising=False)
+    assert su.auto_enabled() is False
+    monkeypatch.setenv("CODESPACE_NAME", "demo")
+    assert su.auto_enabled() is True
+    monkeypatch.setenv("AUTO_UPDATE", "0")
+    assert su.auto_enabled() is False

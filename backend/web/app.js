@@ -361,7 +361,45 @@ function countdownSubLine() {
 
 /* REST is the safety net, not the schedule: it only runs while the socket is
    down, so a healthy dashboard makes no polls of its own. */
+/* ---- self-update chip -------------------------------------------------------
+   Zero commands, never `git pull`: the engine fast-forwards its own branch.
+   Checked every 5 minutes from the ONE safety-net timer (no extra interval);
+   in a Codespace the engine applies it by itself, the chip is the manual
+   route and the notice. */
+let updateTick = 0;
+async function checkForUpdate() {
+  const chip = $("update-chip");
+  if (!chip) return;
+  const res = await getJSON("/api/update/status");
+  if (!res || res.error || !res.ok) return;
+  const behind = Number(res.behind || 0);
+  if (behind > 0 && res.can_fast_forward) {
+    $("update-text").textContent = `${behind} update${behind === 1 ? "" : "s"} available` +
+      (res.auto ? " · auto-applies" : "");
+    chip.title = `origin/${res.branch} is at ${res.remote} (you are at ${res.local}): ${res.latest || ""}`;
+    chip.classList.remove("hidden");
+  } else {
+    chip.classList.add("hidden");
+  }
+}
+async function applyUpdate() {
+  const chip = $("update-chip");
+  chip.classList.add("busy");
+  $("update-text").textContent = "updating… the engine restarts in a few seconds";
+  const res = await getJSON("/api/update/apply", { method: "POST" });
+  if (!res || res.error || !res.started) {
+    $("update-text").textContent = `could not start: ${res?.reason || res?.error || "unknown"}`;
+    chip.classList.remove("busy");
+    return;
+  }
+  // The engine goes away and comes back with new code; a full reload picks
+  // up the new app.js (cache-busters change with every release).
+  setTimeout(() => location.reload(), 15000);
+}
+
 async function safetyNet() {
+  updateTick += 1;
+  if (updateTick % 60 === 1) checkForUpdate();   // 5 s x 60 = every 5 min, first at boot
   // Nothing to do while the socket is healthy - the backend is the schedule.
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
     const t0 = performance.now();
@@ -2108,6 +2146,8 @@ async function boot() {
   state.raf = requestAnimationFrame(frame);
 
   /* ONE safety net, and it does nothing while the socket is healthy. */
+  const applyBtn = $("update-apply");
+  if (applyBtn) applyBtn.onclick = applyUpdate;
   setInterval(safetyNet, 5000);
 
   connect();

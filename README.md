@@ -167,6 +167,31 @@ bash run.sh --public
 bash run.sh --urls
 ```
 
+### The Codespace updates itself — no `git pull`
+
+A `git pull` that asks questions is how a Codespace ends up detached from its
+branch, so nothing here asks you to run one. The checkout fast-forwards **its
+own branch** by itself: at every Codespace start/attach, and — while the engine
+runs in a Codespace — every 10 minutes (`AUTO_UPDATE=0` turns that off,
+`AUTO_UPDATE_MINUTES` changes the cadence). It never checks out, never switches
+branches, never touches `main`, and refuses anything that is not a clean
+fast-forward. When it applies an update the engine restarts within seconds and
+the dashboard reloads on its own. The dashboard's top bar shows an
+**⬆ update available · Apply** chip whenever the branch is behind. The same
+from a terminal:
+
+```bash
+curl -s localhost:8000/api/update/status | python3 -m json.tool
+```
+
+```bash
+curl -s -X POST localhost:8000/api/update/apply
+```
+
+```bash
+bash tools/codespace_autostart.sh --update
+```
+
 ### The Flutter client builds itself — watch it, or restart it, in the browser
 
 In a Codespace the engine starts the SDK download and the web build on its

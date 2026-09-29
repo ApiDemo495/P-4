@@ -774,3 +774,10 @@ th { color: var(--muted); font-weight: 600; }
 .deep-chain.compact li { padding: 3px 8px 3px 28px; font-size: 10.5px; }
 .deep-chain.compact li::before { width: 14px; height: 14px; top: 5px; left: 8px; font-size: 9px; }
 .deep-block .mono { font-family: var(--mono); }
+
+/* Self-update chip in the top bar: hidden unless the checkout is behind its
+   own branch.  Static size, never shifts the layout when it appears. */
+.update-chip { display:inline-flex; align-items:center; gap:6px; margin-right:12px; padding:2px 8px;
+  border:1px solid #6b5b1f; border-radius:999px; background:#2a2410; color:#f5d67a; font-size:11.5px; }
+.update-chip .btn.tiny { padding:1px 8px; font-size:11px; }
+.update-chip.busy { opacity:.6; }
