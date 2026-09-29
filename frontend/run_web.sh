@@ -115,40 +115,112 @@ if [ -z "$FLUTTER" ]; then
 EOF
     exit 1
   fi
-  command -v git >/dev/null 2>&1 || { bad "git is required to clone Flutter"; exit 1; }
   FLUTTER_DIR="${FLUTTER_HOME:-$HOME/flutter}"
+
+  # -- pre-flight: the two things that make the download "fail" for no reason
+  # 1. a half-finished earlier attempt: a non-empty $FLUTTER_DIR *without* a
+  #    .git directory makes `git clone` refuse ("destination path already
+  #    exists") every single time -> wipe it and start clean.
+  if [ -d "$FLUTTER_DIR" ] && [ ! -d "$FLUTTER_DIR/.git" ] && [ ! -x "$FLUTTER_DIR/bin/flutter" ]; then
+    warn "removing a half-downloaded SDK left in $FLUTTER_DIR by an earlier attempt"
+    rm -rf "$FLUTTER_DIR"
+  fi
+  # 2. disk: the SDK + Dart + web engine need ~3 GB free.
+  free_mb="$(df -Pm "$HOME" 2>/dev/null | awk 'NR==2 {print $4}')"
+  if [ -n "${free_mb:-}" ] && [ "$free_mb" -lt 3000 ]; then
+    bad "only ${free_mb} MB free under $HOME - the Flutter SDK needs about 3 GB."
+    say "    free some space (docker system prune, old venvs) or use a larger Codespace machine,"
+    say "    then click Restart on /flutter.  The web dashboard on port ${PORT} is unaffected."
+    exit 1
+  fi
+
+  # -- route A: shallow git clone of the stable branch (resumable, 3 tries)
   ok_attempt=0
-  for attempt in 1 2 3; do
-    if [ -d "$FLUTTER_DIR/.git" ]; then
-      say "${DIM}   resuming the existing clone in $FLUTTER_DIR (attempt $attempt)${R}"
-      if git -C "$FLUTTER_DIR" fetch --depth 1 origin stable >/dev/null 2>&1; then
+  if command -v git >/dev/null 2>&1; then
+    for attempt in 1 2 3; do
+      if [ -d "$FLUTTER_DIR/.git" ]; then
+        say "${DIM}   resuming the existing clone in $FLUTTER_DIR (attempt $attempt)${R}"
+        git -C "$FLUTTER_DIR" fetch --depth 1 origin stable 2>&1 | tail -n 3 | sed 's/^/      /'
         git -C "$FLUTTER_DIR" checkout -q stable >/dev/null 2>&1 || true
-        ok_attempt=1; break
+        [ -x "$FLUTTER_DIR/bin/flutter" ] && { ok_attempt=1; break; }
+      else
+        say "${DIM}   cloning the stable Flutter SDK into $FLUTTER_DIR (~700 MB, 2-4 min, attempt $attempt)${R}"
+        git clone --depth 1 --single-branch -b stable \
+          https://github.com/flutter/flutter.git "$FLUTTER_DIR" 2>&1 | tail -n 4 | sed 's/^/      /'
+        [ -x "$FLUTTER_DIR/bin/flutter" ] && { ok_attempt=1; break; }
+        # a failed clone can leave a partial directory behind
+        [ -d "$FLUTTER_DIR/.git" ] || rm -rf "$FLUTTER_DIR"
       fi
-    else
-      say "${DIM}   cloning the stable Flutter SDK into $FLUTTER_DIR (~700 MB, 2-4 min)${R}"
-      if git clone --depth 1 --single-branch -b stable \
-            https://github.com/flutter/flutter.git "$FLUTTER_DIR"; then
-        ok_attempt=1; break
-      fi
-    fi
-    warn "attempt $attempt failed"
-    sleep 3
-  done
+      warn "git attempt $attempt failed"
+      sleep $((attempt * 5))
+    done
+  else
+    warn "git is not installed - skipping the clone route"
+  fi
+
+  # -- route B: the official release archive from storage.googleapis.com
+  #    (what flutter.dev's download button serves; no git needed, one file)
   if [ "$ok_attempt" != 1 ]; then
-    bad "could not download the Flutter SDK."
+    say "${DIM}   git route failed - trying the release archive instead${R}"
+    releases_json="https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json"
+    archive_path="$(curl -fsSL --retry 3 "$releases_json" 2>/dev/null | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+stable = data["current_release"]["stable"]
+for rel in data["releases"]:
+    if rel["hash"] == stable and rel.get("dart_sdk_arch", "x64") == "x64":
+        print(rel["archive"]); break
+' 2>/dev/null || true)"
+    if [ -n "$archive_path" ]; then
+      url="https://storage.googleapis.com/flutter_infra_release/releases/${archive_path}"
+      say "${DIM}   $url${R}"
+      tmp_tar="$(mktemp -t flutter_sdk.XXXXXX)"
+      parent="$(dirname "$FLUTTER_DIR")"
+      for attempt in 1 2 3; do
+        if curl -fL --retry 3 -C - -sS -o "$tmp_tar" "$url"; then
+          rm -rf "$FLUTTER_DIR" "$parent/flutter.extracting"
+          mkdir -p "$parent/flutter.extracting"
+          if tar -xJf "$tmp_tar" -C "$parent/flutter.extracting" \
+              && [ -x "$parent/flutter.extracting/flutter/bin/flutter" ]; then
+            mv "$parent/flutter.extracting/flutter" "$FLUTTER_DIR"
+            rm -rf "$parent/flutter.extracting"
+            ok_attempt=1; break
+          fi
+          warn "archive extraction failed (attempt $attempt)"
+        else
+          warn "archive download failed (attempt $attempt)"
+        fi
+        sleep $((attempt * 5))
+      done
+      rm -f "$tmp_tar"
+    else
+      warn "could not read the Flutter release index (storage.googleapis.com unreachable?)"
+    fi
+  fi
+
+  if [ "$ok_attempt" != 1 ]; then
+    bad "could not download the Flutter SDK (both github.com and storage.googleapis.com routes failed)."
     cat <<EOF
 
-    That download is the only heavy one in this repo - and it is OPTIONAL:
-    open http://localhost:${PORT}/ and use the web dashboard, which has every
-    feature (same engine, same signal panel, plus the Brain wiring panel).
+    Check from this terminal what is blocked:
+      curl -sI https://github.com | head -1
+      curl -sI https://storage.googleapis.com | head -1
 
-    To retry later:
+    Then click Restart on /flutter, or run by hand:
       rm -rf ~/flutter
       INSTALL_FLUTTER=1 bash frontend/run_web.sh
+
+    Manual install (any machine): download flutter_linux_<version>-stable.tar.xz from
+    https://docs.flutter.dev/get-started/install/linux, extract it to ~/flutter, then
+    run the command above - it finds ~/flutter/bin/flutter and only builds.
+
+    The web dashboard on port ${PORT} has every feature meanwhile.
 EOF
     exit 1
   fi
+  # Flutter refuses to run from a directory owned by another user (a tarball
+  # extracted as root, a Codespace whose HOME changed) - allow ours explicitly.
+  git config --global --add safe.directory "$FLUTTER_DIR" >/dev/null 2>&1 || true
   FLUTTER="$FLUTTER_DIR/bin/flutter"
 fi
 export PATH="$(dirname "$FLUTTER"):$PATH"

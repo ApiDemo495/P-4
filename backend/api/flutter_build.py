@@ -46,6 +46,7 @@ STAGES = (
     ("3/4", "working out the API base URL"),
     ("2/4", "preparing the project (flutter pub get)"),
     ("precache", "downloading the Dart SDK and the web engine"),
+    ("release archive", "downloading the Flutter SDK release archive (~1 GB)"),
     ("cloning the stable Flutter SDK", "downloading the Flutter SDK (~700 MB)"),
     ("resuming the existing clone", "resuming the Flutter SDK download"),
     ("1/4", "locating the Flutter SDK"),

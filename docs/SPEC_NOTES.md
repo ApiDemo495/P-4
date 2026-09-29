@@ -939,3 +939,14 @@ runtime state there (`.provisioned`, `flutter.pid`, `.autostart.lock`,
 All runtime state now lives in `.run/` (git-ignored); `.devcontainer/` holds
 only `devcontainer.json` and `setup.sh`. Dismiss the prompt once (or rebuild
 once - both are harmless); it will not come back.
+
+**"Failed to download the Flutter SDK" (Round M.2).** A download killed
+half-way (the reaped hook) left `~/flutter` as a non-empty directory without
+`.git`; `git clone` then refuses ("destination path already exists") on every
+retry, and the script gave up. `frontend/run_web.sh` now wipes such a
+directory before cloning, checks for ~3 GB free, tries the shallow clone
+three times with back-off, and if github.com is the problem falls back to the
+official release archive from `storage.googleapis.com` (the same file
+flutter.dev's download button serves); the exact failing lines are printed
+into `flutter-setup.log`, which `/flutter` shows. Verified from a sandbox: a
+junk `~/flutter` is detected and removed, the clone completes in ~40 s.
