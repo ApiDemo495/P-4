@@ -73,7 +73,7 @@ provisioning makes up to three passes (a clean `.venv` on the second) and
 checks that **every** module in `requirements.txt` imports before it calls the
 environment ready. Nothing in the automatic path can wait for a keyboard: apt
 is non-interactive, `sudo` never asks for a password, and the Flutter download
-runs detached with no prompt. Logs: `.devcontainer/logs/setup-*.log`,
+runs detached with no prompt. Logs: `.run/logs/setup-*.log`,
 `/tmp/pip-install.log`, `flutter-setup.log`.
 
 Port **8000** is forwarded, made **public** and opened in your browser for you,
@@ -367,18 +367,18 @@ If pip itself is blocked (proxy, VPN, private index):
 
 Setup writes the full pip log to `/tmp/pip-install.log`; the launcher prints the
 last lines of it when an install fails. In a Codespace the automatic passes are
-logged to `.devcontainer/logs/setup-1.log` … `setup-3.log`; to force a fresh
+logged to `.run/logs/setup-1.log` … `setup-3.log`; to force a fresh
 provisioning pass without recreating the container:
 
 ```bash
-rm -f .devcontainer/.provisioned && bash tools/codespace_autostart.sh --attach
+rm -f .run/.provisioned && bash tools/codespace_autostart.sh --attach
 ```
 
 If the Flutter build did not appear at `/flutter`, its log is `flutter-setup.log`;
 restart the download with:
 
 ```bash
-rm -f .devcontainer/flutter.pid && bash tools/codespace_autostart.sh --attach
+rm -f .run/flutter.pid && bash tools/codespace_autostart.sh --attach
 ```
 
 ---

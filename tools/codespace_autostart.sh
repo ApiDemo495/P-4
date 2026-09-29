@@ -41,7 +41,12 @@ done
 
 VENV="$REPO_ROOT/.venv"
 PY="$VENV/bin/python"
-STATE_DIR="$REPO_ROOT/.devcontainer"
+# Runtime state lives in .run/, NOT in .devcontainer/: VS Code watches that
+# folder and any file written there ("flutter.pid", the stamp, the lock)
+# pops "We have noticed a change to the dev container configuration -
+# rebuild?".  Only devcontainer.json and setup.sh belong in .devcontainer/.
+STATE_DIR="$REPO_ROOT/.run"
+SETUP_SH="$REPO_ROOT/.devcontainer/setup.sh"
 STAMP="$STATE_DIR/.provisioned"
 FLUTTER_LOG="$REPO_ROOT/flutter-setup.log"
 FLUTTER_PID="$STATE_DIR/flutter.pid"
@@ -119,8 +124,8 @@ provision() {
   # attempt must not leave the codespace "created" but unusable.
   local attempt
   for attempt in 1 2 3; do
-    bash "$STATE_DIR/setup.sh" </dev/null >"$STATE_DIR/logs/setup-$attempt.log" 2>&1 9>&- \
-      || warn "setup.sh reported problems on pass $attempt (log: .devcontainer/logs/setup-$attempt.log)"
+    bash "$SETUP_SH" </dev/null >"$STATE_DIR/logs/setup-$attempt.log" 2>&1 9>&- \
+      || warn "setup.sh reported problems on pass $attempt (log: .run/logs/setup-$attempt.log)"
     if imports_ok; then
       requirements_fingerprint > "$STAMP"
       ok "provisioned on pass $attempt: $(requirements_fingerprint | cut -c1-12)"
@@ -133,7 +138,7 @@ provision() {
     sleep 5
   done
   bad "the engine is still missing dependencies after three passes"
-  bad "last log: .devcontainer/logs/setup-3.log  - and /tmp/pip-install.log"
+  bad "last log: .run/logs/setup-3.log  - and /tmp/pip-install.log"
   return 1
 }
 

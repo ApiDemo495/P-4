@@ -931,3 +931,11 @@ settings fields, Flutter supervisor + routes, `setsid`); full suite 189
 passed; `tools/dashboard_payload_check.js` 69/69 (now asserts exactly 22
 formulas and no running countdown inside the cell); `tools/lock_watch.js 100`
 → `OK: the prediction cell was static inside every window`.
+
+**"We have noticed a change to the dev container configuration" (Round M.1).**
+VS Code watches the whole `.devcontainer/` folder, and the autostart wrote its
+runtime state there (`.provisioned`, `flutter.pid`, `.autostart.lock`,
+`logs/`), so every start looked like a config change and offered a rebuild.
+All runtime state now lives in `.run/` (git-ignored); `.devcontainer/` holds
+only `devcontainer.json` and `setup.sh`. Dismiss the prompt once (or rebuild
+once - both are harmless); it will not come back.
