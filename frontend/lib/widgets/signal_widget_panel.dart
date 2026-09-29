@@ -1,6 +1,4 @@
 import 'dart:math' as math;
-import 'dart:ui' show FontFeature;
-
 import 'package:flutter/material.dart';
 
 import '../models/signal.dart';
@@ -121,7 +119,7 @@ class SignalWidgetPanel extends StatelessWidget {
             ),
             child: Text(
               value,
-              key: ValueKey<String>('prediction-${value}'),
+              key: ValueKey<String>('prediction-$value'),
               style: TextStyle(
                 color: color,
                 fontSize: 44,
@@ -362,6 +360,14 @@ class SignalWidgetPanel extends StatelessWidget {
         ),
       ]),
     );
+  }
+
+  /// `{evaluated, win_rate}` for one side -> `71% (n=14)` or `—`.
+  static String _sideRate(Map<String, dynamic> side) {
+    final evaluated = (side['evaluated'] as num?)?.toInt() ?? 0;
+    final rate = side['win_rate'];
+    if (evaluated == 0 || rate is! num) return '—';
+    return '${(rate * 100).toStringAsFixed(0)}% (n=$evaluated)';
   }
 
   Widget _accuracyCell(bool fill) {

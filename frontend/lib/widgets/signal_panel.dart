@@ -126,9 +126,9 @@ class SignalPanel extends StatelessWidget {
           Text(signal.reasoning,
               style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12.5)),
           const SizedBox(height: 12),
-          Text(
+          const Text(
             'BRAIN (full wiring: Brain tab · /api/brain/wiring)',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 10.5,
               letterSpacing: 1.2,
               color: AppTheme.textMuted,
@@ -139,7 +139,7 @@ class SignalPanel extends StatelessWidget {
           StatRow(label: 'CCSv2', value: signal.ccsValue.toStringAsFixed(3)),
           StatRow(
             label: 'confidence (KC sparsity × read-out margin)',
-            value: (signal.ccsConfidence * 100).toStringAsFixed(1) + '%',
+            value: '${(signal.ccsConfidence * 100).toStringAsFixed(1)}%',
           ),
           StatRow(label: 'brain status', value: signal.brainStatus),
           const SizedBox(height: 10),
@@ -201,7 +201,7 @@ class ConvictionNoteBox extends StatelessWidget {
         children: [
           Text('⚠  ${warning.direction.isEmpty ? 'Conviction' : warning.direction} '
               'conviction note',
-              style: TextStyle(
+              style: const TextStyle(
                   color: AppTheme.warning, fontWeight: FontWeight.w700, fontSize: 12.5)),
           const SizedBox(height: 6),
           Text(warning.text,

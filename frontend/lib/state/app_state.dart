@@ -122,7 +122,6 @@ class AppState extends ChangeNotifier {
   MasterClock? clock;
   int? _serverOffsetMs;
   int _endsAtMs = 0;
-  int _startedAtMs = 0;
   int _windowId = -1;
 
   /// Client milliseconds translated onto the server's clock.
@@ -521,7 +520,6 @@ class AppState extends ChangeNotifier {
 
     if (incoming.cycleId != _windowId) {
       _windowId = incoming.cycleId;
-      _startedAtMs = incoming.windowStartedAtMs;
       _endsAtMs = incoming.windowEndsAtMs;
       _lastSecondShown = null;
     }
@@ -566,15 +564,12 @@ class AppState extends ChangeNotifier {
     if (nextWindowReady) return 1.0;
     final w = window;
     if (w == null || !w.pipeline) return 0.0;
-    final lead = _lockDeadlineSeconds <= 0 ? 8.0 : _lockDeadlineSeconds;
+    final lead = lockDeadlineSeconds <= 0 ? 8.0 : lockDeadlineSeconds;
     return ((lead - w.secondsRemaining) / lead).clamp(0.0, 1.0);
   }
 
-  double _lockDeadlineSeconds = 8.0;
-
   /// How long before the boundary the engine starts computing the next signal.
-  set lockDeadlineSeconds(double value) => _lockDeadlineSeconds = value;
-  double get lockDeadlineSeconds => _lockDeadlineSeconds;
+  double lockDeadlineSeconds = 8.0;
 
   /// Win/loss streak over the evaluated windows (positive = wins).
   int get outcomeStreak {
