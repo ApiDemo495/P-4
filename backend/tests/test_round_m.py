@@ -242,3 +242,24 @@ def test_auto_update_is_on_in_a_codespace_only(monkeypatch) -> None:
     assert su.auto_enabled() is True
     monkeypatch.setenv("AUTO_UPDATE", "0")
     assert su.auto_enabled() is False
+
+
+# ---------------------------------------------------------------------------
+# 5. the page proves its own lock, and says which build it is
+# ---------------------------------------------------------------------------
+def test_the_lock_watchdog_and_build_id_are_wired() -> None:
+    js = APP_JS
+    html = (ROOT / "backend" / "web" / "index.html").read_text(encoding="utf-8")
+    assert 'id="w-lock-proof"' in html
+    assert "function lockWatchdog" in js and "lockWatchdog();" in js.split("async function safetyNet")[1]
+    assert "LOCK BROKEN" in js
+    assert "state.accuracyWindowId" in js, "the accuracy row must be frozen with the panel"
+    assert "build ${state.config?.build" in js
+
+
+def test_health_and_config_carry_the_build_id() -> None:
+    from backend.api import main as m
+
+    assert m.BUILD_ID and m.BUILD_ID != ""
+    src = (ROOT / "backend" / "api" / "main.py").read_text(encoding="utf-8")
+    assert src.count('"build": BUILD_ID') + src.count('payload["build"] = BUILD_ID') == 2

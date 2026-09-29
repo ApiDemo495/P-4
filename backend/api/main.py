@@ -45,6 +45,29 @@ log = logging.getLogger("drosophila.main")
 _START_TIME = time.time()
 
 
+def _build_id() -> str:
+    """Short git hash of the running checkout ("unknown" outside git).
+
+    Printed in the dashboard's Engine line and in /api/health so "is my
+    Codespace on the new code?" has a one-glance answer.
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(cfg.REPO_ROOT), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except Exception:  # noqa: BLE001
+        pass
+    return "unknown"
+
+
+BUILD_ID = _build_id()
+
+
 def _local_stub_setting() -> bool | None:
     raw = os.environ.get("LOCAL_AGENT_STUB", "").strip().lower()
     if raw in ("1", "true", "yes", "on"):
@@ -152,6 +175,7 @@ async def health() -> dict:
     payload = manager.health()
     payload["uptime_seconds"] = round(time.time() - _START_TIME, 1)
     payload["version"] = "2.0.0"
+    payload["build"] = BUILD_ID
     return payload
 
 
@@ -170,6 +194,7 @@ async def system_config() -> dict:
     """Non-secret configuration, so the UI can render sensible defaults."""
     settings = cfg.SETTINGS
     return {
+        "build": BUILD_ID,
         "assets": list(cfg.ASSETS),
         "asset_params": cfg.ASSET_PARAMS,
         "cycle_period_seconds": settings.cycle_period_seconds,

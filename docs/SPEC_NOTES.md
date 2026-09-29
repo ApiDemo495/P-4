@@ -966,3 +966,17 @@ dashboard top bar shows an "⬆ update available · Apply" chip, checked from th
 single safety-net timer every 5 min; after Apply the page reloads in 15 s.
 Verified end to end in the sandbox: checkout rolled back one commit, engine's
 apply fast-forwarded it and restarted on the new code.
+
+**"Still no prediction lock" (Round M.4).** A wider headless-DOM diff (the
+whole widget panel + signal card, no grace period) showed that on this build
+side, confidence, levels, crowd and reasoning are static inside a window; the
+only mid-window movement left was the PREDICTION ACCURACY row (outcomes scored
+just after the boundary, per-side rates on the t+15 pulse). It now paints only
+in the first 3 s of a window. Two things were added so the lock is *provable
+on the user's own screen*: (1) a lock watchdog in `app.js` snapshots the text
+of the prediction and TP/SL cells 3 s into each window and compares on every
+safety-net tick; a difference turns the chip red ("LOCK BROKEN - see console")
+and prints the diff, otherwise the note under the panel counts the windows it
+verified (changes only at boundaries); (2) the Engine line and `/api/health`
+/ `/api/system/config` carry `build` = the git short hash, so "is the
+Codespace on the new code?" is answered at a glance.

@@ -399,6 +399,7 @@ async function applyUpdate() {
 
 async function safetyNet() {
   updateTick += 1;
+  lockWatchdog();
   if (updateTick % 60 === 1) checkForUpdate();   // 5 s x 60 = every 5 min, first at boot
   // Nothing to do while the socket is healthy - the backend is the schedule.
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
@@ -1255,6 +1256,15 @@ function renderWidgetPanel() {
   $("w-risk-note").textContent = risk.note || "—";
 
   // ---- row 2: accuracy --------------------------------------------------
+  // Frozen with the rest of the panel (Round M.4): scored outcomes arrive a
+  // moment after the boundary and the per-side rates with the t+15 pulse; a
+  // cell that re-paints mid-window inside the prediction panel reads as "the
+  // prediction changed".  The row is painted in the first 3 s of a window
+  // (the boundary settle) and then left alone until the next one.
+  const windowId = state.clock?.windowId;
+  const sinceOpen = state.clock?.startedAtMs ? (serverNowMs() - state.clock.startedAtMs) / 1000 : 0;
+  if (state.accuracyWindowId === windowId && sinceOpen > 3) return;
+  state.accuracyWindowId = windowId;
   const rows = state.outcomes || [];
   const wins = rows.filter((r) => r.outcome > 0).length;
   const winRate = rows.length ? wins / rows.length : null;
@@ -1296,7 +1306,62 @@ function renderWidgetPanel() {
     : `${state.config?.market_source || "live feed"} · ${state.config?.cycle_period_seconds || 60}s windows`;
   $("w-engine").textContent =
     `${engine}${state.window?.pipeline ? " · pipelined" : ""}` +
-    ` · ${Math.round(state.window?.window_seconds || state.cyclePeriod || 60)}s predictions`;
+    ` · ${Math.round(state.window?.window_seconds || state.cyclePeriod || 60)}s predictions` +
+    ` · build ${state.config?.build || "?"}`;
+}
+
+/* ---- lock watchdog ----------------------------------------------------------
+   The page checks its own promise.  Three seconds into a window it snapshots
+   the text of the prediction cell and the TP/SL cell; every safety-net tick
+   until the boundary it compares.  A difference is a broken lock: the chip
+   turns red, the diff goes to the console, and the note under the panel says
+   so.  Otherwise the note counts the windows it has verified - a number that
+   moves only at boundaries. */
+const lockWatch = { windowId: null, snapshot: null, verified: 0, broken: 0, lastDiff: "" };
+function lockCellText() {
+  const cell = document.querySelector(".cell-prediction");
+  const tpsl = $("w-entry")?.closest(".widget-cell");
+  return `${cell ? cell.textContent : ""}\u0001${tpsl ? tpsl.textContent : ""}`.replace(/\s+/g, " ");
+}
+function lockWatchdog() {
+  const windowId = state.clock?.windowId;
+  if (windowId === undefined || windowId === null || !state.clock?.startedAtMs) return;
+  const sinceOpen = (serverNowMs() - state.clock.startedAtMs) / 1000;
+  if (lockWatch.windowId !== windowId) {
+    // New window: the previous one closed without a diff -> verified.
+    if (lockWatch.snapshot !== null) lockWatch.verified += 1;
+    lockWatch.windowId = windowId;
+    lockWatch.snapshot = null;
+    renderLockProof();
+    return;
+  }
+  if (sinceOpen < 3) return;                       // boundary settle
+  const now = lockCellText();
+  if (lockWatch.snapshot === null) { lockWatch.snapshot = now; return; }
+  if (now !== lockWatch.snapshot) {
+    lockWatch.broken += 1;
+    let i = 0;
+    while (i < now.length && now[i] === lockWatch.snapshot[i]) i += 1;
+    lockWatch.lastDiff = `at ${sinceOpen.toFixed(1)}s: "${lockWatch.snapshot.slice(Math.max(0, i - 30), i + 40)}" -> "${now.slice(Math.max(0, i - 30), i + 40)}"`;
+    console.error("LOCK BROKEN inside window", windowId, lockWatch.lastDiff);
+    lockWatch.snapshot = now;
+    const chip = $("w-fresh");
+    if (chip) { chip.textContent = "LOCK BROKEN — see console"; chip.className = "fresh-chip stale"; chip.title = lockWatch.lastDiff; }
+    renderLockProof();
+  }
+}
+function renderLockProof() {
+  const el = $("w-lock-proof");
+  if (!el) return;
+  if (lockWatch.broken) {
+    el.textContent = `⚠ lock broken ${lockWatch.broken}× — ${lockWatch.lastDiff}`;
+    el.className = "lock-proof broken";
+  } else {
+    el.textContent = lockWatch.verified
+      ? `🔒 lock verified: the prediction cell did not change inside the last ${lockWatch.verified} window${lockWatch.verified === 1 ? "" : "s"}`
+      : "🔒 lock watchdog armed — checks the cell every 5 s, reports at the boundary";
+    el.className = "lock-proof";
+  }
 }
 
 /* The conviction box: the signal, its conviction and the size it implies.

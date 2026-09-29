@@ -781,3 +781,7 @@ th { color: var(--muted); font-weight: 600; }
   border:1px solid #6b5b1f; border-radius:999px; background:#2a2410; color:#f5d67a; font-size:11.5px; }
 .update-chip .btn.tiny { padding:1px 8px; font-size:11px; }
 .update-chip.busy { opacity:.6; }
+
+/* Lock watchdog note under the widget panel: changes only at boundaries. */
+.lock-proof { display:block; margin-top:4px; font-size:11px; color:#7fe0b5; }
+.lock-proof.broken { color:#ff6b6b; font-weight:700; }
