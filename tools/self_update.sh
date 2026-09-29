@@ -100,6 +100,16 @@ while IFS= read -r path; do
     rm -f "$path"
   fi
 done < <(git ls-files --others --exclude-standard)
+# Same for a *tracked* file edited to exactly the incoming content: restore
+# the HEAD version so the fast-forward can write the identical bytes back.
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  if git cat-file -e "origin/${BRANCH}:${path}" 2>/dev/null \
+     && git cat-file -p "origin/${BRANCH}:${path}" | cmp -s - "$path"; then
+    echo "    modified ${path} already equals the incoming version - letting git own it"
+    git restore --worktree --source=HEAD -- "$path" 2>/dev/null || true
+  fi
+done < <(git diff --name-only)
 if ! git merge --ff-only -q "origin/${BRANCH}"; then
   echo "    fast-forward refused (a local edit overlaps an incoming change) - nothing changed"
   git status --porcelain --untracked-files=no | head -20
