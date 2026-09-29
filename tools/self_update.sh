@@ -88,6 +88,18 @@ if [ "$CAN_FF" != true ]; then
   echo "    the branch has diverged (ahead ${AHEAD}) - refusing to move it; nothing changed"; exit 2
 fi
 REQ_BEFORE="$(sha256sum requirements.txt 2>/dev/null | cut -d' ' -f1)"
+# An untracked file that the incoming commits add (typically a copy of this
+# very script dropped in by hand to bootstrap) blocks the fast-forward.  If it
+# is byte-identical to what is coming, letting git write it is a no-op: remove
+# the copy.  Anything that differs is a real local file and stays.
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  if git cat-file -e "origin/${BRANCH}:${path}" 2>/dev/null \
+     && git cat-file -p "origin/${BRANCH}:${path}" | cmp -s - "$path"; then
+    echo "    untracked ${path} is identical to the incoming version - letting git own it"
+    rm -f "$path"
+  fi
+done < <(git ls-files --others --exclude-standard)
 if ! git merge --ff-only -q "origin/${BRANCH}"; then
   echo "    fast-forward refused (a local edit overlaps an incoming change) - nothing changed"
   git status --porcelain --untracked-files=no | head -20
