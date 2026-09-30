@@ -601,6 +601,10 @@ tail -f server.log
 
 * [`docs/SPECIFICATION_v2.md`](docs/SPECIFICATION_v2.md) — the full specification
   (every formula, every threshold, the API, Appendices A–F).
+* [`docs/API_KEYS_AND_MODELS.md`](docs/API_KEYS_AND_MODELS.md) — how to get every
+  key (Gemini, GitHub Models, CryptoPanic, NewsAPI, neuPrint, FlyWire — all
+  free), where to paste it, how to test it, and which local AI models to
+  download from where and how to load them.
 * [`docs/SPEC_NOTES.md`](docs/SPEC_NOTES.md) — every deliberate deviation from the
   v2.0 draft, with symptom → cause → decision → verification → escape hatch.
 
