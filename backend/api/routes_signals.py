@@ -158,6 +158,19 @@ async def signal_history(limit: int = 72) -> dict:
     return manager.history_payload(limit)
 
 
+@router.get("/api/signal/calibration")
+async def calibration(asset: str | None = None) -> dict:
+    """The evidence ledger: which inputs have been predicting, and how well.
+
+    Per source: decayed hit rate (``reliability``), its log-odds ``weight``,
+    the sample count and a verdict (follow / fade / noise); per asset: the
+    calibration table (claimed vs realised confidence), the Brier score and
+    whether the ledger is already deciding the side.
+    """
+    manager = get_manager()
+    return manager.ledger.report(asset)
+
+
 @router.get("/api/signal/outcomes")
 async def outcomes(limit: int = 72) -> dict:
     manager = get_manager()

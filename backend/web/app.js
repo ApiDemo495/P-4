@@ -71,7 +71,7 @@ const state = {
 };
 
 /* ------------------------------------------------------------------ utils */
-const fmtPct = (v) => `${(v * 100).toFixed(0)}%`;
+const fmtPct = (v) => (v === null || v === undefined || Number.isNaN(Number(v))) ? "—" : `${(Number(v) * 100).toFixed(0)}%`;
 const fmtSigned = (v, d = 3) => (v >= 0 ? "+" : "") + Number(v).toFixed(d);
 
 function pctClass(v) {
@@ -588,9 +588,38 @@ function renderPredictionDetail(prediction) {
       ? `<div class="detail-line">brain: ${escapeHtml(String(detail.brain.status ?? "—"))} · gain ${fmtSigned(detail.brain.gain ?? 0, 3)} · ${escapeHtml(String(detail.brain.message || ""))}</div>`
       : "") +
     crowdDetailHtml(detail.crowd) +
+    learnedDetailHtml(detail.learned) +
     (detail.formula_stats
       ? `<div class="muted" style="font-size:11px">per-formula history: ${Object.keys(detail.formula_stats).length} formulas tracked</div>`
       : "");
+}
+
+/* Learned reliability (Round N): which sources have actually been right on
+   this asset, and whether that record — not the spec recipe — decided the
+   side.  Shown honestly: watch-only until enough windows are scored. */
+function learnedDetailHtml(learned) {
+  if (!learned) return "";
+  const scored = learned.scored ?? 0;
+  const need = learned.min_samples ?? 30;
+  if (!learned.active) {
+    const why = learned.handed_back
+      ? `the spec recipe is scoring better right now (ledger ${fmtPct(learned.ledger_hit_rate)} vs spec ${fmtPct(learned.spec_hit_rate)}) — ledger is watch-only`
+      : scored < need
+        ? `watch-only until ${need} windows are scored on this asset (${scored} so far)`
+        : "watch-only";
+    return `<div><div class="logic-h">Learned reliability</div><div class="detail-line muted">${escapeHtml(why)}</div></div>`;
+  }
+  const row = (v, cls) =>
+    `<li><span class="trace-label">${escapeHtml(v.source)} ${(v.vote === "up" || v.vote > 0) ? "▲" : "▼"}</span>` +
+    `<b class="${cls}">${fmtPct(v.reliability)} right · n ${Number(v.n ?? 0).toFixed(0)}</b></li>`;
+  const rows = (learned.for || []).slice(0, 5).map((v) => row(v, "pos")).join("") +
+    (learned.against || []).slice(0, 3).map((v) => row(v, "neg")).join("");
+  const realised = learned.realised_at_this_confidence;
+  return `<div><div class="logic-h">Learned reliability decided this side</div>` +
+    `<div class="detail-line">${scored} windows scored · ledger ${fmtPct(learned.ledger_hit_rate)} right vs spec recipe ${fmtPct(learned.spec_hit_rate)} · ` +
+    `earned confidence <b>${fmtPct(learned.p_side)}</b>` +
+    (realised !== null && realised !== undefined ? ` (this bucket realised ${fmtPct(realised)})` : "") +
+    `</div><ul class="logic-trace">${rows}</ul></div>`;
 }
 
 /* What the crowd was feeling when this side was locked, and whether that was

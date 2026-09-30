@@ -501,6 +501,7 @@ def detail(
     brain: dict | None = None,
     crowd: dict | None = None,
     formula_count: int = 0,
+    learned: dict | None = None,
 ) -> dict:
     """Everything behind the side, at the resolution the engine produced it.
 
@@ -527,6 +528,9 @@ def detail(
         # What the crowd was feeling when this side was locked, and whether that
         # feeling was strong enough to dampen the confidence.
         "crowd": dict(crowd or {}),
+        # Round N: the evidence ledger's verdict - which sources it trusted for
+        # this side, how reliable each has been, and whether it was in charge.
+        "learned": dict(learned or {}),
     }
 
 

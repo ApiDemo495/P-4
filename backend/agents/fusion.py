@@ -59,6 +59,8 @@ class FusionResult:
     calibration: float = 1.0
     crowd_adjustment: float = 1.0
     crowd_note: str = ""
+    learned: dict = field(default_factory=dict)
+    spec_score: float = 0.0
 
     # -- binary direction fields (HOLD was removed) ----------------------
     @property
@@ -95,6 +97,8 @@ class FusionResult:
             "calibration": self.calibration,
             "crowd_adjustment": round(self.crowd_adjustment, 4),
             "crowd_note": self.crowd_note,
+            "learned": self.learned,
+            "spec_score": round(self.spec_score, 4),
         }
         # Kept for the two clients: "lean" now always equals the decision,
         # because there is no third state to lean away from.
@@ -122,6 +126,7 @@ def fuse(
     consensus_voters: int = 0,
     recent_accuracy: dict | None = None,
     crowd: dict | None = None,
+    learned: dict | None = None,
 ) -> FusionResult:
     """Combine the Drosophila brain with the available AI agents.
 
@@ -285,6 +290,34 @@ def fuse(
     confidence = raw_confidence * hsi_adjustment
     confidence = max(0.0, min(0.95, confidence))
 
+    # --- learned evidence (Round N) -------------------------------------
+    # Once the evidence ledger has scored enough windows it knows which of
+    # the inputs above actually predict the next minute.  Its verdict then
+    # decides the side, and its calibrated probability bounds the confidence:
+    # the engine may not claim more certainty than its own record supports.
+    spec_score = score
+    learned_note = ""
+    learned = learned or {}
+    if learned.get("active") and learned.get("side") in (BUY, SELL):
+        score = float(learned.get("score") or 0.0)
+        p_side = float(learned.get("p_side") or 0.5)
+        realised = learned.get("realised_at_this_confidence")
+        # The printed confidence is the earned probability of this side
+        # (already replaced by the realised hit rate of its bucket once the
+        # bucket has a record) - neither the spec recipe's optimism nor its
+        # pessimism about inputs the ledger has shown to be noise.
+        earned = float(realised) if realised is not None else p_side
+        confidence = max(0.05, min(0.95, earned))
+        flipped = (spec_score > 0) != (score > 0) and spec_score != 0
+        top = ", ".join(f"{r['source']} {r['reliability']:.0%}" for r in (learned.get("for") or [])[:3])
+        learned_note = (
+            f"learned evidence decides ({learned.get('scored')} windows scored): "
+            f"P({learned['side']}) {p_side:.0%}"
+            + (f", realised {float(realised):.0%} at this confidence" if realised is not None else "")
+            + (f"; overrides the spec recipe ({spec_score:+.2f})" if flipped else "")
+            + (f"; strongest: {top}" if top else "")
+        )
+
     # ------------------------------------------------------------------
     # Decision: always a side (Section 10.1, amended to binary)
     # ------------------------------------------------------------------
@@ -320,6 +353,7 @@ def fuse(
         consensus_note=consensus_note,
         accuracy_note=accuracy_note,
         crowd_note=crowd_note,
+        learned_note=learned_note,
     )
 
     return FusionResult(
@@ -338,6 +372,9 @@ def fuse(
         calibration=round(calibration, 4),
         crowd_adjustment=round(crowd_adjustment, 4),
         crowd_note=crowd_note,
+        learned=learned if learned.get("active") else {"active": False, "scored": learned.get("scored", 0),
+                                                       "min_samples": learned.get("min_samples")},
+        spec_score=spec_score,
     )
 
 
@@ -354,8 +391,11 @@ def _explain(
     consensus_note: str = "",
     accuracy_note: str = "",
     crowd_note: str = "",
+    learned_note: str = "",
 ) -> str:
     parts: list[str] = []
+    if learned_note:
+        parts.append(learned_note)
 
     ranked = sorted(
         contributions.items(),

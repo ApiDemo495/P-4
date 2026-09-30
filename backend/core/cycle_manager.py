@@ -27,10 +27,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
 import time
+from pathlib import Path
 from collections import deque
 from dataclasses import dataclass, field
 
+from backend.agents import fusion as fusion_module
 from backend.agents.orchestrator import AgentOrchestrator
 from backend.brain.brain import Brain
 from backend.core import config as cfg
@@ -41,6 +44,7 @@ from backend.core.prediction import build as build_prediction
 from backend.core.emotions import EmotionMonitor, analyze as analyze_emotions, compact as compact_emotions
 from backend.core.prediction import detail as prediction_detail
 from backend.core.prediction import build_reasoning, consensus
+from backend.core.calibration import EvidenceLedger
 from backend.core.frozen_snapshot import FrozenMarketSnapshot
 from backend.core.redis_bus import Store
 from backend.core.timebase import now_us
@@ -131,6 +135,12 @@ class CycleManager:
         self.lock = SignalLockController()
 
         self.outcomes = OutcomeBuffer()
+        # Round N: which inputs actually predict - learned from scored windows.
+        self.ledger = EvidenceLedger(
+            Path(os.environ.get("CALIBRATION_PATH") or (cfg.REPO_ROOT / ".run" / "calibration.json"))
+        )
+        self._last_votes: dict[str, int] = {}
+        self._last_learned: dict = {}
         #: (side, outcome) pairs, so the accuracy panel can say which side the
         #: engine has actually been getting right rather than only the total.
         self._side_outcomes: deque[tuple[str, float]] = deque(maxlen=40)
@@ -598,24 +608,7 @@ class CycleManager:
             if result.status.value == "TIMEOUT":
                 warnings.append(f"{name} timed out this cycle.")
 
-        from backend.agents import fusion as fusion_module
-
-        agreement = consensus(formula_result.values, self._directional_map())
-        fusion = fusion_module.fuse(
-            agents=agent_results,
-            ccs_value=float(formula_result.values.get("CCSv2", 0.0)),
-            ccs_confidence=formula_result.ccs_confidence,
-            hsi=float(formula_result.values.get("HSI", 0.0)),
-            settings=self.settings,
-            warnings=warnings,
-            insufficient_evidence=formula_result.insufficient_evidence,
-            emergency=self.lock.emergency_active(),
-            previous_signal=self._previous_direction(),
-            formula_consensus=agreement["score"],
-            consensus_voters=agreement["voters"],
-            recent_accuracy=self.accuracy_block(),
-            crowd=self.emotion_locked,
-        )
+        fusion = self._fuse(snapshot, formula_result, agent_results, warnings)
         self.last_fusion = fusion.to_dict()
         self.conviction_note = fusion_module.conviction_note(fusion.direction, fusion.confidence)
         self.warnings = warnings
@@ -690,24 +683,7 @@ class CycleManager:
             if result.status.value == "TIMEOUT":
                 warnings.append(f"{name} timed out this cycle.")
 
-        from backend.agents import fusion as fusion_module
-
-        agreement = consensus(formula_result.values, self._directional_map())
-        fusion = fusion_module.fuse(
-            agents=agent_results,
-            ccs_value=float(formula_result.values.get("CCSv2", 0.0)),
-            ccs_confidence=formula_result.ccs_confidence,
-            hsi=float(formula_result.values.get("HSI", 0.0)),
-            settings=self.settings,
-            warnings=warnings,
-            insufficient_evidence=formula_result.insufficient_evidence,
-            emergency=self.lock.emergency_active(),
-            previous_signal=self._previous_direction(),
-            formula_consensus=agreement["score"],
-            consensus_voters=agreement["voters"],
-            recent_accuracy=self.accuracy_block(),
-            crowd=self.emotion_locked,
-        )
+        fusion = self._fuse(snapshot, formula_result, agent_results, warnings)
         self.last_fusion = fusion.to_dict()
         self.conviction_note = fusion_module.conviction_note(fusion.direction, fusion.confidence)
         self.warnings = warnings
@@ -817,22 +793,7 @@ class CycleManager:
             if result.status.value == "TIMEOUT":
                 self.warnings.append(f"{name} timed out this cycle.")
 
-        agreement = consensus(formula_result.values, self._directional_map())
-        fusion = fusion_module.fuse(
-            agents=agent_results,
-            ccs_value=float(formula_result.values.get("CCSv2", 0.0)),
-            ccs_confidence=formula_result.ccs_confidence,
-            hsi=float(formula_result.values.get("HSI", 0.0)),
-            settings=self.settings,
-            warnings=self.warnings,
-            insufficient_evidence=formula_result.insufficient_evidence,
-            emergency=self.lock.emergency_active(),
-            previous_signal=self._previous_direction(),
-            formula_consensus=agreement["score"],
-            consensus_voters=agreement["voters"],
-            recent_accuracy=self.accuracy_block(),
-            crowd=self.emotion_locked,
-        )
+        fusion = self._fuse(snapshot, formula_result, agent_results, self.warnings)
         self.last_fusion = fusion.to_dict()
         self.conviction_note = fusion_module.conviction_note(fusion.direction, fusion.confidence)
 
@@ -1259,6 +1220,9 @@ class CycleManager:
             # direction must never be scored as a win or a loss.
             log.warning("outcome skipped: unknown signal %r", signal.signal)
             return
+        if self._last_votes:
+            self.ledger.remember(signal.asset, signal.cycle_number, self._last_votes,
+                                 float((self._last_learned or {}).get("p_up") or 0.5))
         task = asyncio.create_task(self._evaluate_outcome(signal, snapshot))
         self._outcome_tasks.add(task)
         task.add_done_callback(self._outcome_tasks.discard)
@@ -1282,7 +1246,18 @@ class CycleManager:
             outcome = 1.0 if exit_price > entry else -1.0
         else:
             outcome = 1.0 if exit_price < entry else -1.0
-        self.outcomes.append(outcome, abs(change_bps))
+        # Signed P&L of the *position*, not the raw move: a SELL into a
+        # +20 bps move is -20 bps.  (It used to print "LOSS +198 bps".)
+        pnl_bps = change_bps if signal.signal == "BUY" else -change_bps
+        self.outcomes.append(outcome, pnl_bps)
+        learned_update = self.ledger.score(
+            signal.asset, signal.cycle_number,
+            None if exit_price == entry else exit_price > entry,
+        )
+        if learned_update:
+            log.info("ledger scored window %s: %s (%d sources right, %d wrong)",
+                     signal.cycle_number, learned_update["actual"],
+                     learned_update["sources_right"], learned_update["sources_wrong"])
         self._side_outcomes.append((signal.signal, outcome))
         log.info(
             "outcome %s on %s: %+.1f bps (%s)",
@@ -1299,7 +1274,8 @@ class CycleManager:
                     "asset": signal.asset,
                     "signal": signal.signal,
                     "outcome": outcome,
-                    "pnl_bps": round(change_bps, 2),
+                    "pnl_bps": round(pnl_bps, 2),
+                    "move_bps": round(change_bps, 2),
                     "win_rate": round(self.outcomes.win_rate(), 4),
                     "entry": entry,
                     "exit": exit_price,
@@ -1530,6 +1506,62 @@ class CycleManager:
     # ==================================================================
     # Prediction block (freshness + reasoning + 1:1 levels)
     # ==================================================================
+    def _fuse(self, snapshot, formula_result, agent_results: dict, warnings: list) -> fusion_module.FusionResult:
+        """The spec recipe, then the evidence ledger's verdict on top of it.
+
+        Pass 1 is the specification's fusion (brain 0.40 + agents); its score
+        is itself one of the ledger's sources.  Pass 2 hands the ledger's
+        weighted verdict to ``fuse`` which, once the ledger is active, lets it
+        decide the side and cap the confidence at what has been earned.
+        """
+        agreement = consensus(formula_result.values, self._directional_map())
+        common = dict(
+            agents=agent_results,
+            ccs_value=float(formula_result.values.get("CCSv2", 0.0)),
+            ccs_confidence=formula_result.ccs_confidence,
+            hsi=float(formula_result.values.get("HSI", 0.0)),
+            settings=self.settings,
+            warnings=warnings,
+            insufficient_evidence=formula_result.insufficient_evidence,
+            emergency=self.lock.emergency_active(),
+            previous_signal=self._previous_direction(),
+            formula_consensus=agreement["score"],
+            consensus_voters=agreement["voters"],
+            recent_accuracy=self.accuracy_block(),
+            crowd=self.emotion_locked,
+        )
+        spec = fusion_module.fuse(**common)
+        try:
+            niv = float(self.news.current_niv())
+        except Exception:  # noqa: BLE001
+            niv = 0.0
+        crowd_tone = 0.0
+        try:
+            crowd_tone = float((self.emotion_locked or {}).get("tone") or
+                               ((self.emotion_locked or {}).get("formula_agreement") or {}).get("crowd_tone") or 0.0)
+        except (TypeError, ValueError):
+            crowd_tone = 0.0
+        votes = EvidenceLedger.votes_from(
+            formula_values=formula_result.values,
+            directional=self._directional_map(),
+            ccs_value=float(formula_result.values.get("CCSv2", 0.0)),
+            agents=agent_results,
+            spec_score=spec.score,
+            niv=niv,
+            crowd_tone=crowd_tone,
+            candles=snapshot.candles(self.asset) if snapshot is not None else None,
+            ticks=snapshot.ticks(self.asset) if snapshot is not None else None,
+        )
+        learned = self.ledger.evaluate(self.asset, votes)
+        self._last_votes = votes
+        self._last_learned = learned
+        if not learned.get("active"):
+            spec.learned = {"active": False, "scored": learned.get("scored", 0),
+                            "min_samples": learned.get("min_samples"), "p_up": learned.get("p_up"),
+                            "voters": learned.get("voters", 0), "watching": len(votes)}
+            return spec
+        return fusion_module.fuse(**common, learned=learned)
+
     @staticmethod
     def _directional_map() -> dict[str, str]:
         """name -> category, for the formulas that carry a direction.
@@ -1824,6 +1856,7 @@ class CycleManager:
             },
             agents=agents,
             brain=self.brain_explain_payload(),
+            learned=dict((self.last_fusion or {}).get("learned") or {}),
             crowd={
                 "available": bool(crowd.get("available")),
                 "dominant": crowd_dominant.get("label"),

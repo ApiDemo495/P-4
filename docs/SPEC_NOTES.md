@@ -980,3 +980,50 @@ and prints the diff, otherwise the note under the panel counts the windows it
 verified (changes only at boundaries); (2) the Engine line and `/api/health`
 / `/api/system/config` carry `build` = the git short hash, so "is the
 Codespace on the new code?" is answered at a glance.
+
+## N — "Predictions are not as accurate as they should be"
+
+What was wrong, honestly: the spec recipe (0.40/0.25/0.20/0.15 + HSI) is a
+*fixed* weighting. It cannot notice that, on the asset in front of it, some of
+the 22 formulas are right 70 % of the time and others are coin-flips or even
+reliably inverted — and it summed correlated formulas as if they were
+independent witnesses, so it printed 80–100 % confidence for windows that
+realised ~51 %.
+
+What changed (`backend/core/calibration.py`, `EvidenceLedger`):
+
+* Every locked window records the directional vote of each source
+  (`f:<formula>`, `brain:CCSv2`, `agent:<name>`, `spec:fusion`, `news:NIV`,
+  `crowd:tone`, `micro:ret_1m|ret_5m|order_flow`); when the window is scored
+  (60 s later, signed P&L — a SELL into a rising tape is now a loss, which the
+  old unsigned buffer hid) every source gets an exponentially decayed hit or
+  miss (`CALIBRATION_HALF_LIFE`, default 120 windows).
+* Weight = log-odds of the Beta-posterior reliability (prior 4, clipped ±1.5).
+  A 50 % source weighs 0; a reliably wrong one votes against itself. Sources
+  whose edge is not significant at 2 SE pull at quarter weight and the sum is
+  shrunk by √(number of pulling sources) — correlated evidence is not counted
+  twice.
+* After `CALIBRATION_MIN_SAMPLES` (30) scored windows per asset the sign of the
+  weighted vote decides BUY/SELL (`fusion.fuse(..., learned=)`; the spec score
+  is kept as `spec_score`). The printed confidence is the *realised* hit rate
+  of that confidence bucket once the bucket has ≥15 windows — the engine may
+  not claim more than its own record supports.
+* Guardrail: the ledger compares its own recent hit rate with the spec
+  recipe's (`spec:fusion` is itself a scored source); if the ledger is worse
+  by >2 pts it hands control back and says so.
+* State: `.run/calibration.json` (survives restarts; `CALIBRATION_PATH`
+  override). `GET /api/signal/calibration?asset=` → per-source reliability,
+  weight, n, verdict (follow/fade/noise), claimed-vs-realised buckets, Brier,
+  `ledger_hit_rate`, `spec_hit_rate`. Prediction detail carries `learned`;
+  the reasoning line starts with "learned evidence decides (N windows scored)
+  …"; the dashboard shows a "Learned reliability" block.
+* Tests: `backend/tests/test_calibration.py` (synthetic good / inverted /
+  noise sources: spec follows the inverted source <45 %, ledger >55 %;
+  activation threshold; disabled; flat windows not scored; buckets;
+  persistence; fusion override + confidence cap).
+
+Measured in the sandbox (built-in simulator, TIME_SCALE=20, 118 windows):
+spec recipe 53.8 % right, ledger 69.5 %, Brier 0.225, claimed buckets within
+~5 pts of realised. That is the simulator, not the market — the honest
+expectation on a real 1-minute tape is a small edge over 50 %, and the
+dashboard now prints the realised rate rather than a hopeful one.

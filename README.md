@@ -243,6 +243,7 @@ bash frontend/run_web.sh --dev
 | `bash run.sh --setup-only` | installs everything, starts nothing |
 | `bash run.sh --port 8020` | uses a different port (then forward that one instead) |
 | `CYCLE_SECONDS=60` | length of one prediction window; 60 keeps it locked to the UTC minute |
+| `CALIBRATION_ENABLED=1` | learned reliability: after `CALIBRATION_MIN_SAMPLES` (30) scored windows per asset the per-source hit-rate ledger decides the side and the confidence shown is the realised rate; `CALIBRATION_HALF_LIFE=120` windows of memory; inspect with `GET /api/signal/calibration?asset=BTC` |
 | `PREDICTION_MAX_AGE_SECONDS=0` | `0` = as long as its own window (60 s + a 5 s grace); set a number to pin a hard cap |
 | `RR_TARGET=1.0` | reward:risk target; 1.0 = take-profit and stop-loss are equidistant |
 | `OUTCOME_HORIZON_SECONDS=0` | `0` = score each prediction one window later (60 s) |

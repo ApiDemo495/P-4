@@ -67,7 +67,9 @@ def discounted_value(outcomes: np.ndarray, gamma: float = GAMMA) -> float:
     if outcomes is None or outcomes.size == 0:
         return 0.0
     o = outcomes[:, 0]
-    m = outcomes[:, 1]
+    # Magnitude only: the buffer now stores the *signed* position P&L (Round
+    # N), and the sign is already carried by the outcome column.
+    m = np.abs(outcomes[:, 1])
     r = o.size
     discounts = gamma ** np.arange(r - 1, -1, -1, dtype=np.float64)
     denom = float(np.sum(discounts))
