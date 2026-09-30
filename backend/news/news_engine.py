@@ -127,14 +127,14 @@ class NewsEngine:
         polled: dict[str, int] = {}
 
         # --- CryptoPanic: every 30 s -----------------------------------
-        if self.settings.cryptopanic_key and (
+        if self.settings.rings["cryptopanic"] and (
             force or (now - self._last_cryptopanic) >= self.settings.news_poll_seconds
         ):
             polled["cryptopanic"] = await self._poll_cryptopanic()
             self._last_cryptopanic = now
 
         # --- NewsAPI: every 60 s ---------------------------------------
-        if self.settings.newsapi_key and (
+        if self.settings.rings["newsapi"] and (
             force or (now - self._last_newsapi) >= self.settings.newsapi_poll_seconds
         ):
             polled["newsapi"] = await self._poll_newsapi()
@@ -155,30 +155,40 @@ class NewsEngine:
 
     # ------------------------------------------------------------------
     async def _poll_cryptopanic(self) -> int:
-        assert self._client is not None
-        try:
-            items = await cryptopanic_source.fetch(self._client, self.settings)
-            self.cache.providers["cryptopanic"] = f"ok ({len(items)})"
-            self.status.cryptopanic = "ok"
-            return self.cache.add(items)
-        except Exception as exc:  # noqa: BLE001
-            self.status.cryptopanic = "error"
-            self.cache.providers["cryptopanic"] = str(exc)
-            log.info("CryptoPanic unavailable: %s", exc)
-            return 0
+        return await self._poll_with_ring("cryptopanic", cryptopanic_source)
 
     async def _poll_newsapi(self) -> int:
+        return await self._poll_with_ring("newsapi", newsapi_source)
+
+    async def _poll_with_ring(self, provider: str, source) -> int:
+        """Fetch with the primary key; on a rejection, rate limit or error
+        cool that key in the ring and answer with the next one (Round O)."""
         assert self._client is not None
-        try:
-            items = await newsapi_source.fetch(self._client, self.settings)
-            self.status.newsapi = "ok"
-            self.cache.providers["newsapi"] = f"ok ({len(items)})"
-            return self.cache.add(items)
-        except Exception as exc:  # noqa: BLE001
-            self.status.newsapi = "error"
-            self.cache.providers["newsapi"] = str(exc)
-            log.info("NewsAPI unavailable: %s", exc)
-            return 0
+        ring = self.settings.rings[provider]
+        failures: list[str] = []
+        for key in ring.candidates():
+            slot = ring.slot_of(key)
+            try:
+                items = await source.fetch(self._client, self.settings, key=key)
+            except PermissionError as exc:
+                ring.report_failure(key, "rejected", str(exc))
+                failures.append(f"key {slot} rejected")
+            except source.RateLimited as exc:
+                cooled = ring.report_failure(key, "rate_limited", str(exc))
+                failures.append(f"key {slot} rate limited ({cooled:.0f}s)")
+            except Exception as exc:  # noqa: BLE001
+                ring.report_failure(key, "error", str(exc))
+                failures.append(f"key {slot}: {exc}")
+            else:
+                ring.report_success(key)
+                note = f"ok ({len(items)})" + (f" via key {slot}" if slot > 1 else "")
+                self.cache.providers[provider] = note
+                setattr(self.status, provider, "ok")
+                return self.cache.add(items)
+            log.info("%s %s", source.PROVIDER, failures[-1])
+        setattr(self.status, provider, "error")
+        self.cache.providers[provider] = "; ".join(failures) or "all keys cooling down"
+        return 0
 
     async def _poll_rss(self) -> int:
         try:
@@ -256,8 +266,8 @@ class NewsEngine:
         sources = sum(
             1
             for flag in (
-                self.settings.cryptopanic_key,
-                self.settings.newsapi_key,
+                self.settings.rings["cryptopanic"].configured,
+                self.settings.rings["newsapi"].configured,
                 bool(self.settings.rss_feeds),
             )
             if flag

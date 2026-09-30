@@ -12,6 +12,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from backend.agents.keyring import ENV_NAMES as _RING_ENV, KeyRing
+
 # --------------------------------------------------------------------------
 # Paths
 # --------------------------------------------------------------------------
@@ -183,6 +185,11 @@ class Settings:
     brain_health_interval_seconds: int = 300
 
     # Agents
+    #: Up to three keys per provider (slot 1 = primary, 2-3 = temporary
+    #: stand-ins with automatic failover) - see backend/agents/keyring.py.
+    #: The scalar ``*_key`` fields below mirror the primary for read-only
+    #: "is it configured" checks; calls always go through the ring.
+    rings: dict = field(default_factory=lambda: {p: KeyRing.from_env(p) for p in tuple(_RING_ENV)})
     gemini_api_key: str = field(default_factory=lambda: _env("GEMINI_API_KEY"))
     gemini_model: str = field(default_factory=lambda: _env("GEMINI_MODEL", "gemini-1.5-flash"))
     gemini_timeout_seconds: float = 7.0

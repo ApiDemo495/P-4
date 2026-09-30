@@ -26,9 +26,15 @@ PROVIDER = "NewsAPI"
 QUERY = "bitcoin OR ethereum OR crypto OR gold OR paxg"
 
 
-async def fetch(client: httpx.AsyncClient, settings=None, limit: int = 20) -> list[NewsItem]:
+class RateLimited(RuntimeError):
+    """HTTP 429 - the key ring cools this key and tries the next one."""
+
+
+async def fetch(client: httpx.AsyncClient, settings=None, limit: int = 20,
+                key: str | None = None) -> list[NewsItem]:
     settings = settings or cfg.SETTINGS
-    if not settings.newsapi_key:
+    key = key if key is not None else settings.rings["newsapi"].current()
+    if not key:
         raise RuntimeError("no NewsAPI key configured")
 
     params = {
@@ -36,13 +42,13 @@ async def fetch(client: httpx.AsyncClient, settings=None, limit: int = 20) -> li
         "sortBy": "publishedAt",
         "language": "en",
         "pageSize": limit,
-        "apiKey": settings.newsapi_key,
+        "apiKey": key,
     }
     response = await client.get(API_URL, params=params, timeout=8.0)
     if response.status_code == 401:
         raise PermissionError("NewsAPI rejected the API key")
     if response.status_code == 429:
-        raise RuntimeError("NewsAPI rate limit reached")
+        raise RateLimited("NewsAPI rate limit reached")
     response.raise_for_status()
 
     payload = response.json()

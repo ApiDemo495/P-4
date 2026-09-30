@@ -1,4 +1,4 @@
-/* Settings screen: key testing, model upload, brain control, news sources. */
+/* Settings screen: key rings (3 slots + failover), up to 3 local models, brain control, news sources. */
 
 const $ = (id) => document.getElementById(id);
 
@@ -32,27 +32,82 @@ document.querySelectorAll("[data-reveal]").forEach((btn) => {
 
 document.querySelectorAll("[data-test]").forEach((btn) => {
   btn.onclick = async () => {
-    const slot = btn.dataset.test;
+    const provider = btn.dataset.test;
+    const slot = btn.dataset.slot || "1";
     const key = $(btn.dataset.input).value.trim();
-    line(`status-${slot}`, "testing…", "warn");
+    line(`status-${provider}`, `testing slot ${slot}…`, "warn");
     btn.disabled = true;
-    const res = await getJSON(`/api/agents/${slot}/test`, {
+    const res = await getJSON(`/api/agents/${provider}/test`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key }),
     });
     btn.disabled = false;
-    if (res.error) return line(`status-${slot}`, `❌ ${res.error}`, "err");
-    if (res.valid) return line(`status-${slot}`, `✅ ${res.detail || "valid"}`, "ok");
-    line(`status-${slot}`, `❌ ${res.error || "invalid"}`, "err");
+    if (res.error) return line(`status-${provider}`, `❌ slot ${slot}: ${res.error}`, "err");
+    if (res.valid) return line(`status-${provider}`, `✅ slot ${slot}: ${res.detail || "valid"}`, "ok");
+    line(`status-${provider}`, `❌ slot ${slot}: ${res.error || "invalid"}`, "err");
   };
+});
+
+const RING_PROVIDERS = ["gemini", "github", "cryptopanic", "newsapi"];
+
+/* Which slot each ring is using right now, and why the others are resting. */
+async function refreshRings() {
+  const res = await getJSON("/api/settings/keys");
+  if (res.error) return;
+  for (const provider of RING_PROVIDERS) {
+    const ring = (res.rings || {})[provider];
+    if (!ring || !ring.slots) continue;
+    ring.slots.forEach((slot) => {
+      const role = $(`role-${provider}-${slot.slot}`);
+      const input = $(`key-${provider}-${slot.slot}`);
+      if (!role || !input) return;
+      role.className = "key-role" + (slot.state === "in use" ? " active" : slot.state === "cooling" ? " cooling" : "");
+      role.textContent = slot.slot === 1 ? "primary" : `backup ${slot.slot - 1}`;
+      role.title = slot.state === "cooling"
+        ? `cooling ${slot.cooldown_seconds}s — ${slot.reason}`
+        : slot.state;
+      if (slot.configured && !input.value && !input.dataset.touched) input.placeholder = `${slot.masked} (saved)`;
+    });
+    if (!ring.configured) {
+      line(`status-${provider}`, "no key saved", "");
+    } else {
+      const active = ring.slots.find((s) => s.slot === ring.active_slot);
+      const cooling = ring.slots.filter((s) => s.state === "cooling")
+        .map((s) => `slot ${s.slot} cooling ${s.cooldown_seconds}s (${s.reason})`).join(" · ");
+      line(`status-${provider}`,
+        (ring.all_cooling ? "⏸ all keys cooling down" : `▶ using slot ${ring.active_slot} (${active ? active.masked : ""})`) +
+        (ring.on_primary ? " · on primary" : ring.all_cooling ? "" : " · primary will be retried automatically") +
+        (cooling ? ` · ${cooling}` : "") +
+        ` · ${ring.configured_slots}/3 configured`,
+        ring.all_cooling ? "warn" : ring.on_primary ? "ok" : "warn");
+    }
+  }
+}
+
+document.querySelectorAll("input[data-provider]").forEach((input) => {
+  input.addEventListener("input", () => { input.dataset.touched = "1"; });
 });
 
 $("save-keys").onclick = async () => {
   const persist = $("persist").checked;
-  const slots = ["gemini", "github", "cryptopanic", "newsapi", "neuprint", "cave"];
   const saved = [];
-  for (const slot of slots) {
+  // Three-slot providers: send all three boxes; an untouched box keeps the
+  // stored key, an emptied (touched) box clears that slot.
+  for (const provider of RING_PROVIDERS) {
+    const boxes = [1, 2, 3].map((n) => $(`key-${provider}-${n}`));
+    if (!boxes.some((b) => b && b.dataset.touched)) continue;
+    for (const box of boxes) {
+      if (!box || !box.dataset.touched) continue;
+      const res = await getJSON(`/api/settings/keys/${provider}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: box.value.trim(), persist, slot: Number(box.dataset.slot) }),
+      });
+      if (!res.error) saved.push(`${provider} slot ${box.dataset.slot}`);
+    }
+  }
+  for (const slot of ["neuprint", "cave"]) {
     const input = $(`key-${slot}`);
     if (!input || !input.value.trim()) continue;
     const res = await getJSON(`/api/settings/keys/${slot}`, {
@@ -69,51 +124,73 @@ $("save-keys").onclick = async () => {
     await getJSON("/api/brain/reconnect", { method: "POST" });
     await refreshBrain();
   }
-  setTimeout(() => { location.href = "/"; }, 700);
+  await refreshRings();
+  setTimeout(() => { location.href = "/"; }, 900);
 };
 
-/* --------------------------------------------------------- local model */
+/* --------------------------------------------------------- local models */
 async function refreshLocal() {
   const res = await getJSON("/api/agents/local/status");
   if (res.error) return line("local-status", res.error, "err");
   const mem = res.memory || {};
   const ready = ["ACTIVE", "STUB"].includes(res.status);
   const text =
-    `${ready ? "✅" : "❌"} ${res.model || "No model loaded"}` +
+    `${ready ? "✅" : "❌"} ${res.models_loaded || 0}/3 models loaded` +
+    (res.model ? ` · ${res.model}` : "") +
     ` · status ${res.status}` +
-    (res.parameter_count ? ` · ${res.parameter_count}` : "") +
     (mem.rss_human ? ` · RAM ${mem.rss_human}` : "") +
     (res.detail ? ` · ${res.detail}` : "");
   line("local-status", text, ready ? "ok" : "");
+  (res.slots || []).forEach((slot) => {
+    const el = $(`model-status-${slot.slot}`);
+    if (!el) return;
+    if (!slot.ready) {
+      line(`model-status-${slot.slot}`,
+        slot.status === "ERROR" ? `❌ ${slot.detail || slot.last_error || "crashed"}` : (slot.file ? `unloaded · ${slot.file}` : "empty"),
+        slot.status === "ERROR" ? "err" : "");
+      return;
+    }
+    line(`model-status-${slot.slot}`,
+      `✅ ${slot.model || "model"}` +
+      (slot.parameter_count ? ` · ${slot.parameter_count}` : "") +
+      (slot.kind ? ` · ${slot.kind}` : "") +
+      (slot.last_decision ? ` · last ${slot.last_decision} ${Math.round((slot.last_confidence || 0) * 100)}% in ${slot.last_latency_ms}ms` : ` · ${slot.detail || "ready"}`),
+      slot.stub ? "warn" : "ok");
+  });
 }
 
-$("upload-model").onclick = async () => {
-  const file = $("model-file").files[0];
-  if (!file) return line("upload-status", "Pick a .gguf or .onnx file first", "warn");
-  line("upload-status", `uploading ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`, "warn");
-  const form = new FormData();
-  form.append("file", file);
-  const res = await getJSON("/api/agents/local/upload", { method: "POST", body: form });
-  if (res.error) return line("upload-status", `❌ ${res.error}`, "err");
-  if (res.success) {
-    line("upload-status",
-      `✅ ${res.model_name} (${res.parameter_count}) ready · test inference ${res.test_inference_ms}ms`,
-      "ok");
-  } else {
-    line("upload-status", `❌ ${res.error}`, "err");
-  }
-  refreshLocal();
-};
+document.querySelectorAll("[data-upload]").forEach((btn) => {
+  btn.onclick = async () => {
+    const slot = btn.dataset.upload;
+    const file = $(`model-file-${slot}`).files[0];
+    if (!file) return line(`model-status-${slot}`, "Pick a .gguf or .onnx file first", "warn");
+    line(`model-status-${slot}`, `uploading ${file.name} (${(file.size / 1048576).toFixed(1)} MB) into slot ${slot}…`, "warn");
+    btn.disabled = true;
+    const form = new FormData();
+    form.append("file", file);
+    const res = await getJSON(`/api/agents/local/upload?slot=${slot}`, { method: "POST", body: form });
+    btn.disabled = false;
+    if (res.error) line(`model-status-${slot}`, `❌ ${res.error}`, "err");
+    else if (res.success) {
+      line(`model-status-${slot}`,
+        `✅ ${res.model_name} (${res.parameter_count}) ready · test inference ${res.test_inference_ms}ms`, "ok");
+    } else line(`model-status-${slot}`, `❌ ${res.error}`, "err");
+    refreshLocal();
+  };
+});
 
-$("unload-model").onclick = async () => {
-  const res = await getJSON("/api/agents/local/unload", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ delete_file: false }),
-  });
-  line("upload-status", res.error ? `❌ ${res.error}` : "model unloaded", res.error ? "err" : "ok");
-  refreshLocal();
-};
+document.querySelectorAll("[data-unload]").forEach((btn) => {
+  btn.onclick = async () => {
+    const slot = Number(btn.dataset.unload);
+    const res = await getJSON("/api/agents/local/unload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ delete_file: false, slot }),
+    });
+    line(`model-status-${slot}`, res.error ? `❌ ${res.error}` : `slot ${slot} unloaded`, res.error ? "err" : "ok");
+    refreshLocal();
+  };
+});
 
 $("stub-model").onclick = async () => {
   const res = await getJSON("/api/agents/local/stub?enabled=true", { method: "POST" });
@@ -224,11 +301,13 @@ function escapeHtml(text) {
 }
 
 (async function boot() {
+  await refreshRings();
   await refreshLocal();
   await refreshBrain();
   await refreshNews();
   await refreshSystem();
   setInterval(refreshLocal, 10000);
+  setInterval(refreshRings, 10000);
   setInterval(refreshBrain, 20000);
   setInterval(refreshNews, 20000);
 })();

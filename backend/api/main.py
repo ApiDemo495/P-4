@@ -214,8 +214,8 @@ async def system_config() -> dict:
         "configured": {
             "gemini": bool(settings.gemini_api_key),
             "github": bool(settings.github_models_token),
-            "cryptopanic": bool(settings.cryptopanic_key),
-            "newsapi": bool(settings.newsapi_key),
+            "cryptopanic": settings.rings["cryptopanic"].configured,
+            "newsapi": settings.rings["newsapi"].configured,
             "neuprint": bool(settings.neuprint_token),
             "cave": bool(settings.cave_token),
         },

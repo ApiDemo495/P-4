@@ -6,8 +6,10 @@ user cannot end up with "saved but silently useless":
     GET https://api.github.com/user                                  -> PAT valid?
     GET https://models.inference.ai.azure.com/models                 -> Models reachable?
 
-Transient 5xx responses retry three times and then disable the agent for five
-minutes instead of hammering the API every cycle.
+Transient 5xx responses retry three times and then rest *that PAT* for five
+minutes; with a second or third PAT pasted in Settings the next one answers the
+same call (``backend/agents/keyring.py``), and the primary is used again as
+soon as it recovers.
 """
 
 from __future__ import annotations
@@ -41,27 +43,30 @@ RETRIES = 3
 class GitHubAgent:
     def __init__(self, settings=None) -> None:
         self.settings = settings or cfg.SETTINGS
-        self.token = self.settings.github_models_token
+        self.ring = self.settings.rings["github"]
         self.model = self.settings.github_models_model
-        self.disabled_until = 0.0
         self.last_result: AgentResult | None = None
         self.last_error = ""
+        self.last_failover = ""
         self.calls = 0
 
     # ------------------------------------------------------------------
     @property
     def configured(self) -> bool:
-        return bool(self.token)
+        return bool(self.ring)
 
-    def set_token(self, token: str) -> None:
-        self.token = (token or "").strip()
-        self.settings.github_models_token = self.token
-        self.disabled_until = 0.0
+    @property
+    def token(self) -> str:
+        return self.ring.current()
+
+    def set_token(self, token: str, slot: int = 1) -> None:
+        self.ring.set_slot(slot, token)
+        self.settings.github_models_token = self.ring.primary
 
     def status(self) -> AgentStatus:
         if not self.configured:
             return AgentStatus.DISABLED
-        if self.disabled_until > time.time():
+        if self.ring.all_cooling():
             return AgentStatus.INACTIVE
         return AgentStatus.ACTIVE
 
@@ -72,39 +77,59 @@ class GitHubAgent:
                 agent=NAME, status=AgentStatus.DISABLED, model=self.model, weight=weight,
                 error="No GitHub PAT configured",
             )
-        if self.disabled_until > time.time():
+        keys = self.ring.candidates()
+        if not keys:
             return AgentResult(
-                agent=NAME,
-                status=AgentStatus.INACTIVE,
-                model=self.model,
-                weight=weight,
-                error=f"Temporarily unavailable, retry in {self.disabled_until - time.time():.0f}s",
+                agent=NAME, status=AgentStatus.INACTIVE, model=self.model, weight=weight,
+                error=f"All {self.ring.status()['configured_slots']} GitHub PATs cooling down, "
+                      f"retry in {self.ring.soonest_recovery():.0f}s",
             )
 
         prompt = build_cycle_prompt(context)
         started = time.perf_counter()
-        try:
-            output = await asyncio.wait_for(self._call(prompt), timeout=self.settings.github_timeout_seconds)
-        except asyncio.TimeoutError:
+        deadline = started + self.settings.github_timeout_seconds
+        failures: list[str] = []
+        output = ""
+        used = ""
+        for key in keys:
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0.5:
+                break
+            slot = self.ring.slot_of(key)
+            try:
+                output = await asyncio.wait_for(self._call(prompt, key), timeout=remaining)
+                used = key
+                self.ring.report_success(key)
+                break
+            except asyncio.TimeoutError:
+                self.ring.report_failure(key, "error", "timeout")
+                failures.append(f"PAT {slot}: timed out")
+            except PermissionError as exc:
+                self.ring.report_failure(key, "rejected", str(exc))
+                failures.append(f"PAT {slot}: rejected")
+            except RateLimited as exc:
+                cooled = self.ring.report_failure(key, "rate_limited", str(exc), exc.retry_after)
+                failures.append(f"PAT {slot}: rate limited (cooling {cooled:.0f}s)")
+            except Exception as exc:  # noqa: BLE001
+                # Transient 5xx: this PAT rests for five minutes, the next one
+                # answers now.
+                self.ring.report_failure(key, "error", str(exc), COOLDOWN_SECONDS)
+                failures.append(f"PAT {slot}: {exc}")
+            if len(keys) > 1:
+                log.warning("GitHub Models %s -> switching to the next PAT", failures[-1])
+        if not used:
+            self.last_error = "; ".join(failures) or "no PAT attempted"
+            if any("timed out" in f for f in failures):
+                status = AgentStatus.TIMEOUT
+            elif any("rejected" in f for f in failures) and not self.ring.all_cooling():
+                status = AgentStatus.ERROR
+            else:
+                status = AgentStatus.INACTIVE
             return AgentResult(
-                agent=NAME, status=AgentStatus.TIMEOUT, model=self.model, weight=weight,
-                error=f"Timed out after {self.settings.github_timeout_seconds:.0f}s",
-                latency_ms=(time.perf_counter() - started) * 1000.0,
+                agent=NAME, status=status, model=self.model, weight=weight,
+                error=self.last_error, latency_ms=(time.perf_counter() - started) * 1000.0,
             )
-        except PermissionError as exc:
-            self.last_error = str(exc)
-            return AgentResult(
-                agent=NAME, status=AgentStatus.ERROR, model=self.model, weight=weight,
-                error=str(exc), latency_ms=(time.perf_counter() - started) * 1000.0,
-            )
-        except Exception as exc:  # noqa: BLE001
-            self.last_error = str(exc)
-            self.disabled_until = time.time() + COOLDOWN_SECONDS
-            return AgentResult(
-                agent=NAME, status=AgentStatus.INACTIVE, model=self.model, weight=weight,
-                error=f"Temporarily unavailable ({exc})",
-                latency_ms=(time.perf_counter() - started) * 1000.0,
-            )
+        self.last_failover = "; ".join(failures)
 
         decision, confidence, reasoning = parse_agent_json(output)
         self.calls += 1
@@ -123,7 +148,7 @@ class GitHubAgent:
         self.last_result = result
         return result
 
-    async def _call(self, prompt: str) -> str:
+    async def _call(self, prompt: str, token: str) -> str:
         payload = {
             "model": self.model,
             "messages": [
@@ -135,7 +160,7 @@ class GitHubAgent:
             "response_format": {"type": "json_object"},
         }
         headers = {
-            "Authorization": f"Bearer {self.token}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
@@ -146,13 +171,17 @@ class GitHubAgent:
                     response = await client.post(MODELS_URL + CHAT_PATH, json=payload, headers=headers)
                     if response.status_code in (401, 403):
                         raise PermissionError("GitHub PAT rejected by the Models API")
+                    if response.status_code == 429:
+                        retry = response.headers.get("retry-after")
+                        raise RateLimited("GitHub Models rate limit (HTTP 429)",
+                                          float(retry) if retry and retry.isdigit() else None)
                     if response.status_code >= 500:
                         raise RuntimeError(f"HTTP {response.status_code}")
                     if response.status_code >= 400:
                         raise RuntimeError(f"HTTP {response.status_code}: {response.text[:160]}")
                     data = response.json()
                     return str(data["choices"][0]["message"]["content"])
-                except PermissionError:
+                except (PermissionError, RateLimited):
                     raise
                 except Exception as exc:  # noqa: BLE001
                     last_error = exc
@@ -190,10 +219,17 @@ class GitHubAgent:
         if status is AgentStatus.DISABLED:
             detail = "Disabled (no PAT)"
         elif status is AgentStatus.INACTIVE:
-            detail = f"Temporarily unavailable, {max(0, self.disabled_until - time.time()):.0f}s left"
+            detail = f"All PATs temporarily unavailable, {self.ring.soonest_recovery():.0f}s left"
         else:
             detail = "Ready"
         return AgentHealth(
             name=NAME, status=status, detail=detail, model=self.model,
-            extra={"calls": self.calls, "last_error": self.last_error},
+            extra={"calls": self.calls, "last_error": self.last_error,
+                   "last_failover": self.last_failover, "keys": self.ring.status()},
         )
+
+
+class RateLimited(RuntimeError):
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after

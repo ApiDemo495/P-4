@@ -120,9 +120,11 @@ class ApiClient {
   Future<Map<String, dynamic>?> testAgent(String name, String key) =>
       _postJson('/api/agents/$name/test', {'key': key});
 
+  /// [slot] 1 = primary, 2-3 = temporary stand-ins (automatic failover).
   Future<Map<String, dynamic>?> saveKey(String name, String key,
-          {bool persist = false}) =>
-      _postJson('/api/settings/keys/$name', {'key': key, 'persist': persist});
+          {bool persist = false, int slot = 1}) =>
+      _postJson('/api/settings/keys/$name',
+          {'key': key, 'persist': persist, 'slot': slot});
 
   Future<Map<String, dynamic>?> localModelStatus() =>
       _getJson('/api/agents/local/status');
@@ -130,8 +132,10 @@ class ApiClient {
   Future<Map<String, dynamic>?> localModelStub() =>
       _postJson('/api/agents/local/stub?enabled=true');
 
-  Future<Map<String, dynamic>?> localModelUnload() =>
-      _postJson('/api/agents/local/unload', {'delete_file': false});
+  /// Unload one of the three model slots, or all of them when [slot] is null.
+  Future<Map<String, dynamic>?> localModelUnload({int? slot}) =>
+      _postJson('/api/agents/local/unload',
+          {'delete_file': false, if (slot != null) 'slot': slot});
 
   Future<Map<String, dynamic>?> brainReconnect() =>
       _postJson('/api/brain/reconnect');

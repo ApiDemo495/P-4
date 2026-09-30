@@ -14,43 +14,45 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final _gemini = TextEditingController();
-  final _github = TextEditingController();
-  final _cryptopanic = TextEditingController();
-  final _newsapi = TextEditingController();
+  /// Three boxes per provider: slot 1 is the primary (always preferred),
+  /// slots 2-3 are temporary stand-ins the engine fails over to.
+  static const _providers = ['gemini', 'github', 'cryptopanic', 'newsapi'];
+  final Map<String, List<TextEditingController>> _keys = {
+    for (final p in _providers)
+      p: List.generate(3, (_) => TextEditingController()),
+  };
   bool _persist = false;
   final Map<String, String> _status = {};
 
   @override
   void dispose() {
-    _gemini.dispose();
-    _github.dispose();
-    _cryptopanic.dispose();
-    _newsapi.dispose();
+    for (final controllers in _keys.values) {
+      for (final c in controllers) {
+        c.dispose();
+      }
+    }
     super.dispose();
   }
 
-  Future<void> _test(String name, TextEditingController controller) async {
-    setState(() => _status[name] = 'testing…');
-    final result =
-        await widget.state.api.testAgent(name, controller.text.trim());
+  Future<void> _test(String name, int slot) async {
+    setState(() => _status[name] = 'testing slot $slot…');
+    final result = await widget.state.api
+        .testAgent(name, _keys[name]![slot - 1].text.trim());
     final valid = result?['valid'] == true;
     setState(() => _status[name] = valid
-        ? '✅ ${result?['detail'] ?? 'valid'}'
-        : '❌ ${result?['error'] ?? 'not reachable'}');
+        ? '✅ slot $slot: ${result?['detail'] ?? 'valid'}'
+        : '❌ slot $slot: ${result?['error'] ?? 'not reachable'}');
   }
 
   Future<void> _save() async {
-    final pairs = {
-      'gemini': _gemini.text.trim(),
-      'github': _github.text.trim(),
-      'cryptopanic': _cryptopanic.text.trim(),
-      'newsapi': _newsapi.text.trim(),
-    };
-    for (final entry in pairs.entries) {
-      if (entry.value.isEmpty) continue;
-      await widget.state.api
-          .saveKey(entry.key, entry.value, persist: _persist);
+    for (final provider in _providers) {
+      final controllers = _keys[provider]!;
+      for (var slot = 1; slot <= controllers.length; slot++) {
+        final value = controllers[slot - 1].text.trim();
+        if (value.isEmpty) continue;
+        await widget.state.api
+            .saveKey(provider, value, persist: _persist, slot: slot);
+      }
     }
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -74,10 +76,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _keyField('gemini', 'Gemini API key', _gemini, 'AIza…'),
-              _keyField('github', 'GitHub PAT (optional)', _github, 'github_pat_…'),
-              _keyField('cryptopanic', 'CryptoPanic key (optional)', _cryptopanic, 'token'),
-              _keyField('newsapi', 'NewsAPI key (optional)', _newsapi, 'key'),
+              _keyField('gemini',
+                  'Gemini API keys — primary + 2 stand-ins (all optional)', 'AIza…'),
+              _keyField('github', 'GitHub PATs (optional)', 'github_pat_…'),
+              _keyField('cryptopanic', 'CryptoPanic keys (optional)', 'token'),
+              _keyField('newsapi', 'NewsAPI keys (optional)', 'key'),
+              const Text(
+                'Slot 1 is always preferred. When it is rejected, rate limited or '
+                'errors the engine switches to slot 2, then 3, and returns to slot 1 '
+                'as soon as its cooldown ends.',
+                style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
+              ),
               Row(
                 children: [
                   Checkbox(
@@ -198,12 +207,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _keyField(
-    String name,
-    String label,
-    TextEditingController controller,
-    String hint,
-  ) {
+  Widget _keyField(String name, String label, String hint) {
+    final controllers = _keys[name]!;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Column(
@@ -212,31 +217,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Text(label,
               style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
           const SizedBox(height: 6),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: controller,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    hintText: hint,
-                    isDense: true,
-                    filled: true,
-                    fillColor: AppTheme.surfaceAlt,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: const BorderSide(color: AppTheme.border),
+          for (var slot = 1; slot <= controllers.length; slot++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 64,
+                    child: Text(
+                      slot == 1 ? 'PRIMARY' : 'BACKUP ${slot - 1}',
+                      style: const TextStyle(
+                          color: AppTheme.textMuted, fontSize: 10),
                     ),
                   ),
-                ),
+                  Expanded(
+                    child: TextField(
+                      controller: controllers[slot - 1],
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        hintText: slot == 1 ? hint : 'optional',
+                        isDense: true,
+                        filled: true,
+                        fillColor: AppTheme.surfaceAlt,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: const BorderSide(color: AppTheme.border),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton(
+                    onPressed: () => _test(name, slot),
+                    child: const Text('Test'),
+                  ),
+                ],
               ),
-              const SizedBox(width: 8),
-              OutlinedButton(
-                onPressed: () => _test(name, controller),
-                child: const Text('Test'),
-              ),
-            ],
-          ),
+            ),
           if (_status[name] != null) ...[
             const SizedBox(height: 4),
             Text(_status[name]!,

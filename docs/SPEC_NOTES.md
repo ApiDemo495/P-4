@@ -1027,3 +1027,35 @@ spec recipe 53.8 % right, ledger 69.5 %, Brier 0.225, claimed buckets within
 ~5 pts of realised. That is the simulator, not the market — the honest
 expectation on a real 1-minute tape is a small edge over 50 %, and the
 dashboard now prints the realised rate rather than a hopeful one.
+
+
+## O — Three keys per provider with failover, three local models at once
+
+* `backend/agents/keyring.py` — `KeyRing` per provider (gemini, github,
+  cryptopanic, newsapi), three `KeySlot`s. Slot 1 is the primary and is
+  always preferred; `candidates()` returns healthy keys in priority order.
+  `report_failure(kind)` cools one key: `rate_limited` 10→20→40→80→160→300 s
+  (reset on success, honours `Retry-After`), `rejected` 600 s, `error` 60 s.
+  When every key is cooling, only a key within 5 s of recovery is offered, so
+  a dead provider is not hammered. Keys come from `<NAME>`, `<NAME>_2`,
+  `<NAME>_3` (or a comma list in `<NAME>`), all optional.
+* Gemini / GitHub agents iterate the ring inside the one 7 s budget: a
+  rejected or limited key is cooled and the next one answers the same call;
+  `last_failover` and the masked ring status are in the agent health payload.
+  Provider status is RATE_LIMITED / INACTIVE only when *all* keys are cooling.
+* News engine `_poll_with_ring` does the same for CryptoPanic and NewsAPI
+  (`cache.providers` says "ok (n) via key 2" when a stand-in answered).
+* Routes: `GET /api/settings/keys` (masked rings), `POST
+  /api/settings/keys/{name}` gains `slot`, `PUT /api/settings/keys/{name}`
+  takes all three; persistence writes the `_2`/`_3` names.
+* `backend/agents/local_pool.py` — `LocalModelPool` with three
+  `LocalModelAgent` slots (slot 1 keeps the old store directory). Loaded
+  slots answer in parallel; `merge_results` = confidence-weighted majority,
+  confidence × (0.5 + 0.5·agreement); reasoning lists each model; a model
+  that crashed / timed out is reported in `error`, not hidden.
+  `POST /api/agents/local/upload?slot=N`, unload `{slot}`, status carries
+  `slots[]`, `models_loaded`, `max_models`.
+* Settings page: three boxes per provider with live "primary / backup ·
+  in use / cooling Ns (reason)" roles, three model slots. Flutter settings
+  has the same three boxes (`saveKey(..., slot:)`).
+* Tests: `backend/tests/test_keyring.py` (9).

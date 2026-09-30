@@ -785,3 +785,10 @@ th { color: var(--muted); font-weight: 600; }
 /* Lock watchdog note under the widget panel: changes only at boundaries. */
 .lock-proof { display:block; margin-top:4px; font-size:11px; color:#7fe0b5; }
 .lock-proof.broken { color:#ff6b6b; font-weight:700; }
+
+/* Settings: key rings (Round O) */
+.key-row { margin-bottom: 6px; }
+.key-role { font-family: var(--mono); font-size: 11px; min-width: 74px; color: #9fb0d0; text-transform: uppercase; letter-spacing: .04em; }
+.key-role.active { color: var(--green); }
+.key-role.cooling { color: var(--amber); }
+.model-slot { padding: 8px 10px; border: 1px solid rgba(255,255,255,.06); border-radius: 8px; }

@@ -25,13 +25,19 @@ API_URL = "https://cryptopanic.com/api/v1/posts/"
 PROVIDER = "CryptoPanic"
 
 
-async def fetch(client: httpx.AsyncClient, settings=None, limit: int = 20) -> list[NewsItem]:
+class RateLimited(RuntimeError):
+    """HTTP 429 - the key ring cools this key and tries the next one."""
+
+
+async def fetch(client: httpx.AsyncClient, settings=None, limit: int = 20,
+                key: str | None = None) -> list[NewsItem]:
     settings = settings or cfg.SETTINGS
-    if not settings.cryptopanic_key:
+    key = key if key is not None else settings.rings["cryptopanic"].current()
+    if not key:
         raise RuntimeError("no CryptoPanic API key configured")
 
     params = {
-        "auth_token": settings.cryptopanic_key,
+        "auth_token": key,
         "kind": "news",
         "filter": "hot",
         "currencies": "BTC,PAXG",
@@ -41,7 +47,7 @@ async def fetch(client: httpx.AsyncClient, settings=None, limit: int = 20) -> li
     if response.status_code == 401:
         raise PermissionError("CryptoPanic rejected the API key")
     if response.status_code == 429:
-        raise RuntimeError("CryptoPanic rate limit reached")
+        raise RateLimited("CryptoPanic rate limit reached")
     response.raise_for_status()
 
     payload = response.json()

@@ -8,7 +8,10 @@ Three fixes over v1.0:
    rather than holding the Signal Lock Controller hostage.
 3. **v2 prompt** - all 22 formula values, the news summary and brain status.
 
-Rate limits back off exponentially: 10 -> 20 -> 40 -> 80 -> 160 -> 300 seconds.
+Up to three keys (primary + two temporary stand-ins) with automatic failover:
+a rejected or rate-limited key is cooled down (10 -> 20 -> ... -> 300 s) and the
+next healthy key answers the same call; the primary is preferred again as soon
+as its cooldown ends.  See ``backend/agents/keyring.py``.
 """
 
 from __future__ import annotations
@@ -33,36 +36,39 @@ from backend.core import config as cfg
 log = logging.getLogger("drosophila.agents.gemini")
 
 BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
-BACKOFF_SCHEDULE = (10.0, 20.0, 40.0, 80.0, 160.0, 300.0)
 NAME = "gemini"
 
 
 class GeminiAgent:
     def __init__(self, settings=None) -> None:
         self.settings = settings or cfg.SETTINGS
-        self.api_key = self.settings.gemini_api_key
+        self.ring = self.settings.rings["gemini"]
         self.model = self.settings.gemini_model
         self.consecutive_failures = 0
-        self.backoff_until = 0.0
         self.last_result: AgentResult | None = None
         self.last_error = ""
+        self.last_failover = ""
         self.calls = 0
 
     # ------------------------------------------------------------------
     @property
     def configured(self) -> bool:
-        return bool(self.api_key)
+        return bool(self.ring)
 
-    def set_key(self, key: str) -> None:
-        self.api_key = (key or "").strip()
-        self.settings.gemini_api_key = self.api_key
+    @property
+    def api_key(self) -> str:
+        """The key that would be used right now (primary unless cooling)."""
+        return self.ring.current()
+
+    def set_key(self, key: str, slot: int = 1) -> None:
+        self.ring.set_slot(slot, key)
+        self.settings.gemini_api_key = self.ring.primary
         self.consecutive_failures = 0
-        self.backoff_until = 0.0
 
     def status(self) -> AgentStatus:
         if not self.configured:
             return AgentStatus.DISABLED
-        if self.backoff_until > time.time():
+        if self.ring.all_cooling():
             return AgentStatus.RATE_LIMITED
         if self.consecutive_failures >= 3:
             return AgentStatus.ERROR
@@ -75,63 +81,68 @@ class GeminiAgent:
                 agent=NAME, status=AgentStatus.DISABLED, model=self.model,
                 error="No Gemini API key configured", weight=weight,
             )
-        now = time.time()
-        if self.backoff_until > now:
-            return AgentResult(
-                agent=NAME,
-                status=AgentStatus.RATE_LIMITED,
-                model=self.model,
-                weight=weight,
-                error=f"Cooling down for {self.backoff_until - now:.0f}s",
-            )
-
         prompt = build_cycle_prompt(context)
         started = time.perf_counter()
-        try:
-            decision, confidence, reasoning, raw = await asyncio.wait_for(
-                self._call(prompt), timeout=self.settings.gemini_timeout_seconds
+        deadline = started + self.settings.gemini_timeout_seconds
+        # Failover: try the primary, then each healthy backup, all inside the
+        # single 7 s budget.  A key that fails is cooled down in the ring so
+        # the next cycle starts on the best healthy one.
+        keys = self.ring.candidates()
+        if not keys:
+            wait = self.ring.soonest_recovery()
+            return AgentResult(
+                agent=NAME, status=AgentStatus.RATE_LIMITED, model=self.model, weight=weight,
+                error=f"All {self.ring.status()['configured_slots']} Gemini keys cooling down; "
+                      f"next retry in {wait:.0f}s",
             )
-        except asyncio.TimeoutError:
+        failures: list[str] = []
+        decision = confidence = None
+        reasoning = raw = ""
+        used_key = ""
+        for key in keys:
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0.5:
+                break
+            slot = self.ring.slot_of(key)
+            try:
+                decision, confidence, reasoning, raw = await asyncio.wait_for(
+                    self._call(prompt, key), timeout=remaining
+                )
+                used_key = key
+                self.ring.report_success(key)
+                break
+            except asyncio.TimeoutError:
+                self.ring.report_failure(key, "error", "timeout")
+                failures.append(f"key {slot}: timed out")
+            except PermissionError as exc:
+                self.ring.report_failure(key, "rejected", str(exc))
+                failures.append(f"key {slot}: rejected")
+            except RateLimited as exc:
+                cooled = self.ring.report_failure(key, "rate_limited", str(exc), exc.retry_after)
+                failures.append(f"key {slot}: rate limited (cooling {cooled:.0f}s)")
+            except Exception as exc:  # noqa: BLE001
+                self.ring.report_failure(key, "error", str(exc))
+                failures.append(f"key {slot}: {exc}")
+            if failures and slot and len(keys) > 1:
+                log.warning("Gemini %s -> switching to the next key", failures[-1])
+
+        if not used_key:
             self.consecutive_failures += 1
+            self.last_error = "; ".join(failures) or "no key attempted"
+            if any("rate limited" in f for f in failures) and self.ring.all_cooling():
+                status = AgentStatus.RATE_LIMITED
+            elif any("timed out" in f for f in failures):
+                status = AgentStatus.TIMEOUT
+            else:
+                status = AgentStatus.ERROR
             return AgentResult(
-                agent=NAME,
-                status=AgentStatus.TIMEOUT,
-                model=self.model,
-                weight=weight,
-                error=f"Timed out after {self.settings.gemini_timeout_seconds:.0f}s",
-                latency_ms=(time.perf_counter() - started) * 1000.0,
-            )
-        except PermissionError as exc:
-            self.last_error = str(exc)
-            return AgentResult(
-                agent=NAME, status=AgentStatus.ERROR, model=self.model, weight=weight,
-                error=f"Invalid key: {exc}",
-                latency_ms=(time.perf_counter() - started) * 1000.0,
-            )
-        except RateLimited as exc:
-            self._schedule_backoff()
-            return AgentResult(
-                agent=NAME,
-                status=AgentStatus.RATE_LIMITED,
-                model=self.model,
-                weight=weight,
-                error=str(exc),
-                latency_ms=(time.perf_counter() - started) * 1000.0,
-            )
-        except Exception as exc:  # noqa: BLE001
-            self.consecutive_failures += 1
-            self.last_error = str(exc)
-            return AgentResult(
-                agent=NAME,
-                status=AgentStatus.ERROR,
-                model=self.model,
-                weight=weight,
-                error=str(exc),
-                latency_ms=(time.perf_counter() - started) * 1000.0,
+                agent=NAME, status=status, model=self.model, weight=weight,
+                error=self.last_error, latency_ms=(time.perf_counter() - started) * 1000.0,
             )
 
         self.consecutive_failures = 0
         self.calls += 1
+        self.last_failover = "; ".join(failures)
         result = AgentResult(
             agent=NAME,
             decision=decision,
@@ -147,14 +158,7 @@ class GeminiAgent:
         self.last_result = result
         return result
 
-    def _schedule_backoff(self) -> None:
-        index = min(self.consecutive_failures, len(BACKOFF_SCHEDULE) - 1)
-        delay = BACKOFF_SCHEDULE[index]
-        self.consecutive_failures += 1
-        self.backoff_until = time.time() + delay
-        log.warning("Gemini rate limited; cooling down %.0fs", delay)
-
-    async def _call(self, prompt: str) -> tuple[str | None, float | None, str, str]:
+    async def _call(self, prompt: str, key: str) -> tuple[str | None, float | None, str, str]:
         url = f"{BASE_URL}/{self.model}:generateContent"
         payload = {
             "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
@@ -166,13 +170,13 @@ class GeminiAgent:
                 "responseSchema": RESPONSE_SCHEMA,
             },
         }
-        headers = {"Content-Type": "application/json", "x-goog-api-key": self.api_key}
+        headers = {"Content-Type": "application/json", "x-goog-api-key": key}
         async with httpx.AsyncClient(timeout=self.settings.gemini_timeout_seconds) as client:
             response = await client.post(url, json=payload, headers=headers)
         if response.status_code in (401, 403):
             raise PermissionError("Gemini rejected the API key")
         if response.status_code == 429:
-            raise RateLimited("Gemini rate limit (HTTP 429)")
+            raise RateLimited("Gemini rate limit (HTTP 429)", _retry_after(response))
         if response.status_code >= 400:
             raise RuntimeError(f"Gemini HTTP {response.status_code}: {response.text[:200]}")
 
@@ -216,7 +220,7 @@ class GeminiAgent:
         if status is AgentStatus.DISABLED:
             detail = "No API key"
         elif status is AgentStatus.RATE_LIMITED:
-            detail = f"Cooling down {max(0, self.backoff_until - time.time()):.0f}s"
+            detail = f"All keys cooling down, next retry in {self.ring.soonest_recovery():.0f}s"
         elif self.last_result is not None:
             detail = f"{self.last_result.decision or 'no answer'} in {self.last_result.latency_ms:.0f}ms"
         else:
@@ -226,9 +230,22 @@ class GeminiAgent:
             status=status,
             detail=detail,
             model=self.model,
-            extra={"calls": self.calls, "last_error": self.last_error},
+            extra={"calls": self.calls, "last_error": self.last_error,
+                   "last_failover": self.last_failover, "keys": self.ring.status()},
         )
 
 
 class RateLimited(RuntimeError):
     """Raised internally when the provider returns HTTP 429."""
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _retry_after(response) -> float | None:
+    try:
+        value = response.headers.get("retry-after")
+        return float(value) if value else None
+    except (TypeError, ValueError):
+        return None

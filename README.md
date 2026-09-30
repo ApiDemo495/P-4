@@ -290,8 +290,9 @@ tick *remember* to persist to the git-ignored `.env`.
 
 | Key | What it unlocks |
 |---|---|
-| `GEMINI_API_KEY` | Gemini agent, 25 % of the fusion |
-| `GITHUB_MODELS_TOKEN` | GitHub Models agent, 15 % |
+| `GEMINI_API_KEY` (+ `_2`, `_3`) | Gemini agent, 25 % of the fusion. Slot 1 is the primary; `_2`/`_3` are optional stand-ins used automatically while slot 1 is rejected / rate limited, primary retried as soon as it recovers |
+| `GITHUB_MODELS_TOKEN` (+ `_2`, `_3`) | GitHub Models agent, 15 %, same three-slot failover |
+| `CRYPTOPANIC_API_KEY`, `NEWSAPI_API_KEY` (+ `_2`, `_3`) | news sources, same three-slot failover; `GET /api/settings/keys` shows which slot is in use |
 | `CRYPTOPANIC_API_KEY` | 30-second news engine + critical-event detection |
 | `NEWSAPI_API_KEY` | NewsAPI backup tier |
 | `NEUPRINT_APPLICATION_CREDENTIALS` | live hemibrain connectome (otherwise the committed 80×80 matrix) |

@@ -78,6 +78,25 @@ curl -s localhost:8000/api/news/status | python3 -m json.tool
 
 ---
 
+## 0. Three slots per key, three local models (Round O)
+
+Every key box in Settings comes in threes: **primary** (always used) and two
+optional **temporary** stand-ins. If the primary is rejected, rate limited or
+errors, the engine switches to slot 2, then slot 3, *for that same call*, and
+goes back to the primary the moment its cooldown ends (rate limit: 10 s
+doubling to 5 min; rejected key: 10 min; other errors: 60 s). In `.env` the
+slots are `GEMINI_API_KEY`, `GEMINI_API_KEY_2`, `GEMINI_API_KEY_3` (same
+pattern for `GITHUB_MODELS_TOKEN`, `CRYPTOPANIC_API_KEY`, `NEWSAPI_API_KEY`).
+`GET /api/settings/keys` shows, masked, which slot is in use and why the
+others are resting.
+
+Local models also have three slots: upload into any of them
+(`POST /api/agents/local/upload?slot=2`, or the three "Load into slot N"
+buttons). Every loaded model answers every cycle in parallel and the answers
+are merged into the single local opinion (confidence-weighted majority,
+trimmed when they disagree). Slots are independent: unload one, the others
+keep answering.
+
 ## 1. Gemini API key — `GEMINI_API_KEY` (free)
 
 **What it powers:** the *Gemini agent*, one of the three AI agents whose vote

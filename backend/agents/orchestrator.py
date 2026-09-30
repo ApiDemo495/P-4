@@ -14,7 +14,7 @@ import time
 from backend.agents.base import AgentResult, AgentStatus
 from backend.agents.gemini_agent import GeminiAgent
 from backend.agents.github_agent import GitHubAgent
-from backend.agents.local_model_agent import LocalModelAgent
+from backend.agents.local_pool import LocalModelPool
 from backend.core import config as cfg
 
 log = logging.getLogger("drosophila.agents")
@@ -24,7 +24,7 @@ class AgentOrchestrator:
     def __init__(self, settings=None, local_stub: bool | None = None) -> None:
         self.settings = settings or cfg.SETTINGS
         self.gemini = GeminiAgent(self.settings)
-        self.local = LocalModelAgent(self.settings)
+        self.local = LocalModelPool(self.settings)
         self.github = GitHubAgent(self.settings)
         if local_stub is not None:
             self.local.stub = local_stub
