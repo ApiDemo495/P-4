@@ -526,7 +526,7 @@ tail -f server.log
   (`formula_agreement`: aligned / conflict / crowd flat / formulas split), the
   formula consensus is evidence inside the crowd's Bayesian filter, and the rule
   is printed on every panel: *the 22 formulas carry 40 % of the direction vote;
-  the crowd never votes — it can only cut confidence by at most 25 %*. Every
+  the crowd never votes — it can only cut confidence by at most 12.5 % (halved in Round P)*. Every
   emotion is shown as its formula with the live terms substituted.
 * **Everything refreshes together.** The backend owns one schedule: a `SIGNAL`
   snapshot at the boundary and one `PULSE` at every grid mark inside the window

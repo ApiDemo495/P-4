@@ -724,7 +724,7 @@ class FormulaAgreement {
       note: _s(json['note']),
       rule: _s(json['rule']),
       formulaWeight: _d(weights['formulas'], 0.40),
-      crowdMaxCut: _d(weights['crowd_max_confidence_cut'], 0.25),
+      crowdMaxCut: _d(weights['crowd_max_confidence_cut'], 0.125),
     );
   }
 }

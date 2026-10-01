@@ -14,7 +14,7 @@ Two v2.0 additions:
   emotional the minute is (herding, whipsaw, stop hunts, book imbalance, a
   volume climax).  When that manipulation score passes
   ``emotion_dampen_threshold`` the confidence is multiplied by
-  ``1 - emotion_dampen_max * score``: an emotional tape is a tape to trade
+  ``1 - emotion_dampen_max * score`` (max cut 12.5 %, halved in Round P): an emotional tape is a tape to trade
   smaller, never a reason to flip a locked side.
 * **Binary direction** - the third state (HOLD) was removed at the user's
   request.  Every gate that used to return HOLD now returns a side plus the
@@ -278,7 +278,7 @@ def fuse(
     if manipulation >= threshold:
         span = max(1e-6, 1.0 - threshold)
         excess = min(1.0, (manipulation - threshold) / span)
-        crowd_adjustment = 1.0 - float(getattr(settings, "emotion_dampen_max", 0.25)) * excess
+        crowd_adjustment = 1.0 - float(getattr(settings, "emotion_dampen_max", 0.125)) * excess
         dominant = (crowd.get("dominant") or {}).get("label") or "an emotional crowd"
         kind = (crowd.get("manipulation") or {}).get("kind") or "crowding"
         crowd_note = (

@@ -222,8 +222,12 @@ class Settings:
     #: A crowded, emotional minute is a minute to size down: the confidence is
     #: multiplied by ``1 - emotion_dampen_max * manipulation_score`` once the
     #: score passes the threshold.  It never flips the side.
+    #: Round P: the user asked for the emotion weighting to be halved - the
+    #: crowd may now cut at most 12.5 % of the confidence (was 25 %); its
+    #: tone vote in the evidence ledger counts at half weight too
+    #: (``calibration.EMOTION_VOTE_SCALE``).
     emotion_dampen_threshold: float = 0.45
-    emotion_dampen_max: float = 0.25
+    emotion_dampen_max: float = 0.125
 
     # Decision thresholds (Section 10.1)
     signal_threshold: float = 0.25

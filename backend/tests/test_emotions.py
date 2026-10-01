@@ -501,7 +501,7 @@ def test_formula_agreement_names_the_verdict_and_who_has_the_vote():
     flat = formula_agreement({"score": -0.4, "voters": 6}, 0.0)
     assert flat["verdict"] == "crowd flat" and flat["formula_side"] == "SELL"
     assert aligned["weights"]["formulas"] == 0.40
-    assert aligned["weights"]["crowd_max_confidence_cut"] == 0.25
+    assert aligned["weights"]["crowd_max_confidence_cut"] == 0.125
 
 
 def test_the_live_reading_is_checked_against_the_formulas():

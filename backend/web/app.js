@@ -1195,7 +1195,7 @@ function renderSignal() {
     const w = s.fusion?.weights_used || {};
     const parts = Object.keys(w).map((k) => `${k} ${fmtPct(w[k])}`);
     const crowdCut = Number(s.fusion?.crowd_adjustment ?? 1);
-    const crowd = ` · crowd: confidence x${crowdCut.toFixed(2)} (a modifier of at most 25%, never a vote)`;
+    const crowd = ` · crowd: confidence x${crowdCut.toFixed(2)} (a modifier of at most 12.5%, never a vote)`;
     $("weights").textContent = parts.length
       ? `who decides: ${parts.join(" · ")}${crowd} · window #${s.cycle_number} · frozen at the boundary`
       : `window #${s.cycle_number}`;

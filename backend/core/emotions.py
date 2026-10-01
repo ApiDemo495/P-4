@@ -1485,10 +1485,12 @@ def formula_agreement(agreement: dict, tone_bias: float) -> dict:
             "agents": 0.25,
             "brain": 0.20,
             "news": 0.15,
-            "crowd_max_confidence_cut": 0.25,
+            "crowd_max_confidence_cut": 0.125,
+            "crowd_vote_scale": 0.5,
         },
         "rule": (
             "the 22 formulas carry 40% of the direction vote; the crowd never votes - "
-            "it can only cut confidence by at most 25% when it disagrees"
+            "it can only cut confidence by at most 12.5% when it disagrees (halved in Round P), "
+            "and its tone counts at half weight in the learned evidence ledger"
         ),
     }

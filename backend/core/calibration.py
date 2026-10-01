@@ -55,6 +55,8 @@ import numpy as np
 
 log = logging.getLogger("drosophila.calibration")
 
+#: Crowd-emotion votes count at half weight (Round P: "remove weightage of emotions to half").
+EMOTION_VOTE_SCALE = 0.5
 PRIOR_STRENGTH = 4.0          # Beta(a, a): four pseudo-observations at 50 %
 MAX_ABS_WEIGHT = 1.5          # log-odds clip: ~82 % reliability saturates
 BUCKETS = (0.5, 0.55, 0.6, 0.65, 0.7, 0.8, 1.01)
@@ -230,6 +232,9 @@ class EvidenceLedger:
                 if stat is None or stat.n < 10.0:   # a source needs a record before it may pull
                     continue
                 w = stat.weight()
+                if name.startswith("crowd:"):
+                    # Round P: emotions carry half the weight of any other source.
+                    w *= EMOTION_VOTE_SCALE
                 # Sources whose edge is not statistically real pull at a
                 # quarter weight: 20 correlated formulas drifting the same way
                 # by chance must not add up to a confident call.

@@ -1059,3 +1059,15 @@ dashboard now prints the realised rate rather than a hopeful one.
   in use / cooling Ns (reason)" roles, three model slots. Flutter settings
   has the same three boxes (`saveKey(..., slot:)`).
 * Tests: `backend/tests/test_keyring.py` (9).
+
+## P — "Remove weightage of emotions to half"
+
+The crowd-emotion layer never picked the side; its weight on the prediction
+was (a) a confidence cut of up to 25 % on a crowded minute and (b) the
+`crowd:tone` vote in the learned evidence ledger. Both are halved:
+`emotion_dampen_max` 0.25 → 0.125 (threshold unchanged at 0.45), and the
+ledger scales `crowd:*` sources by `EMOTION_VOTE_SCALE = 0.5` before they
+pull. Payload `formula_agreement.weights` now reports
+`crowd_max_confidence_cut: 0.125` and `crowd_vote_scale: 0.5`; the dashboard
+line and Flutter default updated. The emotion *formulas* and panel are
+unchanged - only their say in the prediction is halved.
