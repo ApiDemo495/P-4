@@ -154,3 +154,13 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     trace(ctx, "net signed volume share", net_side, "+1 all buys, -1 all sells")
 
     return finite(tanh(j_rel / (scale + EPS)))
+
+
+DOUBLE_CHECK = "value = tanh(relative jerk / materiality floor)"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "jerk / floor" not in t:
+        return 0.0
+    return tanh(float(t["jerk / floor"]))

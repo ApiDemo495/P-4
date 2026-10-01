@@ -201,3 +201,13 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     trace(ctx, "running sigma", sigma, "relative")
     trace(ctx, "scale used", scale, "relative (floor = 0.75 x realised move)")
     return finite(tanh(fresh / (scale + EPS)))
+
+
+DOUBLE_CHECK = "value = tanh(fresh divergence / scale)"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "fresh divergence (now - baseline)" not in t:
+        return 0.0
+    return tanh(float(t["fresh divergence (now - baseline)"]) / (float(t["scale used"]) + EPS))

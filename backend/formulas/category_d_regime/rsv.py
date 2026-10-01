@@ -157,3 +157,13 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     if direction == 0.0:
         return 0.0
     return finite(tanh(velocity / (denom + EPS)) * direction)
+
+
+DOUBLE_CHECK = "value = tanh(Hurst velocity / scale) x drift direction"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "velocity (slope of H)" not in t:
+        return 0.0
+    return tanh(float(t["velocity (slope of H)"]) / (float(t["scale used"]) + EPS)) * float(t["direction used"])

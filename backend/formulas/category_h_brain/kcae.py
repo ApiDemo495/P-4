@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from backend.formulas._util import EPS, finite
+from backend.formulas._util import EPS, finite, trace
 
 NAME = "KCAE"
 CATEGORY = "H"
@@ -52,7 +52,7 @@ class State:
         return obj
 
 
-def from_activations(activations: np.ndarray, state: State | None = None) -> float:
+def from_activations(activations: np.ndarray, state: State | None = None, ctx: dict | None = None) -> float:
     """KCAE for a Kenyon Cell activation vector."""
     a = np.asarray(activations, dtype=np.float64).ravel()
     if a.size == 0:
@@ -77,6 +77,10 @@ def from_activations(activations: np.ndarray, state: State | None = None) -> flo
     if state is not None:
         state.last_entropy = entropy
         state.last_kcae = kcae
+    trace(ctx, "Kenyon cells", int(a.size), "activation vector length")
+    trace(ctx, "total energy sum |a|^2", total, "")
+    trace(ctx, "code entropy H", entropy, "nats, p_j = |a_j|^2 / total")
+    trace(ctx, "max entropy log(N)", h_max, "nats")
     return finite(kcae)
 
 
@@ -93,4 +97,15 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
         values = ctx.get("_kc_activations")
     if values is None:
         return 0.0
-    return from_activations(np.asarray(values, dtype=np.float64), state)
+    return from_activations(np.asarray(values, dtype=np.float64), state, ctx)
+
+
+RANGE = (0.0, 1.0)
+DOUBLE_CHECK = "value = clip(1 - H / log N, 0, 1)"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "code entropy H" not in t or float(t.get("max entropy log(N)", 0.0)) <= EPS:
+        return 0.0
+    return max(0.0, min(1.0, 1.0 - float(t["code entropy H"]) / float(t["max entropy log(N)"])))

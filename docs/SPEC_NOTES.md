@@ -1071,3 +1071,37 @@ pull. Payload `formula_agreement.weights` now reports
 `crowd_max_confidence_cut: 0.125` and `crowd_vote_scale: 0.5`; the dashboard
 line and Flutter default updated. The emotion *formulas* and panel are
 unchanged - only their say in the prediction is halved.
+
+## Q — "Add double check in each formula"
+
+Every one of the 22 formulas (and DRG) is now verified three independent
+ways on **every pass** (`backend/formulas/double_check.py`, wired in
+`FormulaEngine._run_one`):
+
+1. **Replay** – the formula is run a second time on a private `deepcopy` of
+   its pre-pass state against the same frozen snapshot; the two answers must
+   agree to 1e-9 (catches hidden state, non-determinism, mutation bugs).
+2. **Re-derivation** – each formula module now carries `double_check(trace,
+   asset)` plus a `DOUBLE_CHECK` rule in words: an independent one-line
+   recomputation of the output from the intermediates the formula traced
+   while running (traces now carry the exact `raw` number alongside the
+   rendered one). Formulas that traced nothing at the final step (AFPR, BAR,
+   HRDD, ERC, NIV, SMD, KCAE, CCSv2, MCPE) gained those trace rows.
+3. **Range** – finite and inside the declared `RANGE` ([-1, 1]; HSI and
+   KCAE [0, 1]).
+
+A formula failing any check is zeroed for that pass with
+`errors[name] = "double check failed: …"` (so the §10.1 degradation ladder
+sees it), logged, and the verdict is appended to its trace ("✓✓ verified:
+replay ✓ · re-derived ✓ · range ✓" + the rule). Payload: `checks{}` and
+`double_check{formulas, verified, partial, failed, failed_names, check_us,
+rule}` on `/api/formulas/live` and the formula result; the Formula Explorer
+shows a "✓✓ double-checked" chip per formula and the summary in the live
+note. `FORMULA_DOUBLE_CHECK=0` disables it. Cost ≈ 4–5 ms per pass (the
+replay doubles the formula work), kept out of the per-formula timings as
+`check_us`.
+
+Verified: 17,664 formula evaluations across all synthetic tapes × both
+assets → 17,664 verified, 0 false positives; live engine 23/23 verified.
+Tests `backend/tests/test_double_check.py` (14) include a lying formula
+(zeroed), a non-deterministic one (replay fails) and an out-of-range one.

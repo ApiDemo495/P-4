@@ -118,3 +118,13 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     trace(ctx, "net aggressor flow", net_sides, "contracts (context only)")
 
     return finite(tanh(z / Z_DIVISOR) * price_sign)
+
+
+DOUBLE_CHECK = "value = tanh(z / 3) x price sign"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "z (volume shock)" not in t or "price sign" not in t:
+        return 0.0
+    return tanh(float(t["z (volume shock)"]) / Z_DIVISOR) * float(t["price sign"])

@@ -195,7 +195,17 @@ def trace(ctx: dict | None, label: str, value, unit: str = "") -> None:
             rendered = str(value)
     except Exception:  # noqa: BLE001 - tracing must never break a formula
         rendered = "?"
-    items.append({"label": str(label), "value": rendered, "unit": str(unit)})
+    row = {"label": str(label), "value": rendered, "unit": str(unit)}
+    # The exact number travels with the row so the double check can re-derive
+    # the output from the real intermediates, not from a 6-digit rendering.
+    try:
+        if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
+            raw = float(value)
+            if raw == raw:
+                row["raw"] = raw
+    except Exception:  # noqa: BLE001
+        pass
+    items.append(row)
 
 
 class SelfScale:

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from backend.formulas._util import EPS, finite
+from backend.formulas._util import EPS, finite, trace
 
 NAME = "AFPR"
 CATEGORY = "A"
@@ -64,4 +64,19 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
 
     ratio = (buy - sell) / (buy + sell + EPS)
     state.last_ratio = ratio
+    trace(ctx, "ticks weighted", t, f"recency power {float(params.get('afpr_power', 3.0)):g}")
+    trace(ctx, "weighted buy volume", buy, "contracts x weight")
+    trace(ctx, "weighted sell volume", sell, "contracts x weight")
+    trace(ctx, "flow ratio", ratio, "(buy - sell) / (buy + sell)")
     return finite(max(-1.0, min(1.0, ratio)))
+
+
+DOUBLE_CHECK = "value = clip((weighted buy - weighted sell) / (weighted buy + weighted sell), -1, 1)"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "weighted buy volume" not in t:
+        return 0.0
+    buy, sell = float(t["weighted buy volume"]), float(t["weighted sell volume"])
+    return max(-1.0, min(1.0, (buy - sell) / (buy + sell + EPS)))

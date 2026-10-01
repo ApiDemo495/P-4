@@ -104,3 +104,14 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
 
     score = tanh(combined / (denom + EPS))
     return finite(score if asset.upper() == "BTC" else -score)
+
+
+DOUBLE_CHECK = "value = tanh(blended velocity / floor), sign flipped for PAXG"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "velocity / scale" not in t:
+        return 0.0
+    score = tanh(float(t["velocity / scale"]))
+    return score if asset.upper() == "BTC" else -score

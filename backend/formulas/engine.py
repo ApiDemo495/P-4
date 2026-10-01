@@ -26,6 +26,7 @@ from backend.core import config as cfg
 from backend.core.micro import analyze as micro_analyze
 from backend.core.micro import MicroState
 from backend.core.timebase import format_us, perf_us
+from backend.formulas import double_check as dc
 from backend.formulas import drg as drg_module
 from backend.formulas.category_a_microstructure import afpr, sed, tai, vsd
 from backend.formulas.category_b_orderbook import bar, dgw, lcs
@@ -133,6 +134,14 @@ def logic_entry(name: str):
         return None
 
 
+def _replay_ctx(ctx: dict) -> dict:
+    """A shallow copy of the formula context for the replay: the second pass
+    may read everything the first one saw but must not write into it."""
+    replay = dict(ctx)
+    replay["_trace"] = []
+    return replay
+
+
 def _tick_times(engine, result: FormulaResult, asset: str):
     """The tick timestamps of the last frozen snapshot, for the span note."""
     snapshot = getattr(engine, "last_snapshot", None)
@@ -210,6 +219,11 @@ class FormulaResult:
     #: numbers each formula recorded while it ran.  This is what turns the
     #: Formula Explorer from a list of numbers into an audit trail.
     traces: dict[str, list] = field(default_factory=dict)
+    #: ``{formula: {ok, verdict, replay, rederived, range_ok, ...}}`` - the
+    #: double check every formula passed (or failed) on this pass.
+    checks: dict[str, dict] = field(default_factory=dict)
+    #: Microseconds spent double-checking (kept apart from the formula timings).
+    check_us: int = 0
     ccs_confidence: float = 0.0
     kcae: float = 0.0
     brain_trace: dict = field(default_factory=dict)
@@ -222,6 +236,23 @@ class FormulaResult:
     micro: dict = field(default_factory=dict)
     #: How many past windows the statistics above are computed over.
     history_window: int = 0
+
+    def check_summary(self) -> dict:
+        verdicts = [c.get("verdict") for c in self.checks.values()]
+        return {
+            "enabled": dc.enabled(),
+            "formulas": len(verdicts),
+            "verified": sum(1 for v in verdicts if v == "verified"),
+            "partial": sum(1 for v in verdicts if v == "partial"),
+            "failed": sum(1 for v in verdicts if v == "failed"),
+            "failed_names": [k for k, c in self.checks.items() if c.get("verdict") == "failed"],
+            "check_us": int(self.check_us),
+            "rule": (
+                "every formula is run twice (replay on a private copy of its state), "
+                "re-derived from its own traced intermediates and range-checked; "
+                "a formula that fails any of the three is zeroed for the pass"
+            ),
+        }
 
     @property
     def zero_count(self) -> int:
@@ -251,6 +282,8 @@ class FormulaResult:
             "stats": {k: v for k, v in self.stats.items()},
             "micro": dict(self.micro),
             "traces": {k: v for k, v in self.traces.items()},
+            "checks": {k: v for k, v in self.checks.items()},
+            "double_check": self.check_summary(),
             "zero_count": self.zero_count,
             "failed_count": self.failed_count,
             "ccs_confidence": round(self.ccs_confidence, 6),
@@ -339,8 +372,9 @@ class FormulaEngine:
         # --- Reward meta-parameter first: DRG gates the dopamine nodes -----
         ctx["_trace"] = []
         drg_us = perf_us()
+        drg_state = self.drg_state(asset)
+        drg_copy = dc.copy_state(drg_state) if dc.enabled() else None
         try:
-            drg_state = self.drg_state(asset)
             value = drg_module.compute(snapshot, drg_state, params, ctx=ctx)
             result.values["DRG"] = float(value)
             ctx["_drg"] = float(value)
@@ -351,6 +385,13 @@ class FormulaEngine:
         finally:
             result.timings_us["DRG"] = perf_us() - drg_us
             result.traces["DRG"] = ctx.pop("_trace", [])
+        if "DRG" not in result.errors:
+            self._double_check(
+                "DRG", drg_module, snapshot, asset, params, ctx, result,
+                replay=(lambda: drg_module.compute(snapshot, drg_copy, params, ctx=_replay_ctx(ctx)))
+                if drg_copy is not None else None,
+            )
+            ctx["_drg"] = result.values["DRG"]
 
         # --- Formulas 1-20 ------------------------------------------------
         for spec in INPUT_FORMULAS:
@@ -417,8 +458,11 @@ class FormulaEngine:
         t0 = time.perf_counter()
         t0_us = perf_us()
         ctx["_trace"] = []
+        state = self.state_for(spec, asset)
+        # The replay runs on a private copy taken *before* the first pass, so
+        # both passes see the same state and the same frozen snapshot.
+        state_copy = dc.copy_state(state) if dc.enabled() else None
         try:
-            state = self.state_for(spec, asset)
             value = spec.module.compute(snapshot, asset, state, params, ctx)
             value = float(value)
             if not np.isfinite(value):
@@ -434,6 +478,14 @@ class FormulaEngine:
             result.timings_ms[spec.name] = (time.perf_counter() - t0) * 1000.0
             result.timings_us[spec.name] = perf_us() - t0_us
             result.traces[spec.name] = ctx.pop("_trace", [])
+
+        if spec.name not in result.errors:
+            self._double_check(
+                spec.name, spec.module, snapshot, asset, params, ctx, result,
+                replay=(lambda: spec.module.compute(snapshot, asset, state_copy, params, _replay_ctx(ctx)))
+                if state_copy is not None else None,
+            )
+            ctx[spec.name] = result.values[spec.name]
 
             # Every formula records how many ticks it actually saw: the first
         # question when a value looks wrong is "did it have data?".
@@ -455,6 +507,28 @@ class FormulaEngine:
                 )
         except Exception:  # noqa: BLE001
             pass
+
+    # ------------------------------------------------------------------
+    def _double_check(self, name: str, module, snapshot, asset: str, params: dict,
+                      ctx: dict, result: FormulaResult, *, replay) -> None:
+        """Replay + re-derive + range-check one formula; zero it if any fails."""
+        if not dc.enabled():
+            return
+        started = perf_us()
+        try:
+            report = dc.verify(
+                module, name, result.values[name], result.traces.get(name, []), asset, replay=replay
+            )
+        except Exception as exc:  # noqa: BLE001 - the check itself must never kill the pass
+            log.debug("double check of %s crashed: %s", name, exc)
+            return
+        result.checks[name] = report.to_dict()
+        result.traces.setdefault(name, []).append(report.trace_row())
+        result.check_us += perf_us() - started
+        if not report.ok:
+            result.errors[name] = "double check failed: " + "; ".join(report.notes)
+            result.values[name] = 0.0
+            log.warning("formula %s failed its double check for %s: %s", name, asset, "; ".join(report.notes))
 
     # ------------------------------------------------------------------
     def _annotate_traces(self, result: FormulaResult, asset: str) -> None:

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from backend.formulas._util import EPS, Ema, finite, tanh
+from backend.formulas._util import EPS, Ema, finite, tanh, trace
 
 NAME = "HRDD"
 CATEGORY = "C"
@@ -110,6 +110,12 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     snr = abs(d_beta) / (se_beta + EPS)
     gate = float(np.clip((snr - 1.0) / max(1e-6, NOISE_SIGMA - 1.0), 0.0, 1.0))
     score = tanh(d_beta / (scale + EPS)) * gate
+    trace(ctx, "beta this window", beta_w, "PAXG on BTC OLS slope")
+    trace(ctx, "beta baseline", baseline, "running mean")
+    trace(ctx, "beta deviation", d_beta, "window - baseline")
+    trace(ctx, "scale used", scale, "max(history sigma, estimator SE)")
+    trace(ctx, "signal-to-noise", snr, "|deviation| / estimator SE")
+    trace(ctx, "noise gate", gate, "0 at 1 sigma, 1 at 3 sigma")
 
     state.beta_baseline.update(beta_w)
     state.beta_history.append(beta_w)
@@ -117,3 +123,14 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
         del state.beta_history[:-BETA_HISTORY]
 
     return finite(-score if asset.upper() == "BTC" else score)
+
+
+DOUBLE_CHECK = "value = -tanh(beta deviation / scale) x noise gate for BTC (+ for PAXG)"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "beta deviation" not in t:
+        return 0.0
+    score = tanh(float(t["beta deviation"]) / (float(t["scale used"]) + EPS)) * float(t["noise gate"])
+    return -score if asset.upper() == "BTC" else score

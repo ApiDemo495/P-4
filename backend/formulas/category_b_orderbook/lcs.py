@@ -81,3 +81,16 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     raw = (w_ask - w_bid) / (w_ask + w_bid + EPS)
     trace(ctx, "asymmetry", raw, "positive = the ask ladder is the broken one")
     return finite(tanh(raw))
+
+
+DOUBLE_CHECK = "value = tanh((ask cliff - bid cliff) / (ask cliff + bid cliff))"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "ask cliff (worst drop / top size)" not in t:
+        return 0.0
+    w_ask, w_bid = float(t["ask cliff (worst drop / top size)"]), float(t["bid cliff (worst drop / top size)"])
+    if w_ask <= 0.0 and w_bid <= 0.0:
+        return 0.0
+    return tanh((w_ask - w_bid) / (w_ask + w_bid + EPS))

@@ -113,3 +113,14 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     trace(ctx, "PAXG flow imbalance", f_g, "net / turnover over the flow window")
     trace(ctx, "rotation", r, "1.0 = a full rotation into one leg")
     return finite(-r if asset.upper() == "BTC" else r)
+
+
+DOUBLE_CHECK = "value = -rotation for BTC, +rotation for PAXG"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "rotation" not in t:
+        return 0.0
+    r = float(t["rotation"])
+    return -r if asset.upper() == "BTC" else r

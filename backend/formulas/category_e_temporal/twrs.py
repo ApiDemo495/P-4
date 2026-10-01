@@ -124,3 +124,13 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     trace(ctx, "new returns this window", fresh_n, "ticks")
     trace(ctx, "weighted skew", skew, "m3 / m2^1.5")
     return finite(tanh(skew))
+
+
+DOUBLE_CHECK = "value = tanh(weighted skew)"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "weighted skew" not in t:
+        return 0.0
+    return tanh(float(t["weighted skew"]))

@@ -130,3 +130,19 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     hsi = max(0.0, min(1.0, hsi))
     trace(ctx, "HSI", hsi, "0.5 = independent legs, 1.0 = hedge broken")
     return finite(hsi)
+
+
+RANGE = (0.0, 1.0)
+DOUBLE_CHECK = "value = 0.5 +- 0.5 x how far sigma_hedge / sigma_avg sits from the uncorrelated baseline"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "ratio sigma_hedge / sigma_avg" not in t or "uncorrelated baseline" not in t:
+        return float(t.get("HSI", 0.0))
+    ratio, base = float(t["ratio sigma_hedge / sigma_avg"]), float(t["uncorrelated baseline"])
+    if ratio >= base:
+        value = 0.5 + 0.5 * min(1.0, max(0.0, (ratio - base) / max(1.0 - base, EPS)))
+    else:
+        value = 0.5 - 0.5 * min(1.0, max(0.0, (base - ratio) / max(base, EPS)))
+    return max(0.0, min(1.0, value))

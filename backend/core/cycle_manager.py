@@ -1359,6 +1359,8 @@ class CycleManager:
             "formulas": dict(self.last_live_formulas),
             "readings": _readings_for(result) if result is not None else {},
             "traces": result.traces if result is not None else {},
+            "checks": result.checks if result is not None else {},
+            "double_check": result.check_summary() if result is not None else {},
             "timings_ms": (
                 {k: round(float(v), 4) for k, v in result.timings_ms.items()}
                 if result is not None

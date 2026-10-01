@@ -123,3 +123,13 @@ def compute(
     trace(ctx, "dopamine (asymmetric)", da, "delta^0.8 / -|delta|^1.2")
     trace(ctx, "reward gradient", drg, "tanh(0.1 * dopamine)")
     return finite(drg)
+
+
+DOUBLE_CHECK = "value = tanh(GAIN x dopamine), GAIN = 0.1"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "dopamine (asymmetric)" not in t:
+        return 0.0
+    return tanh(GAIN * float(t["dopamine (asymmetric)"]))

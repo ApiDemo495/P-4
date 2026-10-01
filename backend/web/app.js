@@ -24,6 +24,7 @@ const state = {
   liveStats: {},        // per-formula history statistics (Round I)
   liveMicro: {},        // the tape measured in microseconds (Round I)
   liveTimingsUs: {},    // per-formula cost in µs from the last live pass
+  liveChecks: {},       // per-formula double check (replay · re-derived · range)
   liveHistoryWindow: 0,
   emotions: null,        // the crowd's live emotion reading (Round J, EMOTION stream)
   emotionsLocked: null,  // the reading taken on the frozen snapshot at lock time
@@ -1747,7 +1748,18 @@ function renderLiveFormulas(data) {
   state.liveTraces = data.traces || {};
   state.liveStats = data.stats || {};
   state.liveTimingsUs = data.timings_us || {};
+  state.liveChecks = data.checks || {};
   state.liveMicro = data.micro || {};
+  if (data.double_check && data.double_check.formulas) {
+    const note = $("live-note");
+    const dc = data.double_check;
+    if (note) {
+      note.textContent = `double check: ${dc.verified}/${dc.formulas} verified` +
+        (dc.failed ? ` · ${dc.failed} failed (${(dc.failed_names || []).join(", ")}) → zeroed` : "") +
+        ` · ${fmtUs(dc.check_us)} · values refresh every 15s · signal stays locked`;
+      note.title = dc.rule || "";
+    }
+  }
   state.liveHistoryWindow = data.history_window || 0;
   if (data.note) {
     const note = $("live-note");
@@ -1834,6 +1846,14 @@ function formulaRow(name, value, description, meta, readings = {}, traces = {}) 
       `title="${escapeHtml(verdict.claim + " — " + verdict.detail)}">` +
       `${verdict.passed ? "✔ self-test" : "✘ self-test"}</span>`
     : "";
+  // The double check of this very pass: replay on a private state copy,
+  // re-derivation from the traced intermediates, range.
+  const check = state.liveChecks?.[name];
+  const checkChip = check
+    ? `<span class="verdict ${check.ok ? "pass" : "fail"}" ` +
+      `title="${escapeHtml((check.rule || "") + (check.notes && check.notes.length ? " — " + check.notes.join("; ") : ""))}">` +
+      `${check.verdict === "verified" ? "✓✓ double-checked" : check.ok ? "✓ checked" : "✗ check failed → 0"}</span>`
+    : "";
 
   const html =
     `<div class="formula-row">` +
@@ -1851,7 +1871,7 @@ function formulaRow(name, value, description, meta, readings = {}, traces = {}) 
         (timingUs ? ` · ${fmtUs(timingUs)}` : "") +
         `</span>`
       : (timingUs ? `<span class="formula-stats">${fmtUs(timingUs)}</span>` : "")) +
-    `    ${verdictChip}` +
+    `    ${verdictChip} ${checkChip}` +
     `    <button class="logic-toggle" type="button">${open ? "▾ hide logic" : "▸ logic"}</button>` +
     `  </div>` +
     (state.explain && description ? `<div class="formula-desc">${escapeHtml(description)}</div>` : "") +

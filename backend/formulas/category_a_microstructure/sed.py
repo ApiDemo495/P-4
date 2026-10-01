@@ -105,3 +105,13 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     trace(ctx, "scale used", denom, "fraction of the average spread")
     trace(ctx, "net signed flow", float(np.sum(signed_flow)), "contracts (+ = net buyers)")
     return finite(tanh(GAIN * effect / (denom + EPS)))
+
+
+DOUBLE_CHECK = "value = tanh(GAIN x relative effect / scale used)"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "relative effect" not in t or "scale used" not in t:
+        return 0.0
+    return tanh(GAIN * float(t["relative effect"]) / (float(t["scale used"]) + EPS))

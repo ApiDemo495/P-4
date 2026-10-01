@@ -94,3 +94,13 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     if direction == 0.0:
         return 0.0
     return finite(tanh(surprise) * direction)
+
+
+DOUBLE_CHECK = "value = tanh(vol surprise) x drift direction"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "vol surprise" not in t:
+        return 0.0
+    return tanh(float(t["vol surprise"])) * float(t["direction used"])

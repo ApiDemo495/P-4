@@ -193,4 +193,16 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     # (half a period after it) is the sell point, which is why the cosine - not
     # the sine - carries the position.
     raw = float(np.cos(phi)) * up_sign
+    trace(ctx, "phase phi", phi, "radians since the crossing")
+    trace(ctx, "cos(phi) x crossing direction", raw, "undamped position in the cycle")
     return finite(raw * damping)
+
+
+DOUBLE_CHECK = "value = cos(phi) x crossing direction x damping"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "phase phi" not in t:
+        return 0.0
+    return float(np.cos(float(t["phase phi"]))) * float(t["crossing direction"]) * float(t["damping"])

@@ -17,7 +17,7 @@ import numpy as np
 
 from backend.core import config as cfg
 
-from backend.formulas._util import EPS, finite
+from backend.formulas._util import EPS, finite, trace
 
 NAME = "BAR"
 CATEGORY = "B"
@@ -66,8 +66,24 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     a_ask = max(0.0, _side_total(prev, 1, ACTIVE_LEVELS) - _side_total(now, 1, ACTIVE_LEVELS))
     state.last_a_bid, state.last_a_ask = a_bid, a_ask
 
+    trace(ctx, "bid depth absorbed", a_bid, f"contracts gone from the top {ACTIVE_LEVELS} bid levels")
+    trace(ctx, "ask depth absorbed", a_ask, f"contracts gone from the top {ACTIVE_LEVELS} ask levels")
     if a_bid <= 0.0 and a_ask <= 0.0:
         return 0.0
 
     raw = (a_ask - a_bid) / (a_ask + a_bid + EPS)
+    trace(ctx, "absorption asymmetry", raw, "(ask - bid) / (ask + bid)")
     return finite(max(-1.0, min(1.0, raw)))
+
+
+DOUBLE_CHECK = "value = clip((ask absorbed - bid absorbed) / (ask absorbed + bid absorbed), -1, 1)"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "bid depth absorbed" not in t:
+        return 0.0
+    a_bid, a_ask = float(t["bid depth absorbed"]), float(t["ask depth absorbed"])
+    if a_bid <= 0.0 and a_ask <= 0.0:
+        return 0.0
+    return max(-1.0, min(1.0, (a_ask - a_bid) / (a_ask + a_bid + EPS)))

@@ -156,3 +156,13 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     if drift_sign == 0.0:
         return 0.0
     return finite(persistence * drift_sign * materiality)
+
+
+DOUBLE_CHECK = "value = persistence strength x drift sign x materiality"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "persistence strength" not in t:
+        return 0.0
+    return float(t["persistence strength"]) * float(t["drift sign"]) * float(t["materiality"])

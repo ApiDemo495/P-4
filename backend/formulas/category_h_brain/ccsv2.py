@@ -26,6 +26,7 @@ import numpy as np
 
 from backend.brain import graph_convolution as gc
 from backend.formulas._util import EPS, finite
+from backend.formulas._util import trace as trace_row
 from backend.formulas.category_h_brain import kcae as kcae_formula
 
 NAME = "CCSv2"
@@ -145,6 +146,10 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
         return 0.0
     balance = float(trace.lh_approach - trace.lh_avoid) - float(trace.resting_balance)
     score = np.tanh(balance)
+    trace_row(ctx, "LH approach drive", float(trace.lh_approach), "lateral horn")
+    trace_row(ctx, "LH avoid drive", float(trace.lh_avoid), "lateral horn")
+    trace_row(ctx, "resting balance", float(trace.resting_balance), "subtracted baseline")
+    trace_row(ctx, "net balance", balance, "approach - avoid - resting")
     # The score is computed here rather than in ``prepare``, so publish it on the
     # trace as well: /api/brain/trace and the matrix viewer must show the same
     # CCSv2 value the signal was built from.
@@ -155,3 +160,13 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
 
 def confidence(state: State) -> float:
     return float(state.confidence)
+
+
+DOUBLE_CHECK = "value = tanh(LH approach - LH avoid - resting balance)"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "net balance" not in t:
+        return 0.0
+    return float(np.tanh(float(t["net balance"])))

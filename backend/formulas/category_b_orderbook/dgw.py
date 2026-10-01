@@ -100,3 +100,13 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     gravity = 1e4 * relative / 2.0
     trace(ctx, "gravity (bps-equivalent)", gravity, "2 bps saturates")
     return finite(tanh(gravity))
+
+
+DOUBLE_CHECK = "value = tanh(gravity in bps / 2)"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "gravity (bps-equivalent)" not in t:
+        return 0.0
+    return tanh(float(t["gravity (bps-equivalent)"]))

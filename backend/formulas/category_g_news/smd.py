@@ -18,7 +18,7 @@ Latency budget: < 0.01 ms.
 
 from __future__ import annotations
 
-from backend.formulas._util import finite, tanh
+from backend.formulas._util import finite, tanh, trace
 
 NAME = "SMD"
 CATEGORY = "G"
@@ -51,4 +51,17 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     tai = float(ctx.get("TAI", 0.0))
     score = tanh(niv - tai)
     state.last_smd = score
+    trace(ctx, "NIV (news tone)", niv, "formula 19")
+    trace(ctx, "TAI (price impulse)", tai, "formula 1")
+    trace(ctx, "divergence NIV - TAI", niv - tai, "positive = news ahead of price")
     return finite(score)
+
+
+DOUBLE_CHECK = "value = tanh(NIV - TAI)"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "NIV (news tone)" not in t:
+        return 0.0
+    return tanh(float(t["NIV (news tone)"]) - float(t["TAI (price impulse)"]))

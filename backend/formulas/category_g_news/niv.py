@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import math
 
-from backend.formulas._util import EPS, finite
+from backend.formulas._util import EPS, finite, trace
 
 NAME = "NIV"
 CATEGORY = "G"
@@ -72,6 +72,9 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
         used += 1
 
     state.contributing_items = used
+    trace(ctx, "headlines weighted", used, f"of {min(len(items), ITEMS)} considered")
+    trace(ctx, "weighted sentiment sum", num, "sentiment x credibility x e^(-age/tau)")
+    trace(ctx, "weight sum", den, "credibility x e^(-age/tau)")
     if den <= EPS:
         state.last_niv = 0.0
         return 0.0
@@ -79,3 +82,13 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     niv = num / den
     state.last_niv = niv
     return finite(max(-1.0, min(1.0, niv)))
+
+
+DOUBLE_CHECK = "value = clip(weighted sentiment sum / weight sum, -1, 1)"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "weight sum" not in t or float(t["weight sum"]) <= EPS:
+        return 0.0
+    return max(-1.0, min(1.0, float(t["weighted sentiment sum"]) / float(t["weight sum"])))

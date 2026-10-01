@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from backend.formulas._util import EPS, finite, tanh
+from backend.formulas._util import EPS, finite, tanh, trace
 
 NAME = "ERC"
 CATEGORY = "D"
@@ -121,4 +121,17 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     if len(state.sampen_history) > 32:
         del state.sampen_history[:-32]
 
+    trace(ctx, "prices in the window", int(window.size), "ticks")
+    trace(ctx, "tolerance r", tolerance, f"{r_mult:g} x window sigma")
+    trace(ctx, "sample entropy", sampen, f"m = {TEMPLATE_LENGTH}; 1.0 = the random-walk reference")
     return finite(tanh(sampen - 1.0))
+
+
+DOUBLE_CHECK = "value = tanh(sample entropy - 1)"
+
+
+def double_check(t: dict, asset: str) -> float:
+    """Independent re-derivation of the output from the traced intermediates."""
+    if "sample entropy" not in t:
+        return 0.0
+    return tanh(float(t["sample entropy"]) - 1.0)
