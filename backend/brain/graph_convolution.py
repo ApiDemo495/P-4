@@ -184,11 +184,41 @@ class GraphConvolution:
         # without forcing every other module to think in transposed indices.
         self.adjacency = np.asarray(adjacency, dtype=np.float64)
         self.normalized = normalize_adjacency(self.adjacency.T)
+        # Polarity is calibrated before the gain (the gain probe uses it).
+        self.pn_polarity = np.ones(N_FORMULAS, dtype=np.float64)
+        self.pn_polarity = self.calibrate_polarity()
         if gain is None or gain == "auto":
             self.gain = self.calibrate_gain()
         else:
             self.gain = float(gain)
         self.propagation = self.normalized * self.gain
+
+    # ------------------------------------------------------------------
+    def calibrate_polarity(self) -> np.ndarray:
+        """Orient every projection neuron so that *positive = approach*.
+
+        The connectome fixes which glomerulus talks to which Kenyon Cells and
+        which MBON those cells drive; it does not know that the engine's
+        convention is "a positive formula value is bullish".  Left as wired,
+        nine of the twenty inputs of the fallback matrix reached the lateral
+        horn with the opposite valence (a bullish DGW read as avoid, a bullish
+        RSV as avoid, ...), so the circuit's vote was a scrambled mixture of
+        the formulas rather than their consensus (Deviation 22-E).  Each PN is
+        probed alone with +1; the ones whose read-out is negative are flipped
+        at the input, which is the biological ON/OFF channel choice and leaves
+        the wiring itself untouched.
+        """
+        polarity = np.ones(N_FORMULAS, dtype=np.float64)
+        probe_polarity = np.ones(N_FORMULAS, dtype=np.float64)
+        for i in range(N_FORMULAS):
+            probe = np.zeros(N_FORMULAS, dtype=np.float64)
+            probe[i] = 1.0
+            trace = self._forward(
+                probe, drg=0.0, hsi=0.0, matrix=self.normalized, gain=1.0, polarity=probe_polarity
+            )
+            if trace.lh_approach - trace.lh_avoid < 0.0:
+                polarity[i] = -1.0
+        return polarity
 
     # ------------------------------------------------------------------
     def calibrate_gain(self, target: float = 1.0, probes: int = 16, seed: int = 7) -> float:
@@ -238,11 +268,13 @@ class GraphConvolution:
         hsi: float,
         matrix: np.ndarray,
         gain: float,
+        polarity: np.ndarray | None = None,
     ) -> ActivationTrace:
         a0 = np.zeros(N_NODES, dtype=np.float64)
         vec = np.asarray(formula_vector, dtype=np.float64).ravel()
         n = min(vec.size, N_FORMULAS)
-        a0[:n] = vec[:n]
+        polarity = self.pn_polarity if polarity is None else polarity
+        a0[:n] = vec[:n] * polarity[:n]
         # DANs + octopamine node enter at the input layer as specified.
         a0[PAM] = 0.0
         a0[PPL1] = 0.0

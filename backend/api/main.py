@@ -221,6 +221,7 @@ async def system_config() -> dict:
             "local": settings.weight_local,
             "github": settings.weight_github,
             "physics": settings.weight_physics,
+            "formulas": settings.weight_formulas,
         },
         "configured": {
             "gemini": bool(settings.gemini_api_key),

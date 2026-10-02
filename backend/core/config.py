@@ -208,6 +208,10 @@ class Settings:
     # Round T: the thermodynamic capital layer (backend/physics) votes beside
     # the agents.  0 disables it; the other weights are renormalised with it.
     weight_physics: float = field(default_factory=lambda: _env_float("PHYSICS_WEIGHT", 0.20))
+    # Round V: the 22 formulas' own weighted consensus votes directly (it used
+    # to reach the side only through the brain, so a model-only physics vote
+    # could out-vote twenty live formulas).  0 disables it.
+    weight_formulas: float = field(default_factory=lambda: _env_float("FORMULAS_WEIGHT", 0.30))
     physics_delta_w: float = field(default_factory=lambda: _env_float("PHYSICS_DELTA_W", 0.15))
     hsi_dampen_threshold: float = 0.80
     hsi_confidence_floor: float = 0.20

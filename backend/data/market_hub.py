@@ -34,6 +34,11 @@ class AssetBuffers:
         self.ticks = TickBuffer()
         self.book = L2Buffer()
         self.candles = CandleBuffer()
+        # Minute-candle roller for feeds without klines (CoinGecko, simulator):
+        # the minute currently being built and its latest trade price.
+        self.candle_minute: int = -1
+        self.candle_close: float = 0.0
+        self.candles_from_ticks: bool = False
 
 
 class MarketDataHub:
@@ -122,12 +127,37 @@ class MarketDataHub:
         for row in ticks or []:
             buf.ticks.append(row[1], row[2], row[3], time_ms=row[0])
             self._track_flash(asset, row[1], row[0] / 1000.0)
+            self._roll_candle(buf, float(row[1]), float(row[0]))
         if book is not None:
             buf.book.push(book)
+
+    def _roll_candle(self, buf: AssetBuffers, price: float, time_ms: float) -> None:
+        """Build 1-minute closes from the trade tape.
+
+        Only Binance delivers klines; CoinGecko and the simulator used to leave
+        the candle buffer at its warm-up contents forever, so the realised
+        volatility (and with it every take-profit / stop-loss) sat on the 4 bps
+        floor and never moved.  Every feed now rolls its own minute closes;
+        when Binance klines are present they stay authoritative.
+        """
+        if self.active_source == "binance" and not buf.candles_from_ticks:
+            return
+        minute = int(time_ms // 60_000)
+        if buf.candle_minute < 0:
+            buf.candle_minute = minute
+        elif minute > buf.candle_minute:
+            buf.candles.push(buf.candle_close, buf.candle_minute * 60_000)
+            buf.candles_from_ticks = True
+            buf.candle_minute = minute
+        buf.candle_close = price
 
     async def _on_candle(self, asset: str, close: float) -> None:
         buf = self.buffers.get(asset)
         if buf is not None:
+            if buf.candles_from_ticks:
+                # Binance is back: hand the buffer over to real klines again.
+                buf.candles_from_ticks = False
+                buf.candle_minute = -1
             buf.candles.push(close)
 
     def _track_flash(self, asset: str, price: float, ts: float) -> None:

@@ -51,19 +51,37 @@ def realized_volatility_bps(snapshot, asset: str, horizon_seconds: float = 60.0)
     if ticks is None or len(ticks) < 20:
         return 0.0
     prices = np.asarray(ticks[:, 1], dtype=np.float64)
+    try:
+        times = np.asarray(ticks[:, 0], dtype=np.float64) / 1000.0
+        span = float(times[-1] - times[0])
+    except (TypeError, IndexError, ValueError):
+        times, span = None, 0.0
+
+    # Time-bucketed closes: the tape is resampled on a fixed grid (5 s buckets,
+    # or coarser when the tape is short) and the bucket returns are scaled to
+    # the horizon by sqrt(time).  Per-tick returns cannot be used directly: a
+    # tick is not a unit of time, so sigma_tick * sqrt(horizon / span) read a
+    # 100 bps/min tape as ~1.7 bps and pinned every stop on the floor.
+    if times is not None and span >= 10.0:
+        bucket = max(1.0, min(5.0, span / 12.0))
+        edges = np.floor((times - times[0]) / bucket).astype(np.int64)
+        change = np.flatnonzero(np.diff(edges)) if edges.size > 1 else np.zeros(0, dtype=np.int64)
+        closes = np.concatenate([prices[change], prices[-1:]]) if change.size else prices[-1:]
+        rets = np.diff(closes) / np.where(np.abs(closes[:-1]) > EPS, closes[:-1], np.nan)
+        rets = rets[np.isfinite(rets)]
+        if rets.size >= 4:
+            sigma_bucket = float(np.std(rets, ddof=1)) * 1e4
+            return sigma_bucket * float(np.sqrt(max(horizon_seconds, 1.0) / bucket))
+
+    # No usable timestamps: per-tick returns summed over the ticks one horizon
+    # is expected to hold (dense live tape, ~10 ticks/s).
     rets = np.diff(prices) / np.where(np.abs(prices[:-1]) > EPS, prices[:-1], np.nan)
     rets = rets[np.isfinite(rets)]
     if rets.size < 10:
         return 0.0
     sigma_tick = float(np.std(rets, ddof=1)) * 1e4
-    try:
-        span = float(ticks[-1, 0] - ticks[0, 0]) / 1000.0
-    except (TypeError, IndexError, ValueError):
-        span = 0.0
-    if span <= 1.0:
-        # Unknown spacing: assume the dense tape of a live exchange (~10 ticks/s)
-        span = max(1.0, rets.size / 10.0)
-    return sigma_tick * float(np.sqrt(max(horizon_seconds, 1.0) / span))
+    ticks_per_horizon = max(1.0, min(float(rets.size), 10.0 * max(horizon_seconds, 1.0)))
+    return sigma_tick * float(np.sqrt(ticks_per_horizon))
 
 
 #: Conviction -> position size hint, printed with the levels.

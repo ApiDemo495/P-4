@@ -5,9 +5,16 @@ Turns the last five headlines into one number.  Each item contributes
 dominates a Tier-4 blog post from twenty minutes ago, and anything older than
 five minutes carries under 37% weight.
 
-    NIV = SUM(s_j * c_j * exp(-dt_j/300)) / SUM(c_j * exp(-dt_j/300) + eps)
+    NIV = SUM(s_j * c_j * exp(-dt_j/300)) / (SUM(c_j * exp(-dt_j/300)) + W0)
 
-Already bounded in [-1, +1] by construction, because every s_j is.
+``W0`` (= 0.5, the *resting evidence*) replaces the specification's ``eps``
+(Deviation 19-A): with a bare ``eps`` the decay cancels between numerator and
+denominator, so a single bullish wire from twenty minutes ago kept reading
++0.72 forever and the brain's strongest input never moved.  With ``W0`` a
+stale headline decays towards zero, and five fresh credible headlines that
+agree still read ~90 % of their sentiment.
+
+Still bounded in [-1, +1], because every s_j is and W0 > 0.
 
 Brain mapping: Johnston's organ (antennal mechanosensory) - environmental
 awareness beyond direct price action.
@@ -31,6 +38,8 @@ DESCRIPTION = "Credibility- and age-weighted sentiment of the five latest headli
 
 ITEMS = 5
 DECAY_SECONDS = 300.0
+#: Resting evidence weight - see the module docstring (Deviation 19-A).
+RESTING_WEIGHT = 0.5
 
 
 class State:
@@ -75,20 +84,22 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     trace(ctx, "headlines weighted", used, f"of {min(len(items), ITEMS)} considered")
     trace(ctx, "weighted sentiment sum", num, "sentiment x credibility x e^(-age/tau)")
     trace(ctx, "weight sum", den, "credibility x e^(-age/tau)")
+    trace(ctx, "resting weight W0", RESTING_WEIGHT, "stale news decays to zero")
     if den <= EPS:
         state.last_niv = 0.0
         return 0.0
 
-    niv = num / den
+    niv = num / (den + RESTING_WEIGHT)
     state.last_niv = niv
     return finite(max(-1.0, min(1.0, niv)))
 
 
-DOUBLE_CHECK = "value = clip(weighted sentiment sum / weight sum, -1, 1)"
+DOUBLE_CHECK = "value = clip(weighted sentiment sum / (weight sum + W0), -1, 1)"
 
 
 def double_check(t: dict, asset: str) -> float:
     """Independent re-derivation of the output from the traced intermediates."""
     if "weight sum" not in t or float(t["weight sum"]) <= EPS:
         return 0.0
-    return max(-1.0, min(1.0, float(t["weighted sentiment sum"]) / float(t["weight sum"])))
+    w0 = float(t.get("resting weight W0", RESTING_WEIGHT))
+    return max(-1.0, min(1.0, float(t["weighted sentiment sum"]) / (float(t["weight sum"]) + w0)))

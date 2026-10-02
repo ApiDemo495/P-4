@@ -100,7 +100,10 @@ def compute(
     value_prev = discounted_value(outcomes[:-1]) if r > 1 else 0.0
     state.last_value = value_r
 
-    newest_m = float(outcomes[-1, 1])
+    # Magnitude only (same rule as ``discounted_value``): the buffer stores the
+    # *signed* position P&L, so ``pnl * outcome`` would be positive for a loss
+    # too (-20 bps x -1 = +20) and the gate would sit at +1 forever.
+    newest_m = abs(float(outcomes[-1, 1]))
     newest_o = float(outcomes[-1, 0])
     delta = (newest_m * newest_o + GAMMA * value_r) - value_prev
     state.last_td_error = delta

@@ -173,6 +173,25 @@ def fuse(
         "source": "80-node mushroom body, 3-layer graph convolution",
     }
 
+    # Round V: the formulas' weighted consensus is a voter in its own right.
+    # The user's standing rule is that the formulas outrank every soft input;
+    # before this they reached the side only through the brain's read-out, so
+    # a modelled physics vote at 0.10 could pick the side against twenty live
+    # formulas that leaned the other way.
+    formulas_weight = float(getattr(settings, "weight_formulas", 0.0) or 0.0)
+    if formula_consensus is not None and consensus_voters >= 3 and formulas_weight > 0:
+        f_value = max(-1.0, min(1.0, float(formula_consensus)))
+        active["formulas"] = formulas_weight
+        contributions["formulas"] = {
+            "decision": BUY if f_value >= 0 else SELL,
+            "confidence": round(min(1.0, abs(f_value)), 4),
+            "value": round(f_value, 4),
+            "weight": formulas_weight,
+            "status": "LIVE",
+            "weighted_value": round(formulas_weight * f_value, 4),
+            "source": f"weighted consensus of {int(consensus_voters)} directional formulas",
+        }
+
     for name in ("gemini", "local", "github"):
         result = agents.get(name)
         if result is not None and result.available:
@@ -216,8 +235,8 @@ def fuse(
     for name, weight in active.items():
         if name == "drosophila":
             score += weight * max(-1.0, min(1.0, ccs_value))
-        elif name == "physics":
-            score += weight * float(contributions["physics"]["value"])
+        elif name in ("physics", "formulas"):
+            score += weight * float(contributions[name]["value"])
         else:
             result = agents[name]
             score += weight * _direction_value(result.decision) * float(result.confidence or 0.0)
@@ -257,6 +276,9 @@ def fuse(
         # No AI agent answered: the Drosophila brain is the sole decision maker
         # (degradation level 3), so its confidence carries the whole weight.
         brain_term = brain_conf
+    if "formulas" in contributions:
+        # A coherent formula consensus is earned confidence too.
+        brain_term = 0.5 * brain_term + 0.5 * float(contributions["formulas"]["confidence"])
 
     raw_confidence = 0.65 * magnitude + 0.35 * brain_term
     raw_confidence *= 0.85 + 0.15 * agreement

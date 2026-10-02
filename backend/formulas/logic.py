@@ -527,12 +527,12 @@ register(
 register(
     Logic(
         name="NIV",
-        expression="NIV = sum(s_j * c_j * e^(-dt/300)) / (sum(c_j * e^(-dt/300)) + eps)",
+        expression="NIV = sum(s_j * c_j * e^(-dt/300)) / (sum(c_j * e^(-dt/300)) + W0),  W0 = 0.5",
         reads=("the five latest headlines", "sentiment score per headline", "source credibility"),
         steps=(
             "Score each headline's sentiment (lexicon or provider score).",
             "Weight it by source credibility and by e^(-age/300 s).",
-            "Take the weighted mean: a fresh, credible headline dominates an old one.",
+            "Divide by the total weight plus the resting evidence W0 = 0.5: a fresh, credible headline dominates an old one, and a stale one decays to zero instead of holding its sentiment forever.",
         ),
         bands=DIRECTIONAL_SYMMETRIC,
         sign="positive = the news flow is bullish right now",
@@ -589,15 +589,16 @@ register(
     Logic(
         name="CCSv2",
         expression=(
-            "CCSv2 = tanh( (LH_approach - LH_avoid) - resting_balance ),   "
-            "resting_balance = the same read-out for a zero input vector"
+            "CCSv2 = tanh( LH_approach - LH_avoid ),   "
+            "LH_approach = (approach(x) + avoid(-x)) / 2,  LH_avoid = (avoid(x) + approach(-x)) / 2  "
+            "(push-pull: the mirrored ensemble runs through the same wiring, so the score is odd in x)"
         ),
         reads=("all 20 input formulas mapped to the 20 projection neurons", "80-node connectome adjacency"),
         steps=(
             "Write the 20 formula values onto PN 0-19 (each input has its own neuron).",
             "Propagate the zero vector through the same circuit: the Kenyon Cells drive the neutral MBON on the rectified (bullish) side only, so the circuit has a positive resting read-out. Subtracting it makes the score sign-symmetric.",
             "Propagate the real vector through 3 graph-convolution layers: PN -> KC (sparse code) -> MBON, gated by dopamine (DRG) and octopamine (HSI).",
-            "Read the lateral horn: (approach - avoid) - resting_balance, squashed by tanh.",
+            "Read the lateral horn push-pull: (approach - avoid) of the ensemble and of its mirror image, averaged, squashed by tanh.",
             "The whole brain has exactly one vote, in [-1, 1].",
         ),
         bands=DIRECTIONAL_SYMMETRIC,

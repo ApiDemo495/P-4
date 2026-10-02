@@ -66,13 +66,26 @@ class BinanceWebSocket:
         self._symbol_map = {v.upper(): k for k, v in cfg.BINANCE_SYMBOLS.items()}
 
     # ------------------------------------------------------------------
+    #: Market-data hosts, tried in turn.  ``data-stream.binance.vision`` is
+    #: Binance's public market-data-only endpoint; it is reachable from the US
+    #: regions GitHub Codespaces run in, where ``stream.binance.com`` answers
+    #: 451 and the engine used to fall back to CoinGecko's 10-second ticks.
+    FALLBACK_HOSTS = ("wss://data-stream.binance.vision", "wss://stream.binance.com:443")
+
+    @property
+    def hosts(self) -> tuple[str, ...]:
+        primary = str(self.settings.binance_ws_base).rstrip("/")
+        return (primary,) + tuple(h for h in self.FALLBACK_HOSTS if h != primary)
+
     @property
     def url(self) -> str:
         streams: list[str] = []
         for asset in cfg.ASSETS:
             sym = cfg.BINANCE_SYMBOLS[asset]
             streams += [f"{sym}@aggTrade", f"{sym}@kline_1m", f"{sym}@depth20@100ms"]
-        return f"{self.settings.binance_ws_base}/stream?streams={'/'.join(streams)}"
+        hosts = self.hosts
+        host = hosts[self.status.consecutive_failures % len(hosts)]
+        return f"{host}/stream?streams={'/'.join(streams)}"
 
     def stop(self) -> None:
         self._stop.set()

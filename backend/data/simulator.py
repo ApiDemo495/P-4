@@ -111,7 +111,10 @@ class MarketSimulator:
             assert rng is not None
 
             # Expected return: risk-on lifts BTC and pressures gold, and vice versa.
-            beta_regime = 0.00035 if asset == "BTC" else -0.00022
+            # Sized like a real tape: a full regime is ~20 bps/min of drift on
+            # BTC (it used to be 210 bps/min, ten times anything the exchange
+            # prints, which made every minute a trend and every stop a joke).
+            beta_regime = 0.00004 if asset == "BTC" else -0.000025
             drift = beta_regime * self._regime * dt
             state.drift = drift
 
@@ -120,7 +123,9 @@ class MarketSimulator:
             state.price = max(1.0, state.price * math.exp(ret))
 
             # Occasional liquidity burst: volume spike + momentum kick
-            burst = rng.random() < (0.035 * dt) * 10
+            # ~one liquidity burst every 30 s (it used to be three a second,
+            # which alone made the tape ~60 bps/min).
+            burst = rng.random() < 0.035 * dt
             if burst:
                 kick = rng.normal(0, 1) * state.sigma_1s * 6.0
                 state.price = max(1.0, state.price * math.exp(kick))

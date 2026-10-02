@@ -64,8 +64,19 @@ class State:
         return obj
 
 
+#: Formulas whose output has no side (``DIRECTIONAL = False``): HSI scales
+#: conviction and already enters the circuit through the octopamine node, ERC
+#: describes the regime.  Feeding their (always positive) magnitudes into the
+#: projection neurons read as a permanent *bullish* drive - on a flat tape the
+#: circuit voted +0.42 and the fused signal repeated BUY (Deviation 22-C).
+NON_DIRECTIONAL_PN = frozenset({"HSI", "ERC"})
+
+
 def _vector_from_ctx(ctx: dict) -> np.ndarray:
-    return np.asarray([float(ctx.get(name, 0.0)) for name in FORMULA_ORDER], dtype=np.float64)
+    return np.asarray(
+        [0.0 if name in NON_DIRECTIONAL_PN else float(ctx.get(name, 0.0)) for name in FORMULA_ORDER],
+        dtype=np.float64,
+    )
 
 
 def prepare(snapshot, asset: str, state: State, params: dict, ctx: dict) -> gc.ActivationTrace | None:
@@ -80,16 +91,29 @@ def prepare(snapshot, asset: str, state: State, params: dict, ctx: dict) -> gc.A
     hsi = float(ctx.get("HSI", 0.0))
     state.drg, state.hsi = drg, hsi
 
-    trace = conv.propagate(_vector_from_ctx(ctx), drg=drg, hsi=hsi)
+    vector = _vector_from_ctx(ctx)
+    trace = conv.propagate(vector, drg=drg, hsi=hsi)
 
-    # --- resting-baseline calibration (Deviation 22-A, SPEC_NOTES.md) -----
-    # The Kenyon Cells drive the neutral MBON on the rectified (bullish) side
-    # only, so with *no inputs at all* this circuit still reports a positive
-    # lateral-horn imbalance.  Subtracting the read-out of the zero vector
-    # removes that resting bias and makes the score sign-symmetric: the same
-    # ensemble conviction bullish and bearish now produce equal magnitudes.
-    resting = conv.propagate(np.zeros(len(FORMULA_ORDER), dtype=np.float64), drg=drg, hsi=hsi)
-    resting_balance = float(resting.lh_approach - resting.lh_avoid)
+    # --- push-pull read-out (Deviation 22-D, SPEC_NOTES.md) --------------
+    # The PN -> KC fan-in is rectified, so a *negative* formula value barely
+    # reaches the Kenyon Cells: NIV = +0.7 read +0.38 at the lateral horn,
+    # NIV = -0.7 read -0.02, and LCS = -0.75 changed nothing at all.  The
+    # zero-vector baseline of Deviation 22-A could not repair that - it is a
+    # bias in the *gain*, not in the offset - and the circuit voted BUY on
+    # tapes whose formulas were mostly bearish.  The fly solves the same
+    # problem with ON/OFF channels: the mirrored ensemble is propagated through
+    # the same wiring and the two read-outs are combined antisymmetrically,
+    #     approach = (approach(x) + avoid(-x)) / 2,   avoid = (avoid(x) + approach(-x)) / 2
+    # which makes the score an odd function of the input (f(-x) = -f(x)),
+    # removes the resting offset exactly, and leaves every bullish response
+    # unchanged in magnitude.
+    mirror = conv.propagate(-vector, drg=drg, hsi=hsi)
+    approach = 0.5 * (float(trace.lh_approach) + float(mirror.lh_avoid))
+    avoid = 0.5 * (float(trace.lh_avoid) + float(mirror.lh_approach))
+    neutral = 0.5 * (float(trace.lh_neutral) + float(mirror.lh_neutral))
+    trace.lh_approach, trace.lh_avoid, trace.lh_neutral = approach, avoid, neutral
+    trace.active_kcs = max(int(trace.active_kcs), int(mirror.active_kcs))
+    resting_balance = 0.0  # the odd read-out has no resting offset by construction
     trace.resting_balance = resting_balance  # surfaced through the brain trace
 
     # KCAE is measured on the Kenyon Cell *drive* (see the |a|^2 note below).
@@ -162,7 +186,7 @@ def confidence(state: State) -> float:
     return float(state.confidence)
 
 
-DOUBLE_CHECK = "value = tanh(LH approach - LH avoid - resting balance)"
+DOUBLE_CHECK = "value = tanh(LH approach - LH avoid - resting balance), push-pull read-out"
 
 
 def double_check(t: dict, asset: str) -> float:
