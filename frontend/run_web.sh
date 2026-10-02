@@ -56,8 +56,12 @@ done
 # ------------------------------------------------------------- find flutter ---
 find_flutter() {
   if command -v flutter >/dev/null 2>&1; then command -v flutter; return 0; fi
-  for candidate in "$HOME/flutter/bin/flutter" /usr/local/flutter/bin/flutter \
+  local remembered=""
+  [ -f "$REPO_ROOT/.run/flutter_home" ] && remembered="$(cat "$REPO_ROOT/.run/flutter_home")/bin/flutter"
+  for candidate in "${FLUTTER_HOME:-/nonexistent}/bin/flutter" "$remembered" "$HOME/flutter/bin/flutter" \
+                   "$HOME/flutter-sdk/bin/flutter" /usr/local/flutter/bin/flutter \
                    /opt/flutter/bin/flutter /usr/lib/flutter/bin/flutter; do
+    [ -n "$candidate" ] || continue
     [ -x "$candidate" ] && { echo "$candidate"; return 0; }
   done
   return 1
@@ -116,16 +120,28 @@ EOF
     exit 1
   fi
   FLUTTER_DIR="${FLUTTER_HOME:-$HOME/flutter}"
-
-  # -- pre-flight: the two things that make the download "fail" for no reason
-  # 1. a half-finished earlier attempt: a non-empty $FLUTTER_DIR *without* a
-  #    .git directory makes `git clone` refuse ("destination path already
-  #    exists") every single time -> wipe it and start clean.
-  if [ -d "$FLUTTER_DIR" ] && [ ! -d "$FLUTTER_DIR/.git" ] && [ ! -x "$FLUTTER_DIR/bin/flutter" ]; then
-    warn "removing a half-downloaded SDK left in $FLUTTER_DIR by an earlier attempt"
-    rm -rf "$FLUTTER_DIR"
+  if [ -z "${FLUTTER_HOME:-}" ] && [ -f "$REPO_ROOT/.run/flutter_home" ]; then
+    FLUTTER_DIR="$(cat "$REPO_ROOT/.run/flutter_home")"
   fi
-  # 2. disk: the SDK + Dart + web engine need ~3 GB free.
+
+  # -- pre-flight 1: anything already at $FLUTTER_DIR that is not a working SDK
+  #    is the reason for "fatal: destination path already exists" - a partial
+  #    clone (with or without .git), an empty folder, a wrongly-cased FLUTTER.
+  #    Move it aside (never fail on rm), and if the path still cannot be freed,
+  #    install next to it and remember the new home for every later run.
+  for stale in "$FLUTTER_DIR" "$HOME/FLUTTER" "$HOME/Flutter"; do
+    [ -e "$stale" ] || continue
+    [ -x "$stale/bin/flutter" ] && continue
+    warn "removing an incomplete Flutter SDK left at $stale by an earlier attempt"
+    rm -rf "$stale" 2>/dev/null || mv "$stale" "${stale}.broken.$$" 2>/dev/null || true
+  done
+  if [ -e "$FLUTTER_DIR" ] && [ ! -x "$FLUTTER_DIR/bin/flutter" ]; then
+    FLUTTER_DIR="$HOME/flutter-sdk"
+    warn "could not free the old path - installing into $FLUTTER_DIR instead"
+    rm -rf "$FLUTTER_DIR" 2>/dev/null || true
+  fi
+  mkdir -p "$REPO_ROOT/.run" && printf '%s\n' "$FLUTTER_DIR" >"$REPO_ROOT/.run/flutter_home"
+  # -- pre-flight 2: disk - the SDK + Dart + web engine need ~3 GB free.
   free_mb="$(df -Pm "$HOME" 2>/dev/null | awk 'NR==2 {print $4}')"
   if [ -n "${free_mb:-}" ] && [ "$free_mb" -lt 3000 ]; then
     bad "only ${free_mb} MB free under $HOME - the Flutter SDK needs about 3 GB."
@@ -134,36 +150,32 @@ EOF
     exit 1
   fi
 
-  # -- route A: shallow git clone of the stable branch (resumable, 3 tries)
   ok_attempt=0
-  if command -v git >/dev/null 2>&1; then
-    for attempt in 1 2 3; do
-      if [ -d "$FLUTTER_DIR/.git" ]; then
-        say "${DIM}   resuming the existing clone in $FLUTTER_DIR (attempt $attempt)${R}"
-        git -C "$FLUTTER_DIR" fetch --depth 1 origin stable 2>&1 | tail -n 3 | sed 's/^/      /'
-        git -C "$FLUTTER_DIR" checkout -q stable >/dev/null 2>&1 || true
-        [ -x "$FLUTTER_DIR/bin/flutter" ] && { ok_attempt=1; break; }
-      else
-        say "${DIM}   cloning the stable Flutter SDK into $FLUTTER_DIR (~700 MB, 2-4 min, attempt $attempt)${R}"
-        git clone --depth 1 --single-branch -b stable \
-          https://github.com/flutter/flutter.git "$FLUTTER_DIR" 2>&1 | tail -n 4 | sed 's/^/      /'
-        [ -x "$FLUTTER_DIR/bin/flutter" ] && { ok_attempt=1; break; }
-        # a failed clone can leave a partial directory behind
-        [ -d "$FLUTTER_DIR/.git" ] || rm -rf "$FLUTTER_DIR"
-      fi
-      warn "git attempt $attempt failed"
-      sleep $((attempt * 5))
-    done
-  else
-    warn "git is not installed - skipping the clone route"
-  fi
+  parent="$(dirname "$FLUTTER_DIR")"
+  staging="$parent/.flutter.extracting.$$"
 
-  # -- route B: the official release archive from storage.googleapis.com
-  #    (what flutter.dev's download button serves; no git needed, one file)
-  if [ "$ok_attempt" != 1 ]; then
-    say "${DIM}   git route failed - trying the release archive instead${R}"
-    releases_json="https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json"
-    archive_path="$(curl -fsSL --retry 3 "$releases_json" 2>/dev/null | python3 -c '
+  # -- route A (preferred): the official release archive - ONE resumable file,
+  #    exactly what flutter.dev's download button serves.  Much faster than a
+  #    git clone of the whole flutter repository and immune to "already exists".
+  step_archive() {
+    local url="$1" tmp_tar
+    tmp_tar="$parent/.flutter_sdk_download.tar.xz"     # fixed name so -C - resumes
+    say "${DIM}   downloading $url${R}"
+    if ! curl -fL --retry 5 --retry-delay 3 -C - -sS -o "$tmp_tar" "$url"; then
+      # a resume against a changed file can fail: start that one over
+      rm -f "$tmp_tar"
+      curl -fL --retry 5 --retry-delay 3 -sS -o "$tmp_tar" "$url" || return 1
+    fi
+    rm -rf "$staging" && mkdir -p "$staging"
+    if tar -xJf "$tmp_tar" -C "$staging" && [ -x "$staging/flutter/bin/flutter" ]; then
+      rm -rf "$FLUTTER_DIR"
+      mv "$staging/flutter" "$FLUTTER_DIR" && rm -rf "$staging" && rm -f "$tmp_tar" && return 0
+    fi
+    rm -rf "$staging"; rm -f "$tmp_tar"
+    return 1
+  }
+  releases_json="https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json"
+  archive_path="$(curl -fsSL --retry 3 --max-time 30 "$releases_json" 2>/dev/null | python3 -c '
 import json, sys
 data = json.load(sys.stdin)
 stable = data["current_release"]["stable"]
@@ -171,31 +183,35 @@ for rel in data["releases"]:
     if rel["hash"] == stable and rel.get("dart_sdk_arch", "x64") == "x64":
         print(rel["archive"]); break
 ' 2>/dev/null || true)"
-    if [ -n "$archive_path" ]; then
-      url="https://storage.googleapis.com/flutter_infra_release/releases/${archive_path}"
-      say "${DIM}   $url${R}"
-      tmp_tar="$(mktemp -t flutter_sdk.XXXXXX)"
-      parent="$(dirname "$FLUTTER_DIR")"
-      for attempt in 1 2 3; do
-        if curl -fL --retry 3 -C - -sS -o "$tmp_tar" "$url"; then
-          rm -rf "$FLUTTER_DIR" "$parent/flutter.extracting"
-          mkdir -p "$parent/flutter.extracting"
-          if tar -xJf "$tmp_tar" -C "$parent/flutter.extracting" \
-              && [ -x "$parent/flutter.extracting/flutter/bin/flutter" ]; then
-            mv "$parent/flutter.extracting/flutter" "$FLUTTER_DIR"
-            rm -rf "$parent/flutter.extracting"
-            ok_attempt=1; break
-          fi
-          warn "archive extraction failed (attempt $attempt)"
-        else
-          warn "archive download failed (attempt $attempt)"
-        fi
-        sleep $((attempt * 5))
-      done
-      rm -f "$tmp_tar"
-    else
-      warn "could not read the Flutter release index (storage.googleapis.com unreachable?)"
-    fi
+  candidates=""
+  [ -n "$archive_path" ] && candidates="https://storage.googleapis.com/flutter_infra_release/releases/${archive_path}"
+  # Known-good stable archives, newest first, when the index is unreachable.
+  for v in 3.35.5 3.35.4 3.35.3 3.32.8 3.32.5 3.29.3; do
+    candidates="$candidates https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${v}-stable.tar.xz"
+  done
+  for url in $candidates; do
+    step_archive "$url" && { ok_attempt=1; ok "Flutter SDK installed from the release archive"; break; }
+    warn "archive route failed for $(basename "$url")"
+  done
+
+  # -- route B: shallow git clone into a *fresh* directory, then move it into
+  #    place (so git can never complain that the destination exists).
+  if [ "$ok_attempt" != 1 ] && command -v git >/dev/null 2>&1; then
+    for attempt in 1 2 3; do
+      rm -rf "$staging"
+      say "${DIM}   cloning the stable Flutter SDK (~700 MB, attempt $attempt)${R}"
+      if git clone --depth 1 --single-branch -b stable \
+           https://github.com/flutter/flutter.git "$staging" 2>&1 | tail -n 4 | sed 's/^/      /' \
+         && [ -x "$staging/bin/flutter" ]; then
+        rm -rf "$FLUTTER_DIR"
+        mv "$staging" "$FLUTTER_DIR" && { ok_attempt=1; ok "Flutter SDK cloned"; break; }
+      fi
+      rm -rf "$staging"
+      warn "git attempt $attempt failed"
+      sleep $((attempt * 5))
+    done
+  elif [ "$ok_attempt" != 1 ]; then
+    warn "git is not installed - skipping the clone route"
   fi
 
   if [ "$ok_attempt" != 1 ]; then
@@ -207,12 +223,14 @@ for rel in data["releases"]:
       curl -sI https://storage.googleapis.com | head -1
 
     Then click Restart on /flutter, or run by hand:
-      rm -rf ~/flutter
       INSTALL_FLUTTER=1 bash frontend/run_web.sh
 
-    Manual install (any machine): download flutter_linux_<version>-stable.tar.xz from
-    https://docs.flutter.dev/get-started/install/linux, extract it to ~/flutter, then
-    run the command above - it finds ~/flutter/bin/flutter and only builds.
+    Manual install (any machine, no git needed):
+      curl -fL -o /tmp/flutter.tar.xz https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.35.5-stable.tar.xz
+      rm -rf ~/flutter && tar -xJf /tmp/flutter.tar.xz -C ~
+      bash frontend/run_web.sh
+    (any flutter_linux_<version>-stable.tar.xz from https://docs.flutter.dev/install/archive works;
+     the script finds ~/flutter/bin/flutter and only builds.)
 
     The web dashboard on port ${PORT} has every feature meanwhile.
 EOF

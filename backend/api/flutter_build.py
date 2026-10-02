@@ -38,7 +38,21 @@ RUN_WEB = REPO_ROOT / "frontend" / "run_web.sh"
 STATE_DIR = REPO_ROOT / ".run"  # never .devcontainer/ - VS Code watches it
 PID_FILE = STATE_DIR / "flutter.pid"
 LOG_FILE = REPO_ROOT / "flutter-setup.log"
-SDK_DIR = Path(os.environ.get("FLUTTER_HOME", str(Path.home() / "flutter")))
+def sdk_dir() -> Path:
+    """Where the SDK lives: FLUTTER_HOME, else the path frontend/run_web.sh
+    remembered in .run/flutter_home (it moves to ~/flutter-sdk when ~/flutter
+    could not be freed), else ~/flutter."""
+    env = os.environ.get("FLUTTER_HOME")
+    if env:
+        return Path(env)
+    remembered = cfg.REPO_ROOT / ".run" / "flutter_home"
+    try:
+        text = remembered.read_text().strip()
+        if text:
+            return Path(text)
+    except OSError:
+        pass
+    return Path.home() / "flutter"
 
 #: What the log's last progress line means, for the status page.
 STAGES = (
@@ -137,8 +151,9 @@ def status() -> dict:
         "stage": "built - served at /flutter" if is_built else (_stage(tail) if is_running else
                                                                 ("stopped: " + (_last_error(tail) or "not running")
                                                                  if tail else "not started")),
-        "sdk_present": (SDK_DIR / "bin" / "flutter").exists(),
-        "sdk_dir": str(SDK_DIR),
+        "sdk_present": (sdk_dir() / "bin" / "flutter").exists(),
+        "sdk_dir": str(sdk_dir()),
+        "install_route": "release archive first (one resumable file), git clone only as fallback",
         "build_dir": str(BUILD_DIR),
         "pid": _pid() if is_running else None,
         "log": str(LOG_FILE),

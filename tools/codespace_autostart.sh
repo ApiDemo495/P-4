@@ -286,7 +286,7 @@ wait_until_locked() {
   # The first prediction needs one window; do not make the user stare at a
   # "computing" panel wondering whether it worked.
   local waited=0
-  while [ "$waited" -lt 40 ]; do
+  while [ "$waited" -lt 20 ]; do
     local side
     side="$(curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/api/signal/current" 2>/dev/null \
       | sed -n 's/.*"signal"[[:space:]]*:[[:space:]]*"\(BUY\|SELL\)".*/\1/p' | head -1)"

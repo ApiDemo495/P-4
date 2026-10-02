@@ -39,13 +39,24 @@ if command -v apt-get >/dev/null 2>&1; then
     # on to the Python steps, which only need what is already installed.
     if sudo -n true 2>/dev/null; then sudo_opt="sudo -n"; else sudo_opt=""; fi
   fi
-  if [ "$(id -u)" -eq 0 ] || [ -n "$sudo_opt" ]; then
-    log "installing system packages (non-interactive apt)"
+  # Only touch apt when something is actually missing: `apt-get update` alone
+  # costs 30-90 s on a fresh Codespace and the python image already ships
+  # python3, venv, git and curl.  redis is optional (the engine falls back to
+  # its in-process cache), so it never justifies the wait on its own.
+  missing=""
+  python3 -c 'import venv, ensurepip' >/dev/null 2>&1 || missing="$missing python3 python3-venv python3-dev"
+  command -v curl >/dev/null 2>&1 || missing="$missing curl"
+  command -v git >/dev/null 2>&1 || missing="$missing git"
+  command -v unzip >/dev/null 2>&1 || missing="$missing unzip"
+  command -v xz >/dev/null 2>&1 || missing="$missing xz-utils"
+  if [ -z "$missing" ]; then
+    log "system packages already present - skipping apt (fast path)"
+  elif [ "$(id -u)" -eq 0 ] || [ -n "$sudo_opt" ]; then
+    log "installing system packages (non-interactive apt):$missing"
     $sudo_opt apt-get update -qq >/tmp/apt-update.log 2>&1 || warn "apt-get update failed - continuing (see /tmp/apt-update.log)"
     $sudo_opt apt-get install -y -qq --no-install-recommends \
         -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
-        python3 python3-venv python3-dev build-essential curl git unzip \
-        redis-server >/tmp/apt-install.log 2>&1 || warn "some system packages failed to install (see /tmp/apt-install.log)"
+        $missing >/tmp/apt-install.log 2>&1 || warn "some system packages failed to install (see /tmp/apt-install.log)"
   else
     warn "no password-less sudo here - skipping apt; python3 + venv must already exist"
   fi
@@ -74,7 +85,7 @@ log "upgrading pip"
 
 log "installing requirements.txt (the output goes to $PIP_LOG)"
 install_requirements() {
-  "$PY" -m pip install --quiet --progress-bar off --retries 5 --timeout 60 "$@" \
+  "$PY" -m pip install --quiet --progress-bar off --prefer-binary --retries 5 --timeout 60 "$@" \
       -r "$REPO_ROOT/requirements.txt" >>"$PIP_LOG" 2>&1
 }
 if install_requirements; then

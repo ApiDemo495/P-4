@@ -1237,3 +1237,10 @@ as they are**.
 noon irradiance ≈ I₀, 27.87 km terminator sweep, valve direction, energy-
 mass sign, VPIN/O-U/pendulum/A-S sanity, drag semantics, PAXG = −BTC vote,
 fusion weighs but never vetoes, scope declared.  Full suite + payload check.
+
+## U — Flutter SDK install hardening + faster autostart
+
+* Symptom: `fatal: destination path 'FLUTTER' already exists` — a failed earlier clone left a folder with `.git` but no `bin/flutter`, and the old pre-flight only wiped folders *without* `.git`, so the installer looped forever.
+* Fix in `frontend/run_web.sh`: any non-working folder at the SDK path (`~/flutter`, `~/FLUTTER`, `~/Flutter`) is removed or moved aside (fallback home `~/flutter-sdk`), the chosen home is remembered in `.run/flutter_home` (also read by `backend/api/flutter_build.sdk_dir()` and `FLUTTER_HOME` wins over both). Route A is now the official release archive (one resumable `curl -C -` tar.xz, versions from `releases_linux.json` with hard-coded fallbacks), route B a shallow git clone into a *staging* dir followed by `mv` — nothing ever clones into an existing path again.
+* Manual path (documented in README and the `/flutter` failure text): download `flutter_linux_<ver>-stable.tar.xz`, extract to `~/flutter`, run `bash frontend/run_web.sh`.
+* Autostart speed: `.devcontainer/setup.sh` skips apt entirely when venv/curl/git/unzip/xz already exist (the devcontainer image ships them), pip uses `--prefer-binary`; `devcontainer.json` `waitFor` is `onCreateCommand` so the editor attaches while provisioning continues in the background; the attach-time lock wait dropped 40 s → 20 s.

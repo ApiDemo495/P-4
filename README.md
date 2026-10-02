@@ -367,7 +367,8 @@ Codespace tab and let the attach command run, then reload the URL.
 | A notice covering the whole screen | it cannot happen any more: notices are inline chips and a red HOLD box, never a full-screen layer | nothing to fix — if you ever see one, it is a browser cache: reload with `Ctrl+Shift+R` |
 | Several ports, each one "not working" | dead processes of other tools (`flutter run` picks a random port) | `bash run.sh --clean`, then forward **only 8000** |
 | `pip install` fails or "downloading requirements" stalls | `python3-venv` missing, PEP 668, or a proxy | see the block below |
-| Flutter SDK download fails | 700 MB download, optional | `rm -rf ~/flutter` then `INSTALL_FLUTTER=1 bash frontend/run_web.sh` |
+| `fatal: destination path 'flutter' already exists` | a half-finished earlier download left a folder behind | fixed: the installer now moves any non-working folder aside and downloads the **release archive** (one resumable file) before ever trying git; just click Restart on `/flutter` |
+| Flutter SDK download fails on every route | github.com and storage.googleapis.com both blocked | manual install, see the box below |
 | `bash: .venv/bin/python: No such file` | the venv was never created | `bash run.sh` creates it |
 | `ModuleNotFoundError: No module named 'backend'` | started without the repo root on `PYTHONPATH` | use `bash run.sh` |
 | `/flutter` returns `{"detail": "The Flutter web build has not been created yet."}` | the client was never built | `bash frontend/run_web.sh` |
@@ -376,6 +377,22 @@ Codespace tab and let the attach command run, then reload the URL.
 | "Problem in self starting / self downloading" | a hook step failed or the pip download was interrupted | open `/settings` → **Codespace self-start** (or `GET /api/system/autostart`): the journal and the pip/setup/Flutter logs are shown; it retries on the next start/attach |
 | Brain says `Offline connectome` with a neuPrint token pasted | the token was rejected or neuPrint is unreachable from your network | `/settings` → Brain → **Force Reconnect**; the step detail says exactly which (no package install is needed - the client is built in) |
 | `market_data → simulator` in the log | Binance and CoinGecko are unreachable from your network | `MARKET_DATA_MODE=coingecko`, or keep the simulator (always labelled) |
+
+### Installing the Flutter SDK by hand (no git)
+
+```
+curl -fL -o /tmp/flutter.tar.xz https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.35.5-stable.tar.xz
+```
+
+```
+rm -rf ~/flutter && tar -xJf /tmp/flutter.tar.xz -C ~
+```
+
+```
+bash frontend/run_web.sh
+```
+
+Any `flutter_linux_<version>-stable.tar.xz` from https://docs.flutter.dev/install/archive works; the script finds `~/flutter/bin/flutter` and only builds. If `~/flutter` cannot be removed, the installer uses `~/flutter-sdk` by itself and remembers it in `.run/flutter_home`.
 
 ### When the requirements download fails
 

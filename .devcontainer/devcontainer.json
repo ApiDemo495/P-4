@@ -29,7 +29,7 @@
   // ---------------------------------------------------------------------------
   // The editor is not handed over until provisioning is done, so the first
   // thing the user sees is a running dashboard, not a half-installed venv.
-  "waitFor": "postCreateCommand",
+  "waitFor": "onCreateCommand",
   "postCreateCommand": "bash tools/codespace_autostart.sh --provision",
   "postStartCommand": "bash tools/codespace_autostart.sh --start",
   "postAttachCommand": "bash tools/codespace_autostart.sh --attach",
