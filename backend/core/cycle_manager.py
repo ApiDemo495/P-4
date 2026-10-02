@@ -187,6 +187,13 @@ class CycleManager:
         self.final_freeze_ms: float = 0.0
         self._pending_vol_bps: float = 0.0
         self.pending_formula_result: FormulaResult | None = None
+        #: Everything the UI shows *about* the current prediction (fusion
+        #: breakdown, crowd at lock, conviction note, warnings, degradation)
+        #: is staged here by the prefetch / re-freeze and swapped in only at
+        #: the window boundary.  Writing them live was the lock break the
+        #: user kept seeing: the side stayed put while its reasoning,
+        #: supporters and learned block flipped to the *next* window's.
+        self._pending_view: dict | None = None
         self.prefetch_ready: bool = False
         self.prefetch_ms: float = 0.0
         self.prefetch_at: float = 0.0
@@ -457,6 +464,7 @@ class CycleManager:
         if self.pending_formula_result is not None:
             self.last_formula_result = self.pending_formula_result
             self.pending_formula_result = None
+        self._apply_pending_view()
 
         if pending is None:
             # The prefetch failed or the first window is late: compute now.
@@ -567,6 +575,29 @@ class CycleManager:
             )
         return signal
 
+    def _stage_view(self, fusion, emotion_locked: dict, warnings: list, degradation) -> None:
+        """Stage the explanation of the *next* window without touching the one
+        on screen (Round R: the lock covers the reasoning too)."""
+        self._pending_view = {
+            "fusion": fusion.to_dict(),
+            "emotion_locked": emotion_locked,
+            "conviction_note": fusion_module.conviction_note(fusion.direction, fusion.confidence),
+            "warnings": list(warnings),
+            "degradation": degradation,
+        }
+
+    def _apply_pending_view(self) -> None:
+        """Swap the staged explanation in - only ever called at the boundary."""
+        view = self._pending_view
+        if view is None:
+            return
+        self._pending_view = None
+        self.last_fusion = view["fusion"]
+        self.emotion_locked = view["emotion_locked"]
+        self.conviction_note = view["conviction_note"]
+        self.warnings = view["warnings"]
+        self.degradation = view["degradation"]
+
     def _previous_direction(self) -> str | None:
         """The direction of the window before this one, for the tie-break ladder."""
         current = self.lock.current_signal
@@ -590,7 +621,7 @@ class CycleManager:
         self.pending_formula_result = formula_result
         self.last_live_formulas = dict(formula_result.values)
         self.last_live_result = formula_result
-        self.emotion_locked = analyze_emotions(
+        emotion_locked = analyze_emotions(
             snapshot, self.asset,
             formulas=formula_result.values, directional=self._directional_map(),
         ).to_dict()
@@ -608,11 +639,8 @@ class CycleManager:
             if result.status.value == "TIMEOUT":
                 warnings.append(f"{name} timed out this cycle.")
 
-        fusion = self._fuse(snapshot, formula_result, agent_results, warnings)
-        self.last_fusion = fusion.to_dict()
-        self.conviction_note = fusion_module.conviction_note(fusion.direction, fusion.confidence)
-        self.warnings = warnings
-        self.degradation = self._compute_degradation(snapshot)
+        fusion = self._fuse(snapshot, formula_result, agent_results, warnings, crowd=emotion_locked)
+        self._stage_view(fusion, emotion_locked, warnings, self._compute_degradation(snapshot))
 
         draft = self._build_frozen_signal(snapshot, formula_result, agent_results, fusion, context)
         draft = draft._replace(
@@ -669,7 +697,7 @@ class CycleManager:
         self.last_live_result = formula_result
         # The crowd at lock time is read with the same formulas it is being
         # locked against, so the two blocks of the payload can be compared.
-        self.emotion_locked = analyze_emotions(
+        emotion_locked = analyze_emotions(
             snapshot, self.asset,
             formulas=formula_result.values, directional=self._directional_map(),
         ).to_dict()
@@ -683,11 +711,8 @@ class CycleManager:
             if result.status.value == "TIMEOUT":
                 warnings.append(f"{name} timed out this cycle.")
 
-        fusion = self._fuse(snapshot, formula_result, agent_results, warnings)
-        self.last_fusion = fusion.to_dict()
-        self.conviction_note = fusion_module.conviction_note(fusion.direction, fusion.confidence)
-        self.warnings = warnings
-        self.degradation = self._compute_degradation(snapshot)
+        fusion = self._fuse(snapshot, formula_result, agent_results, warnings, crowd=emotion_locked)
+        self._stage_view(fusion, emotion_locked, warnings, self._compute_degradation(snapshot))
 
         draft = self._build_frozen_signal(snapshot, formula_result, agent_results, fusion, context)
         draft = draft._replace(
@@ -1508,7 +1533,8 @@ class CycleManager:
     # ==================================================================
     # Prediction block (freshness + reasoning + 1:1 levels)
     # ==================================================================
-    def _fuse(self, snapshot, formula_result, agent_results: dict, warnings: list) -> fusion_module.FusionResult:
+    def _fuse(self, snapshot, formula_result, agent_results: dict, warnings: list,
+              crowd: dict | None = None) -> fusion_module.FusionResult:
         """The spec recipe, then the evidence ledger's verdict on top of it.
 
         Pass 1 is the specification's fusion (brain 0.40 + agents); its score
@@ -1530,8 +1556,9 @@ class CycleManager:
             formula_consensus=agreement["score"],
             consensus_voters=agreement["voters"],
             recent_accuracy=self.accuracy_block(),
-            crowd=self.emotion_locked,
+            crowd=crowd if crowd is not None else self.emotion_locked,
         )
+        crowd = common["crowd"]
         spec = fusion_module.fuse(**common)
         try:
             niv = float(self.news.current_niv())
@@ -1539,8 +1566,8 @@ class CycleManager:
             niv = 0.0
         crowd_tone = 0.0
         try:
-            crowd_tone = float((self.emotion_locked or {}).get("tone") or
-                               ((self.emotion_locked or {}).get("formula_agreement") or {}).get("crowd_tone") or 0.0)
+            crowd_tone = float((crowd or {}).get("tone") or
+                               ((crowd or {}).get("formula_agreement") or {}).get("crowd_tone") or 0.0)
         except (TypeError, ValueError):
             crowd_tone = 0.0
         votes = EvidenceLedger.votes_from(

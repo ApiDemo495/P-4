@@ -328,7 +328,8 @@ async def test_the_final_freeze_rebuilds_the_fast_half_on_fresh_data(manager: Cy
     assert manager._prefetch_agents is first_agents
     assert manager.final_freeze_at >= manager.prefetch_at - 1e-6
     assert manager.final_freeze_ms < 2000
-    assert manager.emotion_locked and "formula_agreement" in manager.emotion_locked
+    # the staged crowd reading exists but is NOT on screen yet (Round R)
+    assert manager._pending_view and "formula_agreement" in manager._pending_view["emotion_locked"]
     # the lock block in the window payload describes the two stages
     lock = manager.window_status()["lock"]
     assert lock["stages"] == 2
@@ -344,3 +345,66 @@ def test_the_loop_freezes_again_right_before_the_boundary():
     assert loop.index("_prefetch(deadline)") < loop.index("_refreeze(deadline)")
     assert loop.index("_refreeze(deadline)") < loop.index("await self._sleep_until(deadline)\n")
     assert cfg.Settings().final_lock_lead_seconds < cfg.Settings().lock_deadline_seconds
+
+
+# ---------------------------------------------------------------------------
+# 5. Round R: the lock covers the explanation, not only the side
+# ---------------------------------------------------------------------------
+
+
+def _shown(manager: CycleManager) -> dict:
+    """Everything the dashboard renders about the current prediction."""
+    prediction = manager.prediction_payload()
+    detail = prediction.get("detail") or {}
+    return {
+        "side": prediction.get("side"),
+        "confidence": prediction.get("confidence"),
+        "reasoning": prediction.get("reasoning"),
+        "supporters": detail.get("supporters"),
+        "opponents": detail.get("opponents"),
+        "confidence_parts": detail.get("confidence_parts"),
+        "learned": detail.get("learned"),
+        "crowd": detail.get("crowd"),
+        "fusion": manager.last_fusion,
+        "conviction_note": manager.conviction_note,
+        "warnings": list(manager.warnings),
+        "degradation": manager.degradation,
+        "emotion_locked": manager.emotion_locked,
+    }
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_preparing_the_next_window_changes_nothing_on_screen(manager: CycleManager):
+    """The lock break the user kept seeing: the side stayed put while its
+    reasoning, supporters, crowd-at-lock and learned block were overwritten
+    by the prefetch for the *next* window.  Prefetch and re-freeze may only
+    stage; the swap happens at the boundary."""
+    before = _shown(manager)
+    deadline = time.time() + 5.0
+    await manager._prefetch(deadline)
+    await manager._refreeze(deadline)
+    after = _shown(manager)
+    for key, value in before.items():
+        if key in ("reasoning",):
+            # the freshness words ("computed 3 s ago") move; the content may not
+            assert (after[key] or {}).get("bullets") == (value or {}).get("bullets"), key
+            continue
+        assert after[key] == value, key
+    assert manager._pending_view is not None
+    # ... and the swap is explicit, at the boundary only
+    manager._apply_pending_view()
+    assert manager._pending_view is None
+    assert manager.last_fusion and manager.emotion_locked
+
+
+def test_only_the_boundary_swaps_the_explanation():
+    src = Path("backend/core/cycle_manager.py").read_text(encoding="utf-8")
+    for name in ("_prefetch", "_refreeze"):
+        body = src[src.index(f"async def {name}("):]
+        body = body[: body.index("\n    async def ")]
+        for forbidden in ("self.last_fusion =", "self.emotion_locked =", "self.conviction_note =",
+                          "self.warnings =", "self.degradation ="):
+            assert forbidden not in body, f"{name} writes {forbidden} mid-window"
+    open_window = src[src.index("async def _open_window("):]
+    open_window = open_window[: open_window.index("\n    async def ")]
+    assert "self._apply_pending_view()" in open_window

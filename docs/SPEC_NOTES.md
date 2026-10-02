@@ -1105,3 +1105,27 @@ Verified: 17,664 formula evaluations across all synthetic tapes × both
 assets → 17,664 verified, 0 false positives; live engine 23/23 verified.
 Tests `backend/tests/test_double_check.py` (14) include a lying formula
 (zeroed), a non-deterministic one (replay fails) and an out-of-range one.
+
+## R — "It is always breaking lock"
+
+Found the real cause this time, in the engine rather than the client. The
+two-stage lock prepares the **next** window during the current one
+(`_prefetch` at t+45, `_refreeze` just before the boundary). Both wrote
+their results straight into `self.last_fusion`, `self.emotion_locked`,
+`self.conviction_note`, `self.warnings` and `self.degradation` — and those
+are exactly what `prediction_payload()` / `prediction_detail()` /
+`_reasoning_for()` read to describe the prediction *on screen*. So the side
+and levels stayed frozen (they come from the `FrozenSignal`) while the
+reasoning bullets, supporters/opponents, confidence parts, crowd-at-lock and
+the learned block flipped to the next window's — often the opposite side —
+15 s before the countdown ended. Round N made it worse because the learned
+sentence is the first bullet.
+
+Fix: prefetch/re-freeze now only **stage** (`_stage_view` →
+`_pending_view`); `_apply_pending_view()` swaps everything in at the
+boundary inside `_open_window`, next to the existing formula-result
+handoff. `_fuse()` takes the fresh crowd reading as an argument instead of
+reading the on-screen one. Tests: `test_preparing_the_next_window_changes_
+nothing_on_screen` (fails on the previous commit, passes now) and a source
+guard that `_prefetch`/`_refreeze` never write those five fields. Live:
+two full 60 s windows polled every 2 s → one rendering per window.
