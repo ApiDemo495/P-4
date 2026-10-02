@@ -224,7 +224,9 @@ class NewsEngine:
         for item in self.cache.latest(8):
             if item.provider == "OfflinePack":
                 continue
-            event = self.detector.check_headline(item.headline, item.source, item.tier)
+            event = self.detector.check_headline(
+                item.headline, item.source, item.tier, published_at=item.published_at
+            )
             if event is not None:
                 await self._dispatch(event)
                 return

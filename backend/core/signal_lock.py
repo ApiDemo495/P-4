@@ -258,6 +258,7 @@ class SignalLockController:
             asset=base.asset if base else "BTC",
             signal=exit_side,
             confidence=1.0,
+            computed_at=timestamp or _iso(now),
             reasoning=(
                 f"EMERGENCY OVERRIDE: {headline}. {event.get('reason', '')}. "
                 + (
@@ -295,6 +296,13 @@ class SignalLockController:
             emergency_headline=headline,
             lock_state=LockState.EMERGENCY_OVERRIDE.value,
             superseded_by=previous_signal,
+            # The override governs the *same* window: keep its bounds and the
+            # levels it was trading from, so the panel re-locks instead of
+            # showing an unstamped signal with no window.
+            valid_from=base.valid_from if base else "",
+            valid_until=base.valid_until if base else "",
+            window_seconds=base.window_seconds if base else 0,
+            risk=base.risk if base else (),
         )
         self.current_signal = overridden
         self.state = LockState.EMERGENCY_OVERRIDE

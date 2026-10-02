@@ -44,7 +44,7 @@ def test_the_freshness_chip_no_longer_counts_seconds() -> None:
     code = "\n".join(line for line in body.splitlines() if not line.strip().startswith("//"))
     assert "s ago" not in code, "the chip must not print a running age"
     # Only the STALE text and the tooltip may carry the age.
-    fresh_branch = body.split("chip.textContent = stale")[1].split(";")[0].split(": ")[-1]
+    fresh_branch = body.split("chip.textContent = override")[1].split(";")[0].split(": ")[-1]
     assert "age" not in fresh_branch and "locked" in fresh_branch
 
 

@@ -87,9 +87,37 @@ def score_headline(headline: str) -> float:
     return float(np.tanh((bullish - bearish) / DIVISOR))
 
 
+#: A critical headline must also be *about the markets this engine trades*.
+#: A Tier-1 wire runs dozens of "war" / "sanction" stories a day about
+#: elections and trade policy; without this gate every one of them flattened
+#: the open position (the user saw a locked SELL turn into "BUY 100 %" ten
+#: seconds into a window, several times an hour).
+MARKET_TERMS: tuple[str, ...] = (
+    "bitcoin", "btc", "crypto", "cryptocurrency", "stablecoin", "tether", "usdt", "usdc",
+    "exchange", "binance", "coinbase", "defi", "blockchain", "token", "gold", "paxg",
+    "bullion", "fed", "treasury", "market", "markets", "wall street", "bank", "banks",
+    "dollar", "liquidity", "etf",
+)
+
+
 def critical_keywords_in(headline: str) -> list[str]:
+    """Whole-word critical keywords (``war`` must not match ``warning``/``award``)."""
+    import re
+
     text = (headline or "").lower()
-    return [kw for kw in CRITICAL_KEYWORDS if kw in text]
+    found = []
+    for kw in CRITICAL_KEYWORDS:
+        pattern = r"(?<![a-z0-9])" + re.escape(kw).replace(r"\ ", r"[\s-]+") + r"(?:s|es|ed|ing)?(?![a-z0-9])"
+        if re.search(pattern, text):
+            found.append(kw)
+    return found
+
+
+def is_market_headline(headline: str) -> bool:
+    import re
+
+    text = (headline or "").lower()
+    return any(re.search(r"(?<![a-z0-9])" + re.escape(term) + r"s?(?![a-z0-9])", text) for term in MARKET_TERMS)
 
 
 def votes_to_sentiment(positive: int, negative: int) -> float:

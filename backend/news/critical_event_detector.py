@@ -57,6 +57,7 @@ class CriticalEventDetector:
         self.previous_niv: float | None = None
         self.previous_poll_ts: float = 0.0
         self.recent_events: list[CriticalEvent] = []
+        self._fired_headlines: set[str] = set()
 
     # ------------------------------------------------------------------
     # Trigger 4: extreme sentiment swing
@@ -84,13 +85,33 @@ class CriticalEventDetector:
     # ------------------------------------------------------------------
     # Trigger 3: extreme keyword in a credible source
     # ------------------------------------------------------------------
-    def check_headline(self, headline: str, source: str = "", tier: int | None = None) -> CriticalEvent | None:
+    #: A headline older than this cannot break a lock: RSS backlogs carry
+    #: hours-old stories and the override is meant for *breaking* news.
+    MAX_HEADLINE_AGE_SECONDS = 600.0
+
+    def check_headline(
+        self,
+        headline: str,
+        source: str = "",
+        tier: int | None = None,
+        published_at: float | None = None,
+    ) -> CriticalEvent | None:
         keywords = lexicon.critical_keywords_in(headline)
         if not keywords:
             return None
         resolved_tier = lexicon.source_tier(source) if tier is None else int(tier)
         if resolved_tier > 2:
             return None  # only Tier 1 / Tier 2 headlines can break the lock
+        if not lexicon.is_market_headline(headline):
+            return None  # "war" in a politics story is not a market emergency
+        if published_at is not None and time.time() - float(published_at) > self.MAX_HEADLINE_AGE_SECONDS:
+            return None  # stale backlog, not breaking news
+        key = " ".join((headline or "").lower().split())
+        if key in self._fired_headlines:
+            return None  # one headline breaks a lock once, not on every 30 s scan
+        self._fired_headlines.add(key)
+        if len(self._fired_headlines) > 500:
+            self._fired_headlines = set(list(self._fired_headlines)[-250:])
         event = CriticalEvent(
             headline=headline,
             severity="CRITICAL",

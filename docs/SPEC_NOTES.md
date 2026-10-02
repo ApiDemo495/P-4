@@ -1259,3 +1259,11 @@ Found by polling `/api/signal/current` over consecutive windows and probing the 
 Also in this round: the 22 formulas' weighted consensus is a fusion voter in its own right (`weight_formulas` = 0.30, env `FORMULAS_WEIGHT`; a modelled physics vote at 0.10 could previously out-vote twenty live formulas when the brain was flat); a coherent consensus also feeds the confidence term. The simulator's regime drift is cut from 210 to ~20 bps/min and bursts from three a second to one per 30 s, so the offline tape looks like an exchange instead of a trend generator. `BinanceWebSocket` rotates to `data-stream.binance.vision` (Binance's public market-data host, reachable from the US regions Codespaces run in) when `stream.binance.com` refuses the connection.
 
 What this does **not** change: a 60-second BTC direction call is close to a coin flip for any model; the engine now reports *honest* confidence (single digits to ~30 % when the inputs are weak, instead of 56 % from an 18 % brain read-out) and a hit rate measured in `/api/signal/outcomes`. No yield is claimed.
+
+### V.1 — "lock broken 8×": it was the emergency override firing on politics headlines
+
+The mid-window flip (`SELL 25 %` → `BUY 100 %`, empty `computed` stamp, ⚡ shown as 🔒) was Section 4.3's critical-event override, and it was firing far too often: `critical_keywords_in` did a substring match, so **"war" matched "warning"/"award"/"forward"**, "hack" matched "hackathon", and any Tier-1 wire about elections or trade policy flattened the open position; the same headline re-fired on every 30 s scan; hours-old RSS backlog counted as breaking news. Fixes:
+
+* whole-word keyword match; the headline must also name a market term (bitcoin/crypto/exchange/stablecoin/gold/fed/bank/…); only items published in the last 10 minutes qualify; a headline fires once (dedupe set). Flash-move and NIV-swing triggers are unchanged.
+* the override signal now carries `computed_at`, keeps the window's `valid_from/valid_until/window_seconds/risk`, and the chip reads **⚡ emergency re-lock HH:MM:SSZ** (amber) instead of 🔒.
+* the dashboard watchdog records an override as "⚡ emergency re-lock" — the one documented mid-window change — and keeps checking the *new* text; anything else is still reported as a broken lock.

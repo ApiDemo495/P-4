@@ -121,3 +121,35 @@ def test_stale_news_decays_instead_of_holding_its_sentiment():
     old_v = niv.compute(stale, "BTC", niv.State(), {})
     assert 0.4 < now_v < 0.72
     assert 0.0 < old_v < 0.03
+
+
+def test_critical_keywords_need_whole_words_and_a_market_context():
+    import time as _t
+    from backend.news import sentiment_lexicon as lex
+    from backend.news.critical_event_detector import CriticalEventDetector
+
+    assert lex.critical_keywords_in("Fed warns of software award forwarded") == []
+    assert lex.critical_keywords_in("Exchange hacked: $200M drained") == ["hack"]
+    det = CriticalEventDetector()
+    # Tier-1 politics story with "war": not a market emergency.
+    assert det.check_headline("Trade war rhetoric heats up before the vote", "Reuters") is None
+    # Hours-old market story: a backlog item, not breaking news.
+    assert det.check_headline("Binance exchange hack confirmed", "Reuters", published_at=_t.time() - 7200) is None
+    # Fresh, Tier 1, market-relevant: fires exactly once.
+    assert det.check_headline("Binance exchange hack confirmed", "Reuters", published_at=_t.time()) is not None
+    assert det.check_headline("Binance exchange hack confirmed", "Reuters", published_at=_t.time()) is None
+
+
+def test_emergency_override_keeps_the_window_and_is_stamped():
+    from backend.core.signal_lock import SignalLockController, FrozenSignal
+
+    lock = SignalLockController()
+    base = FrozenSignal(cycle_number=9, timestamp="t", asset="BTC", signal="SELL", confidence=0.25,
+                        reasoning="", formula_values=(), agent_results=(), is_emergency_override=False, computed_at="c",
+                        valid_from="vf", valid_until="vu", window_seconds=60)
+    lock.current_signal = base
+    over = lock.emergency_override({"headline": "Exchange hack"}, duration_seconds=30, timestamp="2026-10-02T10:19:10Z")
+    assert over.signal == "BUY" and over.is_emergency_override
+    assert over.computed_at == "2026-10-02T10:19:10Z"
+    assert (over.valid_from, over.valid_until, over.window_seconds) == ("vf", "vu", 60)
+    assert over.to_dict()["lock_icon"] == "\u26a1"

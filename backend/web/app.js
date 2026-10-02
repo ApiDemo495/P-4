@@ -994,10 +994,13 @@ function renderFreshness(prediction) {
   // It names the lock instant and only ever flips to STALE (red) if the
   // engine misses a boundary; the age is in the tooltip.
   const lockedAt = fmtClockUs(p.horizon?.released_at_precise || p.horizon?.released_at || p.computed_at).slice(0, 8);
-  chip.textContent = stale
-    ? `STALE ${Math.round(age)}s > ${Math.round(maxAge)}s`
-    : `🔒 locked ${lockedAt}Z`;
-  chip.className = "fresh-chip " + (stale ? "stale" : "live");
+  const override = state.signal?.is_emergency_override || state.lockState === "EMERGENCY_OVERRIDE";
+  chip.textContent = override
+    ? `⚡ emergency re-lock ${lockedAt}Z`
+    : stale
+      ? `STALE ${Math.round(age)}s > ${Math.round(maxAge)}s`
+      : `🔒 locked ${lockedAt}Z`;
+  chip.className = "fresh-chip " + (override ? "override" : stale ? "stale" : "live");
   chip.title = `computed ${p.computed_at} · age ${Math.round(age)}s · max ${Math.round(maxAge)}s · expires ${p.expires_at || "—"}`;
 }
 
@@ -1368,6 +1371,17 @@ function lockWatchdog() {
   if (sinceOpen < 3) return;                       // boundary settle
   const now = lockCellText();
   if (lockWatch.snapshot === null) { lockWatch.snapshot = now; return; }
+  const override = state.signal?.is_emergency_override || state.lockState === "EMERGENCY_OVERRIDE";
+  if (override && lockWatch.overrideWindow !== windowId) {
+    // The one documented way a lock changes mid-window (Section 4.3): a
+    // critical event flattens the open side.  That is a re-lock, not a
+    // broken lock - record it as such and watch the new text from here on.
+    lockWatch.overrideWindow = windowId;
+    lockWatch.overrides = (lockWatch.overrides || 0) + 1;
+    lockWatch.snapshot = now;
+    renderLockProof();
+    return;
+  }
   if (now !== lockWatch.snapshot) {
     lockWatch.broken += 1;
     let i = 0;
@@ -1387,9 +1401,10 @@ function renderLockProof() {
     el.textContent = `⚠ lock broken ${lockWatch.broken}× — ${lockWatch.lastDiff}`;
     el.className = "lock-proof broken";
   } else {
-    el.textContent = lockWatch.verified
+    const overrides = lockWatch.overrides ? ` · ⚡ ${lockWatch.overrides} emergency re-lock${lockWatch.overrides === 1 ? "" : "s"} (critical news flattened the open side - the only permitted mid-window change)` : "";
+    el.textContent = (lockWatch.verified
       ? `🔒 lock verified: the prediction cell did not change inside the last ${lockWatch.verified} window${lockWatch.verified === 1 ? "" : "s"}`
-      : "🔒 lock watchdog armed — checks the cell every 5 s, reports at the boundary";
+      : "🔒 lock watchdog armed — checks the cell every 5 s, reports at the boundary") + overrides;
     el.className = "lock-proof";
   }
 }
