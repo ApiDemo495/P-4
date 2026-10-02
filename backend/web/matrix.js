@@ -40,18 +40,42 @@ function buildGrid(edges, nodeTypes) {
   grid.appendChild(frag);
 }
 
-function fillEdges(edges) {
-  const body = $("edge-body");
+/* The named circuit (Round S): neuron table + synapse-count edge list. */
+async function fillNeurons() {
+  const data = await getJSON("/api/brain/neurons?limit=60");
+  if (!data) return;
+  const t = data.totals || {};
+  $("neuron-totals").textContent =
+    `${t.nodes} nodes standing for ${t.cells_represented} cells · ${t.edges} connections · ` +
+    `${(t.synapses || 0).toLocaleString()} synapses · ${t.excitatory_edges} excitatory / ${t.inhibitory_edges} inhibitory`;
+  $("neuron-source").textContent =
+    (data.live ? "✅ synapse counts measured live from neuPrint" : "ℹ " + (data.counts_note || "")) +
+    ` · ${data.source || ""}`;
+  const body = $("neuron-body");
   body.innerHTML = "";
-  edges.slice()
-    .sort((a, b) => Math.abs(b.weight) - Math.abs(a.weight))
-    .slice(0, 40)
-    .forEach((e) => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `<td>${e.source_type}</td><td>${e.target_type}</td>` +
-        `<td style="color:${e.weight > 0 ? "#22c55e" : "#ef4444"}">${e.weight.toFixed(4)}</td>`;
-      body.appendChild(tr);
-    });
+  (data.neurons || []).forEach((n) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${n.index}</td><td><b>${esc(n.name)}</b>${n.receptor ? `<br><span class="muted">${esc(n.receptor)}</span>` : ""}</td>` +
+      `<td>${esc(n.cell_type)}</td><td>${esc(n.population)}</td><td>${esc(n.compartment)}</td>` +
+      `<td>${esc(n.transmitter)}</td><td>${n.cells}</td><td>${n.synapses_in}</td><td>${n.synapses_out}</td>` +
+      `<td class="muted">${esc(n.role)}</td>`;
+    body.appendChild(tr);
+  });
+  const edges = $("edge-body");
+  edges.innerHTML = "";
+  const names = (data.neurons || []).map((n) => n.name);
+  (data.synapses || []).forEach((e) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${esc(names[e.source] || e.source)}</td><td>${esc(names[e.target] || e.target)}</td>` +
+      `<td>${e.synapses}</td><td class="muted">${esc(e.pathway)}</td>` +
+      `<td style="color:${e.sign > 0 ? "#22c55e" : "#ef4444"}">${e.sign > 0 ? "+" : "−"}</td>`;
+    edges.appendChild(tr);
+  });
+}
+
+function esc(text) {
+  return String(text ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 async function fillTrace() {
@@ -95,7 +119,7 @@ async function fillTrace() {
     `inhibitory ${data.stats?.inhibitory_edges} · mean |w| ${data.stats?.mean_abs_weight}`;
   $("pn-order").textContent = (data.node_types || []).slice(0, 20).join(" · ");
   buildGrid(data.edges || [], data.node_types || []);
-  fillEdges(data.edges || []);
+  await fillNeurons();
   await fillTrace();
   setInterval(fillTrace, 10000);
 })();

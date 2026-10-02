@@ -53,6 +53,21 @@ async def last_trace() -> dict:
     return trace
 
 
+@router.get("/api/brain/neurons")
+async def brain_neurons(limit: int = 400) -> dict:
+    """The named Drosophila circuit the brain runs on: every node's hemibrain
+    cell type, compartment, transmitter and cell count; every edge's synapse
+    count and sign (Round S).  ``live`` is true when neuPrint measured the
+    counts, false when they are the coded typical hemibrain magnitudes."""
+    from backend.brain import connectome
+
+    payload = connectome.default().to_dict(edge_limit=max(1, min(int(limit), 5000)))
+    brain = get_manager().brain
+    payload["matrix_source"] = getattr(brain, "source", None)
+    payload["matrix_live"] = bool(getattr(brain, "is_live", False))
+    return payload
+
+
 @router.get("/api/brain/wiring")
 async def brain_wiring() -> dict:
     """How (and where) the Drosophila circuit is used, stage by stage."""

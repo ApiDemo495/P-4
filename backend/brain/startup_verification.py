@@ -207,7 +207,8 @@ async def run_verification(
         return VerificationResult(
             status=BrainStatus.FALLBACK_CSV,
             matrix=matrix,
-            message="Using pre-computed fallback matrix",
+            message="Offline connectome: named hemibrain neurons and synapses coded in "
+            "(backend/brain/connectome.py); live neuPrint counts replace them when a token is set",
             dataset="fallback",
             steps=steps,
             elapsed_seconds=time.perf_counter() - started,
@@ -264,8 +265,10 @@ async def _step2_authenticate(settings):
         return client, "authenticated"
     except asyncio.TimeoutError:
         return None, "authentication timed out after 5s"
-    except ImportError:
-        return None, "neuprint-python is not installed"
+    except ImportError as exc:
+        return None, f"neuPrint client could not import: {exc}"
+    except PermissionError as exc:
+        return None, f"{exc} - check NEUPRINT_APPLICATION_CREDENTIALS in Settings"
     except Exception as exc:  # noqa: BLE001
         return None, f"authentication failed: {exc}"
 

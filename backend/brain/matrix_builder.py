@@ -25,13 +25,13 @@ log = logging.getLogger("drosophila.brain.matrix")
 CSV_HEADER = ("source_idx", "target_idx", "weight", "source_type", "target_type")
 
 #: Human-readable names for every index, written into the CSV for inspection.
-NODE_TYPES: list[str] = (
-    [f"PN_{name}" for name in gc.PN_NAMES]
-    + [f"KC_cluster_{i}" for i in range(gc.N_KC)]
-    + ["DAN_PAM", "DAN_PPL1", "OA_VUM"]
-    + ["MBON_alpha3", "MBON_gamma5beta2a", "MBON_beta2beta2a", "MBON_alpha2"]
-    + ["LH_approach", "LH_avoid", "LH_neutral"]
-)
+def _node_types() -> list[str]:
+    from backend.brain import connectome  # real hemibrain cell types (Round S)
+
+    return [n.name for n in connectome.default().neurons]
+
+
+NODE_TYPES: list[str] = _node_types()
 
 
 def empty_matrix() -> np.ndarray:

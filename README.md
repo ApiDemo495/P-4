@@ -372,6 +372,9 @@ Codespace tab and let the attach command run, then reload the URL.
 | `ModuleNotFoundError: No module named 'backend'` | started without the repo root on `PYTHONPATH` | use `bash run.sh` |
 | `/flutter` returns `{"detail": "The Flutter web build has not been created yet."}` | the client was never built | `bash frontend/run_web.sh` |
 | `L4 Fallback brain matrix` + a STUB agent chip | neuPrint unreachable, local stub enabled — both are supported modes | add a neuPrint token in the UI, load a real `.gguf` in Settings |
+| VS Code says `command 'markdown.showPreview' not found` | the Markdown extension is not available in that Codespace - it is an editor problem, not an app problem | read the guide in the app instead: open `/readme` (nav → 📖 Guide); every doc is there with copy buttons |
+| "Problem in self starting / self downloading" | a hook step failed or the pip download was interrupted | open `/settings` → **Codespace self-start** (or `GET /api/system/autostart`): the journal and the pip/setup/Flutter logs are shown; it retries on the next start/attach |
+| Brain says `Offline connectome` with a neuPrint token pasted | the token was rejected or neuPrint is unreachable from your network | `/settings` → Brain → **Force Reconnect**; the step detail says exactly which (no package install is needed - the client is built in) |
 | `market_data → simulator` in the log | Binance and CoinGecko are unreachable from your network | `MARKET_DATA_MODE=coingecko`, or keep the simulator (always labelled) |
 
 ### When the requirements download fails
@@ -600,6 +603,19 @@ tail -f server.log
 ---
 
 ## 10. Documentation
+
+Every document below is also served **inside the app** at `/readme` (nav →
+📖 Guide), rendered with copy buttons - you never need an editor's markdown
+preview:
+
+```
+https://<your-codespace>-8000.app.github.dev/readme
+```
+
+The Drosophila circuit itself - every named neuron, its hemibrain cell type,
+compartment, transmitter, cell count and every synaptic connection with its
+synapse count and sign - is on `/matrix` ("Neurons & synapses") and at
+`GET /api/brain/neurons`.
 
 * [`docs/SPECIFICATION_v2.md`](docs/SPECIFICATION_v2.md) — the full specification
   (every formula, every threshold, the API, Appendices A–F).

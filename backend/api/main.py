@@ -260,6 +260,16 @@ if _web_dir.exists():
     async def settings_page() -> FileResponse:
         return FileResponse(str(_web_dir / "settings.html"))
 
+    @app.get("/readme")
+    @app.get("/readme/{name}")
+    async def readme_page(name: str = "README") -> HTMLResponse:
+        """README and docs rendered in the app (Round S) - no editor
+        markdown preview needed."""
+        from backend.api import docs_pages
+
+        html, status = docs_pages.render(name)
+        return HTMLResponse(html, status_code=status)
+
 else:  # pragma: no cover - only if the web assets were stripped
     @app.get("/")
     async def dashboard_missing() -> dict:
@@ -287,6 +297,17 @@ async def update_status(force: int = 0):
 async def update_apply():
     """Fetch + fast-forward + restart, detached.  Never a checkout or a merge."""
     return self_update.apply()
+
+
+@app.get("/api/system/autostart")
+async def autostart_status(lines: int = 60):
+    """What the zero-command Codespace start did: provisioning passes, pip
+    download, Flutter setup, self-update - with the tail of every log, so a
+    failed self-start or self-download is visible in the app, not just in a
+    terminal banner (Round S)."""
+    from backend.api import autostart_status as mod
+
+    return mod.status(lines=max(5, min(int(lines), 400)))
 
 
 @app.get("/api/flutter/status")

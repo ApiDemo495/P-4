@@ -295,6 +295,32 @@ async function refreshSystem() {
     `configured: ${Object.entries(res.configured).map(([k, v]) => `${k}=${v ? "yes" : "no"}`).join(" · ")}`;
 }
 
+async function refreshAutostart() {
+  const res = await getJSON("/api/system/autostart?lines=40");
+  if (res.error) return line("autostart-summary", res.error, "err");
+  $("autostart-verdict").textContent = res.in_codespace ? `codespace ${res.codespace}` : "not running in a Codespace";
+  line("autostart-summary",
+    `${res.healthy ? "✅" : "⚠️"} ${res.verdict} · provisioned ${res.provisioned ? "yes" : "no"}` +
+    ` · failures ${res.failures.length} · warnings ${res.warnings.length}`,
+    res.healthy ? "ok" : "warn");
+  const body = $("autostart-journal");
+  body.innerHTML = "";
+  (res.journal || []).slice(-25).forEach((row) => {
+    const tr = document.createElement("tr");
+    const icon = row.level === "fail" ? "❌" : row.level === "warn" ? "⚠️" : row.level === "ok" ? "✅" : "·";
+    tr.innerHTML = `<td>${icon}</td><td class="muted">${escapeHtml(row.at)}</td><td>${escapeHtml(row.hook)}</td><td>${escapeHtml(row.message)}</td>`;
+    body.appendChild(tr);
+  });
+  const logs = res.logs || {};
+  const blocks = [];
+  (logs.setup_passes || []).forEach((f) => blocks.push(`── ${f.path} (${f.bytes} B)\n${f.tail.join("\n")}`));
+  ["pip", "flutter", "server"].forEach((k) => {
+    const f = logs[k];
+    if (f) blocks.push(`── ${f.path} ${f.exists ? `(${f.bytes} B, ${f.age_seconds}s old)` : "(not present)"}\n${f.tail.join("\n")}`);
+  });
+  $("autostart-logs").textContent = blocks.join("\n\n");
+}
+
 function escapeHtml(text) {
   return String(text ?? "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -306,8 +332,10 @@ function escapeHtml(text) {
   await refreshBrain();
   await refreshNews();
   await refreshSystem();
+  await refreshAutostart();
   setInterval(refreshLocal, 10000);
   setInterval(refreshRings, 10000);
   setInterval(refreshBrain, 20000);
   setInterval(refreshNews, 20000);
+  setInterval(refreshAutostart, 30000);
 })();

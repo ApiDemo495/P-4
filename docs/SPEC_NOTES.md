@@ -1129,3 +1129,54 @@ reading the on-screen one. Tests: `test_preparing_the_next_window_changes_
 nothing_on_screen` (fails on the previous commit, passes now) and a source
 guard that `_prefetch`/`_refreeze` never write those five fields. Live:
 two full 60 s windows polled every 2 s → one rendering per window.
+
+## S. Named connectome, token-only neuPrint, in-app docs, self-start visibility
+
+**Symptom (user, Round S).** "Problem in self starting and self downloading
+engine. Problem in connecting drosophila. Neurons and synaptids of drosophila
+is not coded for app. Also could not open markdown preview."
+
+**Cause.**
+1. The fallback 80×80 matrix was a seeded random graph with anonymous
+   `KC_cluster_N` nodes - the user is right that no neuron or synapse was
+   actually coded.
+2. `connect_neuprint` imported `neuprint-python`, which is only a commented
+   optional requirement; so a Codespace with a valid token could never reach
+   step 2 ("neuprint-python is not installed").
+3. `markdown.showPreview` is a VS Code extension command; it was missing in
+   the Codespace. Nothing in a repository can install an editor extension.
+4. The autostart hooks only printed to a terminal tab; a failed step left no
+   trace the app could show.
+
+**Decision.**
+* `backend/brain/connectome.py` names all 80 nodes with hemibrain v1.2.1 cell
+  types: 20 uniglomerular PNs mapped formula → receptor → glomerulus
+  (e.g. TAI → Or67d → DA1_lPN), 50 Kenyon-cell clusters in lobe proportions
+  (γ / α'β' / αβ, 1,931 cells), PAM, PPL1, OA-VUMa2, MBON-α3 / γ5β'2a / γ3 /
+  γ1pedc>α/β, and three lateral-horn populations. Every edge is a `Synapse`
+  with a typical synapse count, a functional sign and a pathway label; the
+  GCN weight is `sign × synapses × per-pathway efficacy` (a count is anatomy,
+  not drive). The fallback CSV is now generated from it; `NODE_TYPES`, the
+  brain trace (`dominant_inputs[].neuron`), the wiring payload and the Flutter
+  brain screen use the real names. `GET /api/brain/neurons`; `/matrix` has a
+  "Neurons & synapses" table. Counts are labelled *typical* (`live=false`)
+  until neuPrint measured them - never presented as measured.
+* `HttpNeuprintClient` (httpx; `GET /api/version`, `POST /api/custom/custom`)
+  is used whenever `neuprint-python` is absent, so a token alone connects.
+  Bad tokens surface as "neuPrint rejected the token" in step 2.
+* `/readme` and `/readme/{keys|spec|notes}` render the docs in the app
+  (`markdown` added to requirements; the autostart re-provisions on a changed
+  requirements.txt by itself).
+* The autostart script journals every line to `.run/logs/autostart.journal`;
+  `GET /api/system/autostart` and Settings → "Codespace self-start" show the
+  verdict, failures, journal and the tails of setup/pip/Flutter/server logs.
+
+**Verification.** `test_round_s.py` (8 tests: named nodes match the GCN
+layout, signed synapses, CSV == connectome, offline never "live", mock
+neuPrint over HTTP incl. 401, docs page + traversal guard, journal hooks).
+Formula self-test (CCSv2 approach on BULL / avoid on BEAR) passes with the
+efficacy-scaled connectome; full suite 237; payload check 69.
+
+**Escape hatch.** `python -m backend.brain.generate_fallback_matrix --seed N`
+regenerates with a different PN→KC draw; a `NEUPRINT_APPLICATION_CREDENTIALS`
+token replaces the typical counts with measured ones at the next start.

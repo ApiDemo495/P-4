@@ -171,7 +171,7 @@ class BrainScreen extends StatelessWidget {
         .take(5)
         .map((row) {
       final r = Map<String, dynamic>.from(row as Map);
-      return '${r['formula']} ${_s(r['value'])}';
+      return '${r['formula']} (${r['neuron'] ?? 'PN ${r['pn']}'}) ${_s(r['value'])}';
     }).join(' · ');
 
     final weights = (explain['weights'] as Map?) ?? const {};
@@ -315,7 +315,8 @@ class BrainScreen extends StatelessWidget {
                   ),
                   Expanded(
                     child: Text(
-                      (r['brain_node'] ?? r['title'] ?? '').toString(),
+                      '${r['neuron'] ?? r['brain_node'] ?? r['title'] ?? ''}'
+                      '${r['synapses_out'] != null ? ' · ${r['synapses_out']} syn' : ''}',
                       style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
                     ),
                   ),
@@ -328,12 +329,19 @@ class BrainScreen extends StatelessWidget {
             'layout: PNs ${_range(layout['pn'])} · KC ${_range(layout['kenyon_cells'])} · '
             'DANs ${_range(layout['dans'])} · MBONs ${_range(layout['mbons'])} · '
             'lateral horn ${_range(layout['lateral_horn'])} · '
-            'KC sparsity ${wiring['sparsity'] ?? '—'}',
+            'KC sparsity ${wiring['sparsity'] ?? '—'}\n'
+            'coded connectome: ${_tot(wiring, 'nodes')} nodes for ${_tot(wiring, 'cells_represented')} cells · '
+            '${_tot(wiring, 'edges')} connections · ${_tot(wiring, 'synapses')} synapses',
             style: const TextStyle(color: AppTheme.textMuted, fontSize: 10.5),
           ),
         ],
       ),
     );
+  }
+
+  static String _tot(Map<String, dynamic> wiring, String key) {
+    final totals = (wiring['connectome'] as Map?) ?? const {};
+    return '${totals[key] ?? '—'}';
   }
 
   static String _range(dynamic value) {

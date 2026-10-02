@@ -57,12 +57,16 @@ AUTO_OPEN="${AUTO_OPEN:-1}"
 if [ -t 1 ]; then B=$'\033[1m'; DIM=$'\033[2m'; R=$'\033[0m'
   CYN=$'\033[36m'; GRN=$'\033[32m'; YEL=$'\033[33m'; RED=$'\033[31m'
 else B=""; DIM=""; R=""; CYN=""; GRN=""; YEL=""; RED=""; fi
-log()  { printf '%s[auto]%s %s\n' "$CYN" "$R" "$*"; }
-ok()   { printf '%s[auto]%s %s\n' "$GRN" "$R" "$*"; }
-warn() { printf '%s[auto]%s %s\n' "$YEL" "$R" "$*"; }
-bad()  { printf '%s[auto]%s %s\n' "$RED" "$R" "$*"; }
-
 mkdir -p "$STATE_DIR" "$STATE_DIR/logs"
+# Every line the hooks print is also journaled, so a failed self-start or
+# self-download is visible in the app (GET /api/system/autostart, Settings ->
+# System) and not only in a terminal tab that Codespaces may have closed.
+JOURNAL="$STATE_DIR/logs/autostart.journal"
+journal() { printf '%s %-5s %-9s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$MODE" "$2" >>"$JOURNAL" 2>/dev/null || true; }
+log()  { printf '%s[auto]%s %s\n' "$CYN" "$R" "$*"; journal info "$*"; }
+ok()   { printf '%s[auto]%s %s\n' "$GRN" "$R" "$*"; journal ok "$*"; }
+warn() { printf '%s[auto]%s %s\n' "$YEL" "$R" "$*"; journal warn "$*"; }
+bad()  { printf '%s[auto]%s %s\n' "$RED" "$R" "$*"; journal fail "$*"; }
 
 # -----------------------------------------------------------------------------
 # URLs - the Codespace URL when there is one, localhost otherwise

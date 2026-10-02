@@ -23,6 +23,7 @@ ntplib>=0.4
 msgpack>=1.0
 pydantic>=2.7
 python-dotenv>=1.0
+markdown>=3.5
 
 # -----------------------------------------------------------------------------
 # Optional - uncomment / install as needed

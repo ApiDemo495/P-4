@@ -101,13 +101,64 @@ class CircuitQuery:
 # ---------------------------------------------------------------------------
 
 
-def connect_neuprint(token: str, server: str, dataset: str):
-    """Create a neuprint client.  Raises on any failure - callers handle it."""
-    from neuprint import Client  # lazy: optional dependency
+class HttpNeuprintClient:
+    """neuPrint over its plain HTTP API - no optional package needed.
 
-    client = Client(server, dataset=dataset, token=token)
-    client.fetch_version()
-    return client
+    ``neuprint-python`` was an optional dependency, which meant a Codespace
+    with a valid token still could not query the hemibrain ("problem in
+    connecting drosophila").  The two calls the brain needs - version and a
+    custom Cypher query - are one GET and one POST.
+    """
+
+    def __init__(self, server: str, dataset: str, token: str, timeout: float = 30.0) -> None:
+        import httpx
+
+        self.server = server.rstrip("/")
+        if not self.server.startswith("http"):
+            self.server = "https://" + self.server
+        self.dataset = dataset
+        self._client = httpx.Client(
+            base_url=self.server,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            timeout=timeout,
+        )
+
+    def fetch_version(self) -> str:
+        response = self._client.get("/api/version")
+        if response.status_code in (401, 403):
+            raise PermissionError("neuPrint rejected the token")
+        response.raise_for_status()
+        return str((response.json() or {}).get("Version", ""))
+
+    def fetch_custom(self, cypher: str, params: dict | None = None) -> list[dict]:
+        payload = {"cypher": cypher, "dataset": self.dataset}
+        if params:
+            # neuPrint's custom endpoint has no parameter binding: inline them.
+            for key, value in params.items():
+                cypher = cypher.replace(f"${key}", repr(list(value)) if isinstance(value, (list, tuple, set)) else repr(value))
+            payload["cypher"] = cypher
+        response = self._client.post("/api/custom/custom", json=payload)
+        if response.status_code in (401, 403):
+            raise PermissionError("neuPrint rejected the token")
+        response.raise_for_status()
+        data = response.json() or {}
+        columns = data.get("columns") or []
+        return [dict(zip(columns, row)) for row in (data.get("data") or [])]
+
+
+def connect_neuprint(token: str, server: str, dataset: str):
+    """Create a neuPrint client.  Uses ``neuprint-python`` when it is
+    installed, otherwise the built-in HTTP client; raises on any failure."""
+    try:
+        from neuprint import Client  # optional dependency
+
+        client = Client(server, dataset=dataset, token=token)
+        client.fetch_version()
+        return client
+    except ImportError:
+        client = HttpNeuprintClient(server, dataset, token)
+        client.fetch_version()
+        return client
 
 
 def fetch_circuit(client, dataset: str = "") -> CircuitQuery:

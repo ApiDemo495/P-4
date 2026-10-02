@@ -73,13 +73,21 @@ STAGES = (
 
 def wiring() -> dict:
     """The static map: which formula drives which brain structure."""
+    from backend.brain import connectome
+
+    circuit = connectome.default()
     pn_rows: list[dict] = []
     for spec in ALL_FORMULAS:
         if spec.category == "H":
             continue
+        neuron = circuit.neurons[spec.order - 1]
         pn_rows.append(
             {
                 "pn": spec.order - 1,
+                "neuron": neuron.name,
+                "cell_type": neuron.cell_type,
+                "glomerulus": neuron.compartment,
+                "synapses_out": circuit.synapses_out(spec.order - 1),
                 "formula": spec.name,
                 "title": spec.title,
                 "category": spec.category,
@@ -91,6 +99,7 @@ def wiring() -> dict:
     return {
         "stages": list(STAGES),
         "projection_neurons": pn_rows,
+        "connectome": circuit.totals(),
         "layout": {
             "pn": [0, 19],
             "kenyon_cells": [gc.KC_START, gc.KC_END - 1],
@@ -123,7 +132,10 @@ def explain(manager) -> dict:
 
     values = result.values
     dominant = trace.get("dominant_pns") or []
+    from backend.brain.connectome import node_name
+
     for row in dominant:
+        row["neuron"] = node_name(row.get("pn", -1))
         row["category"] = next(
             (spec.category for spec in ALL_FORMULAS if spec.name == row.get("formula")),
             "",

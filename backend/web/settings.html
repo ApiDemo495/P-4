@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Settings · Drosophila Trader v2.0</title>
-<link rel="stylesheet" href="/static/styles.css?v=2.12.0" />
+<link rel="stylesheet" href="/static/styles.css?v=2.13.0" />
 </head>
 <body>
 <header class="topbar">
@@ -220,11 +220,21 @@
   <h2 style="font-size:15px;letter-spacing:.05em">SYSTEM</h2>
   <section class="card"><div class="status-line" id="system-info">—</div></section>
 
+  <section class="card">
+    <div class="card-head"><h2>Codespace self-start</h2><span class="muted" id="autostart-verdict">—</span></div>
+    <div class="status-line" id="autostart-summary">—</div>
+    <details><summary class="muted" style="cursor:pointer">journal &amp; download logs</summary>
+      <table><tbody id="autostart-journal"></tbody></table>
+      <pre id="autostart-logs" class="mono" style="max-height:260px;overflow:auto;font-size:11px"></pre>
+    </details>
+    <div class="muted" style="font-size:11px;margin-top:6px">Retries by itself on every container start and editor attach. Manual re-run: <code>bash tools/codespace_autostart.sh --attach</code></div>
+  </section>
+
   <div class="row" style="justify-content:center;margin:20px 0 60px">
     <a class="btn" href="/" style="text-decoration:none">← Back to dashboard</a>
   </div>
 </main>
 
-<script src="/static/settings.js?v=2.12.0"></script>
+<script src="/static/settings.js?v=2.13.0"></script>
 </body>
 </html>
