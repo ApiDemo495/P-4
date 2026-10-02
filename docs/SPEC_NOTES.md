@@ -1180,3 +1180,60 @@ efficacy-scaled connectome; full suite 237; payload check 69.
 **Escape hatch.** `python -m backend.brain.generate_fallback_matrix --seed N`
 regenerates with a different PN→KC draw; a `NEUPRINT_APPLICATION_CREDENTIALS`
 token replaces the typical counts with measured ones at the next start.
+
+## T. The thermodynamic capital layer (13-section "planetary metabolism" prompt)
+
+**Request.** A 13-section specification: BTC as irreversibly consumed work
+(Landauer), PAXG as inert rest mass; 60 s rebalancing from thermal occupancy
+Θ, solar flux Ω, an E = mc² exchange ratio, AMM/venue/peg microstructure,
+VPIN, Ornstein–Uhlenbeck, a REI pendulum, Avellaneda–Stoikov quoting, Kelly
+blending and a thermodynamic clamp - plus a multi-node ZK Nash swarm,
+lending-protocol liquidation sniping and MEV block sequencing.  The user:
+"there could be some contradictions ... apply what is best"; asked, chose
+**physics = a new weighted layer** (not a hard clamp), **skip the sections
+that need infrastructure the app cannot have**, and **keep news + emotions
+as they are**.
+
+**Decision.**
+* `backend/physics/` is one more weighted voter in fusion
+  (`weight_physics`, default 0.20, env `PHYSICS_WEIGHT`; 0 disables).  The
+  22 formulas and the brain still decide; a layer running on modelled
+  telemetry alone counts half its weight, each live source (hashrate, gold
+  spot, DEX pools, other venues) earns part of the rest.
+* Implemented: §1 Landauer valve (k_B·T·ln2, 1024 erased bits per double
+  SHA-256, Θ against a 30-day-peak S_max, Θ* 0.85), §2 solar geometry
+  (declination, hour angle, 12-hub fleet table, Ω = C_hash/C_grid, α blend
+  from trailing-hour variances), §4 energy-per-BTC vs refine+transport+custody
+  energy per ounce, the per-cycle exp-update and the phase angle (§12.4),
+  §5.1–5.2 AMM price surface from DexScreener pools, §8.1 VPIN (50 volume
+  buckets, 0.40), §8.2 fragmentation across Binance/Coinbase/Kraken/DEX,
+  §8.3 O-U bridge (AR(1) κ, VWAP-300 s equilibrium, SR₆₀ > 1.5 gate),
+  §8.4 pendulum (AR(2) ⇒ damped oscillator, 60 s forecast), §8.5 A-S half-
+  spread with κ from the book, §10 PAXG/XAU and wBTC/BTC peg bands, §11.3
+  multi-mechanism Kelly (Σ from trailing signed edges, ridge, cap ±0.25),
+  §12.1 TSR.
+* **Not implemented and said so** (`/api/physics/spec`): §3 (many nodes),
+  §6 (geographic nodes), §7 (on-chain positions + execution), §9 (the app
+  is not a block builder).  §12.6's "iron floor / cannot lose" is **not
+  claimed** anywhere; expected edges are labelled model estimates.
+* **Deviation from §11.4.** The physical weight is a portfolio target that
+  moves over hours; mapping it directly onto a 60-second side would make the
+  layer a constant bias.  So: `w_final = clamp(w_micro, w_composite ± Δw)`
+  is computed and shown (Δw 0.15, env `PHYSICS_DELTA_W`), but the window
+  vote is `2(w_micro − ½)·(1 − drag)`, where drag (≤ 0.6) applies only to
+  votes that lean against the physical target.
+* Telemetry (`backend/physics/telemetry.py`): mempool.space → blockchain.info
+  hashrate; gold-api.com → CoinGecko PAXG+XAUT; DexScreener; Coinbase +
+  Kraken; CoinGecko wBTC.  No keys.  Blocked networks read as "unreachable
+  here" with the error, never as the API being unavailable.
+* Lock: the report rides inside `FusionResult.physics`, so the Round R
+  staging covers it - `/api/physics/current` and the dashboard card cannot
+  change mid-window.  `/api/physics/live` is a separate fresh pass.
+* UI: dashboard "Thermodynamic capital layer" card (verdict, weight bar,
+  Θ/Ω/R/Φ/TSR, mechanism table, every formula with its numbers), a
+  `physics` reasoning bullet, Flutter `PhysicsPanel` on the brain screen.
+
+**Verification.** `test_round_t.py`: Landauer 2.87e-21 J at 300 K, equinox
+noon irradiance ≈ I₀, 27.87 km terminator sweep, valve direction, energy-
+mass sign, VPIN/O-U/pendulum/A-S sanity, drag semantics, PAXG = −BTC vote,
+fusion weighs but never vetoes, scope declared.  Full suite + payload check.

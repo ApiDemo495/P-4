@@ -291,7 +291,7 @@ async function refreshSystem() {
     `signal threshold ±${res.signal_threshold} · min fusion confidence ${res.min_fusion_confidence} · ` +
     `emergency ${res.emergency_duration_seconds}s<br>` +
     `weights: drosophila ${res.weights.drosophila} / gemini ${res.weights.gemini} / ` +
-    `local ${res.weights.local} / github ${res.weights.github}<br>` +
+    `local ${res.weights.local} / github ${res.weights.github} / thermodynamic layer ${res.weights.physics ?? 0} (renormalised; model-only telemetry counts half)<br>` +
     `configured: ${Object.entries(res.configured).map(([k, v]) => `${k}=${v ? "yes" : "no"}`).join(" · ")}`;
 }
 

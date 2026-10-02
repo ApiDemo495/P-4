@@ -382,6 +382,30 @@ def build_reasoning(
             "text": text + ".",
         })
 
+    # 5c. The thermodynamic layer (Round T) ---------------------------------------
+    physics = fusion.get("physics") or {}
+    p_contrib = fusion.get("contributions", {}).get("physics") or {}
+    if physics and p_contrib:
+        p_vote = float(physics.get("vote") or 0.0)
+        wts = physics.get("weights") or {}
+        comp = physics.get("composite") or {}
+        active = [m for m in (physics.get("mechanisms") or []) if m.get("direction")]
+        names = ", ".join(f"{m['name'].split(' ')[0]} {'+' if m['direction'] > 0 else '−'}" for m in active[:4])
+        supports = (p_vote >= 0) == (side == "BUY") if abs(p_vote) >= 0.05 else True
+        bullets.append({
+            "kind": "physics",
+            "weight": float(p_contrib.get("weight") or 0.0),
+            "supports": supports,
+            "text": (
+                f"Thermodynamic layer {p_contrib.get('decision')} ({_fmt(p_vote, 2)}): "
+                f"Landauer Θ {float(comp.get('theta') or 0.0):.3f}, target BTC weight "
+                f"{float(wts.get('w_composite') or 0.5):.0%}, microstructure {float(wts.get('w_micro') or 0.5):.0%}"
+                + (f"; voting: {names}" if names else "; no microstructural mechanism fired")
+                + f"; {int(physics.get('live_inputs') or 0)} live telemetry inputs — "
+                + ("leans with" if supports else "leans against") + f" the {side} side."
+            ),
+        })
+
     # 6. Levels --------------------------------------------------------------------
     if risk.get("tradeable") and risk.get("take_profit"):
         bullets.append({

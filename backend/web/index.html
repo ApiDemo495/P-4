@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>Drosophila Trader v2.0</title>
-<link rel="stylesheet" href="/static/styles.css?v=2.13.0" />
+<link rel="stylesheet" href="/static/styles.css?v=2.14.0" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪰</text></svg>" />
 </head>
 <body>
@@ -368,6 +368,38 @@
     <div id="brain-wiring" class="brain-wiring hidden"></div>
   </section>
 
+  <!-- ======================= THERMODYNAMIC LAYER ======================= -->
+  <section class="card physics-card" id="physics-card">
+    <div class="card-head">
+      <h2>⚛ Thermodynamic capital layer <span class="muted">BTC = consumed work · PAXG = inert rest mass</span></h2>
+      <span class="muted" id="ph-head">—</span>
+    </div>
+    <div class="physics-top">
+      <div class="physics-verdict" id="ph-verdict">waiting for the first locked window…</div>
+      <div class="physics-bar" title="target BTC weight (physics) vs microstructure weight">
+        <div class="physics-bar-track">
+          <div class="physics-bar-fill" id="ph-bar-fill"></div>
+          <div class="physics-bar-marker" id="ph-bar-micro" title="microstructure (Kelly)"></div>
+        </div>
+        <div class="physics-bar-legend"><span>PAXG</span><span id="ph-bar-text">—</span><span>BTC</span></div>
+      </div>
+    </div>
+    <div class="kv-grid physics-kv">
+      <div class="kv-item"><span>Landauer Θ (thermal occupancy)</span><b id="ph-theta">—</b></div>
+      <div class="kv-item"><span>Solar Ω (energy opportunity cost)</span><b id="ph-omega">—</b></div>
+      <div class="kv-item"><span>E = mc² ratio R (oz-eq / BTC)</span><b id="ph-ratio">—</b></div>
+      <div class="kv-item"><span>Phase angle Φ</span><b id="ph-phase">—</b></div>
+      <div class="kv-item"><span>Thermodynamic Sharpe (TSR)</span><b id="ph-tsr">—</b></div>
+      <div class="kv-item"><span>Live telemetry</span><b id="ph-live">—</b></div>
+    </div>
+    <table class="physics-table"><thead><tr><th>§</th><th>mechanism</th><th>reading</th><th>side</th><th>edge</th><th>source</th></tr></thead>
+      <tbody id="ph-mechanisms"></tbody></table>
+    <details class="physics-logic"><summary class="muted" style="cursor:pointer">Show the physics (every formula with its numbers)</summary>
+      <div id="ph-logic" class="mono"></div>
+    </details>
+    <div class="muted" style="font-size:11px;margin-top:8px" id="ph-note"></div>
+  </section>
+
   <!-- ======================= FORMULA EXPLORER ======================= -->
   <section class="card">
     <div class="card-head">
@@ -462,6 +494,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=2.13.0"></script>
+<script src="/static/app.js?v=2.14.0"></script>
 </body>
 </html>

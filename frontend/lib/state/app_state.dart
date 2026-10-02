@@ -108,6 +108,9 @@ class AppState extends ChangeNotifier {
   WindowInfo? window;
   bool nextWindowReady = false;
   Map<String, dynamic> brainExplain = const {};
+
+  /// The thermodynamic capital layer (Round T), as locked with the window.
+  Map<String, dynamic> physics = const {};
   Map<String, dynamic> wiring = const {};
 
   // --- emergency -----------------------------------------------------------
@@ -390,6 +393,10 @@ class AppState extends ChangeNotifier {
     if (brain is Map && brain['available'] != false) {
       brainExplain = Map<String, dynamic>.from(brain);
     }
+    final physicsPayload = data['physics'];
+    if (physicsPayload is Map) {
+      physics = Map<String, dynamic>.from(physicsPayload);
+    }
     final accuracy = data['accuracy'];
     if (accuracy is Map) {
       winRate = _num(accuracy['win_rate'], winRate);
@@ -657,6 +664,12 @@ class AppState extends ChangeNotifier {
   Future<void> refreshWiring() async {
     final json = await api.brainWiring();
     if (json != null) wiring = json;
+    notifyListeners();
+  }
+
+  Future<void> refreshPhysics() async {
+    final json = await api.physicsCurrent();
+    if (json != null) physics = json;
     notifyListeners();
   }
 

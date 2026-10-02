@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../state/app_state.dart';
 import '../theme.dart';
+import '../widgets/physics_panel.dart';
 
 /// "Where is the fly brain actually used?" - the answer, in the app.
 ///
@@ -33,6 +34,7 @@ class BrainScreen extends StatelessWidget {
         await state.refreshWiring();
         await state.refreshBrainExplain();
         await state.refreshBrain();
+        await state.refreshPhysics();
       },
       child: ListView(
         padding: const EdgeInsets.all(14),
@@ -58,6 +60,8 @@ class BrainScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           _wiringMap(wiring),
+          const SizedBox(height: 12),
+          PhysicsPanel(payload: state.physics),
         ],
       ),
     );

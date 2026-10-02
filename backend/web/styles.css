@@ -792,3 +792,18 @@ th { color: var(--muted); font-weight: 600; }
 .key-role.active { color: var(--green); }
 .key-role.cooling { color: var(--amber); }
 .model-slot { padding: 8px 10px; border: 1px solid rgba(255,255,255,.06); border-radius: 8px; }
+
+/* ---- Thermodynamic capital layer (Round T) ---- */
+.physics-top { display: grid; grid-template-columns: 1fr 260px; gap: 14px; align-items: center; margin-bottom: 12px; }
+.physics-verdict { font-size: 13px; line-height: 1.5; }
+.physics-bar-track { position: relative; height: 10px; border-radius: 6px; background: linear-gradient(90deg, #d4a017, #1f2a3a 50%, #f7931a); opacity: .9; }
+.physics-bar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-right: 2px solid #fff; width: 50%; }
+.physics-bar-marker { position: absolute; top: -4px; width: 4px; height: 18px; margin-left: -2px; background: #22c55e; border-radius: 2px; }
+.physics-bar-legend { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 4px; }
+.physics-kv { grid-template-columns: repeat(3, 1fr); margin-bottom: 12px; }
+.physics-table { width: 100%; font-size: 12px; }
+.physics-table td, .physics-table th { padding: 4px 6px; border-bottom: 1px solid #1f2a3a; text-align: left; }
+.physics-logic { margin-top: 10px; }
+.ph-logic-row { font-size: 11px; padding: 6px 0; border-bottom: 1px dashed #1f2a3a; white-space: pre-wrap; word-break: break-word; }
+.ph-logic-row b { display: block; color: #9fb3c8; margin-bottom: 2px; }
+@media (max-width: 760px) { .physics-top { grid-template-columns: 1fr; } .physics-kv { grid-template-columns: 1fr 1fr; } }

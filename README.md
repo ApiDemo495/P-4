@@ -602,6 +602,28 @@ tail -f server.log
 
 ---
 
+## 9b. The thermodynamic capital layer (BTC = work, PAXG = rest mass)
+
+A second, independent view of the pair, built from physical law and
+microstructure rather than price patterns, voting beside the brain and the
+AI agents (weight `PHYSICS_WEIGHT`, default 0.20; `0` disables):
+
+| § | mechanism | inputs |
+|---|---|---|
+| 1 | Landauer thermal valve Θ = Ṡ/Ṡ_max, w_thermal | global hashrate (mempool.space / blockchain.info, model fallback) |
+| 2 | Solar flux Ω over 12 mining regions, w_solar, α blend | exact Sun geometry, hub table |
+| 4 | E = mc² ratio R, phase angle Φ, per-cycle exp update | hashrate, gold energy intensity |
+| 5 | AMM price surface x·y = k, Δ_max | DexScreener pools (no key) |
+| 8 | VPIN · fragmentation · O-U bridge · REI pendulum · Avellaneda-Stoikov | the frozen tape; Coinbase + Kraken tickers |
+| 10 | PAXG/XAU and wBTC/BTC peg bands | gold-api.com / CoinGecko |
+| 11-12 | Kelly blend, thermodynamic band (drag), TSR | the rows above |
+
+Dashboard card "Thermodynamic capital layer" (every formula with its numbers),
+`GET /api/physics/current` (locked with the window), `/api/physics/live`,
+`/api/physics/telemetry`, `/api/physics/spec` (which sections are implemented
+and why §3, §6, §7, §9 are not). Expected edges are model estimates; no
+"cannot lose" claim is made anywhere.
+
 ## 10. Documentation
 
 Every document below is also served **inside the app** at `/readme` (nav →

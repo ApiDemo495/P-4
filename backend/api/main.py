@@ -27,6 +27,7 @@ from backend.api import (
     routes_agents,
     routes_brain,
     routes_emotions,
+    routes_physics,
     routes_formulas,
     routes_news,
     routes_signals,
@@ -121,6 +122,11 @@ async def lifespan(app: FastAPI):
     # its own (never a checkout, never main); AUTO_UPDATE=0 turns it off.
     update_task = asyncio.create_task(self_update.auto_loop(), name="auto-update") \
         if self_update.auto_enabled() else None
+    # Round T: hashrate, gold spot, DEX pools and other venues for the
+    # thermodynamic layer - public APIs, no keys, cached between cycles.
+    from backend.physics.telemetry import get_telemetry
+
+    telemetry_task = asyncio.create_task(get_telemetry().refresh_loop(), name="physics-telemetry")
     log.info("=" * 78)
     log.info(" DROSOPHILA TRADER v2.0 - port is live, engine warming up in the background")
     log.info("   dashboard  : http://0.0.0.0:%d/   (reload if it says 'warming up')", cfg.SETTINGS.port)
@@ -129,6 +135,9 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        telemetry_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await telemetry_task
         if update_task is not None and not update_task.done():
             update_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -165,6 +174,7 @@ app.include_router(routes_agents.router)
 app.include_router(routes_news.router)
 app.include_router(routes_brain.router)
 app.include_router(routes_emotions.router)
+app.include_router(routes_physics.router)
 
 
 @app.get("/api/health")
@@ -210,6 +220,7 @@ async def system_config() -> dict:
             "gemini": settings.weight_gemini,
             "local": settings.weight_local,
             "github": settings.weight_github,
+            "physics": settings.weight_physics,
         },
         "configured": {
             "gemini": bool(settings.gemini_api_key),

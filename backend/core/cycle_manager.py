@@ -132,6 +132,11 @@ class CycleManager:
         self.news = NewsEngine(self.settings, on_critical=self._on_critical_event)
         self.agents = AgentOrchestrator(self.settings, local_stub=local_stub)
         self.formulas = FormulaEngine(brain=self.brain)
+        # Round T: the thermodynamic capital layer - one more weighted voter.
+        from backend.physics.engine import PhysicsEngine
+
+        self.physics = PhysicsEngine()
+        self.last_physics: dict | None = None
         self.lock = SignalLockController()
 
         self.outcomes = OutcomeBuffer()
@@ -1064,6 +1069,7 @@ class CycleManager:
                             "emotions": self.emotions_payload(),
                             "accuracy": self.accuracy_block(),
                             "brain_explain": self.brain_explain_payload(),
+                            "physics": self.physics_payload(),
                         },
                     }
                 )
@@ -1361,6 +1367,16 @@ class CycleManager:
             ],
         }
 
+    def physics_payload(self) -> dict:
+        """The thermodynamic layer's report *as locked with the window on
+        screen* (it travels inside the fusion, so the Round R lock covers it)."""
+        locked = (self.last_fusion or {}).get("physics") or None
+        return {
+            "locked": locked is not None,
+            "weight": float(getattr(self.settings, "weight_physics", 0.0) or 0.0),
+            "report": locked or self.last_physics,
+        }
+
     def brain_explain_payload(self) -> dict:
         """What the brain just did, in plain language - the /api/brain/explain shape."""
         # Imported here: backend.brain.explain imports the manager's module.
@@ -1423,6 +1439,7 @@ class CycleManager:
         payload["emotions"] = self.emotions_payload()
         payload["accuracy"] = self.accuracy_block()
         payload["brain_explain"] = self.brain_explain_payload()
+        payload["physics"] = self.physics_payload()
         if include_history:
             payload["history"] = self.history_payload(limit=72)
             payload["outcomes"] = self.outcomes_payload()
@@ -1543,6 +1560,14 @@ class CycleManager:
         decide the side and cap the confidence at what has been earned.
         """
         agreement = consensus(formula_result.values, self._directional_map())
+        physics_report = None
+        if float(getattr(self.settings, "weight_physics", 0.0) or 0.0) > 0 and snapshot is not None:
+            try:
+                physics_report = self.physics.compute(snapshot, self.asset)
+                self.last_physics = physics_report
+            except Exception as exc:  # noqa: BLE001
+                log.warning("thermodynamic layer failed this pass: %s", exc)
+                warnings.append(f"thermodynamic layer skipped: {exc}")
         common = dict(
             agents=agent_results,
             ccs_value=float(formula_result.values.get("CCSv2", 0.0)),
@@ -1557,6 +1582,7 @@ class CycleManager:
             consensus_voters=agreement["voters"],
             recent_accuracy=self.accuracy_block(),
             crowd=crowd if crowd is not None else self.emotion_locked,
+            physics=physics_report,
         )
         crowd = common["crowd"]
         spec = fusion_module.fuse(**common)
@@ -1580,6 +1606,7 @@ class CycleManager:
             crowd_tone=crowd_tone,
             candles=snapshot.candles(self.asset) if snapshot is not None else None,
             ticks=snapshot.ticks(self.asset) if snapshot is not None else None,
+            physics_vote=float((physics_report or {}).get("vote") or 0.0),
         )
         learned = self.ledger.evaluate(self.asset, votes)
         self._last_votes = votes

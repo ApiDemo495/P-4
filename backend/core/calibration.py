@@ -157,6 +157,7 @@ class EvidenceLedger:
         crowd_tone: float = 0.0,
         candles=None,
         ticks=None,
+        physics_vote: float = 0.0,
     ) -> dict[str, int]:
         """Collect this window's directional votes, one per source."""
         votes: dict[str, int] = {}
@@ -191,6 +192,9 @@ class EvidenceLedger:
         s = sign(crowd_tone)
         if s:
             votes["crowd:tone"] = s
+        s = sign(physics_vote)
+        if s:
+            votes["physics:layer"] = s
 
         # Micro-structure priors.  Signs are the *raw* direction of the
         # quantity; the ledger learns whether to follow or fade each of them.

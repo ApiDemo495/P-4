@@ -1626,6 +1626,58 @@ function renderBrainExplain(data) {
   renderBrainPipeline();
 }
 
+/* The thermodynamic capital layer (Round T): the report locked with the
+   window on screen.  It travels inside the fusion, so it cannot change
+   mid-window either. */
+function renderPhysics(payload) {
+  const r = payload && payload.report;
+  const card = $("physics-card");
+  if (!card) return;
+  if (!r) {
+    $("ph-verdict").textContent = payload && payload.weight === 0
+      ? "disabled (PHYSICS_WEIGHT=0)" : "waiting for the first locked window…";
+    return;
+  }
+  const w = r.weights || {}, comp = r.composite || {}, ph = r.physical || {};
+  const side = r.vote >= 0 ? "BUY" : "SELL";
+  $("ph-head").textContent =
+    `${payload.locked ? "🔒 locked with this window" : "live"} · weight ${fmtPct(payload.weight)} of fusion · ${r.elapsed_us} µs`;
+  $("ph-verdict").innerHTML =
+    `<span class="sig-${side}">${side} ${r.asset}</span> vote <b>${Number(r.vote).toFixed(3)}</b> at ${fmtPct(r.confidence)} · ` +
+    `target BTC weight <b>${fmtPct(w.w_composite)}</b> (thermal ${fmtPct(w.w_thermal)} · solar ${fmtPct(w.w_solar)} · α ${Number(w.alpha).toFixed(2)}) · ` +
+    `microstructure ${fmtPct(w.w_micro)}${w.clamped ? " · clamped to the band" : ""}${w.drag > 0 ? ` · drag ${fmtPct(w.drag)}` : ""}`;
+  $("ph-bar-fill").style.width = `${Math.round(Number(w.w_composite) * 100)}%`;
+  $("ph-bar-micro").style.left = `${Math.round(Number(w.w_micro) * 100)}%`;
+  $("ph-bar-text").textContent = `physics ${fmtPct(w.w_composite)} · micro ${fmtPct(w.w_micro)} · final ${fmtPct(w.w_final)}`;
+  const L = ph.landauer || {}, S = ph.solar || {}, E = ph.energy_mass || {};
+  $("ph-theta").textContent = `${Number(L.theta).toFixed(4)} (Θ* ${L.theta_star}) · Ṡ ${Number(L.s_dot_w).toExponential(2)} W`;
+  $("ph-omega").textContent = `${Number(S.omega).toFixed(4)} · ${Math.round(Number(S.sunlit_share) * 100)}% of hashrate in sunlight`;
+  $("ph-ratio").textContent = `${Number(E.ratio_oz_per_btc).toFixed(1)} vs market ${Number(E.market_ratio).toFixed(2)}`;
+  $("ph-phase").textContent = `${Number(comp.phase_angle_deg).toFixed(2)}° — ${comp.phase}`;
+  $("ph-tsr").textContent = `${Number(comp.tsr).toFixed(4)} · expected edge ${Number(comp.expected_edge_bps).toFixed(2)} bp (floor ${Number(comp.floor_edge_bps).toFixed(2)})`;
+  const tele = r.telemetry || {};
+  $("ph-live").textContent = `${r.live_inputs} live inputs · hashrate ${tele.hashrate?.source || "—"} · gold spot ${tele.xau_usd?.source || "—"} · pools ${tele.dex_pools?.source || "—"} · venues ${tele.venues?.source || "—"}`;
+  const body = $("ph-mechanisms");
+  body.innerHTML = "";
+  (r.mechanisms || []).forEach((m) => {
+    const tr = document.createElement("tr");
+    const dir = m.direction > 0 ? '<span class="sig-BUY">BTC +</span>' : m.direction < 0 ? '<span class="sig-SELL">PAXG +</span>' : '<span class="muted">—</span>';
+    const unit = m.unit || (m.key === "vpin" ? "" : m.key === "pendulum" ? " REI" : m.key === "ou" ? " dev" : " bp");
+    tr.innerHTML = `<td class="muted">${escapeHtml(m.section)}</td><td>${escapeHtml(m.name)}</td>` +
+      `<td class="mono">${Number(m.value).toFixed(3)}${escapeHtml(unit)}</td><td>${dir}</td>` +
+      `<td class="mono">${Number(m.edge_bps || 0).toFixed(2)} bp</td><td class="muted">${escapeHtml(String(m.source || ""))}</td>`;
+    body.appendChild(tr);
+  });
+  const logic = [
+    ["§1 Landauer", L.logic], ["§2 Solar", S.logic], ["§4 E = mc²", E.logic],
+    ...(r.mechanisms || []).map((m) => [`§${m.section} ${m.name}`, m.logic]),
+    ["§11 Kelly", (r.kelly || {}).logic], ["§11.4 weights", w.logic],
+  ];
+  $("ph-logic").innerHTML = logic.map(([k, v]) =>
+    `<div class="ph-logic-row"><b>${escapeHtml(k)}</b><div>${escapeHtml(String(v || ""))}</div></div>`).join("");
+  $("ph-note").textContent = comp.note || "";
+}
+
 async function refreshBrainExplain() {
   renderBrainExplain(await getJSON("/api/brain/explain"));
 }
@@ -2186,6 +2238,7 @@ function applySnapshot(data, opts = {}) {
   if (data.agents_status) renderAgents(data.agents_status);
   if (data.brain_explain) renderBrainExplain(data.brain_explain);
   if (data.brain_status) renderBrainStatus(data.brain_status);
+  if (data.physics) renderPhysics(data.physics);
   if (data.history) renderHistory(data.history);
   if (data.outcomes) renderOutcomes(data.outcomes);
   if (data.accuracy && state.prediction) state.prediction.accuracy = data.accuracy;

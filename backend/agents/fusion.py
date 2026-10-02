@@ -61,6 +61,7 @@ class FusionResult:
     crowd_note: str = ""
     learned: dict = field(default_factory=dict)
     spec_score: float = 0.0
+    physics: dict = field(default_factory=dict)
 
     # -- binary direction fields (HOLD was removed) ----------------------
     @property
@@ -99,6 +100,7 @@ class FusionResult:
             "crowd_note": self.crowd_note,
             "learned": self.learned,
             "spec_score": round(self.spec_score, 4),
+            "physics": self.physics,
         }
         # Kept for the two clients: "lean" now always equals the decision,
         # because there is no third state to lean away from.
@@ -127,6 +129,7 @@ def fuse(
     recent_accuracy: dict | None = None,
     crowd: dict | None = None,
     learned: dict | None = None,
+    physics: dict | None = None,
 ) -> FusionResult:
     """Combine the Drosophila brain with the available AI agents.
 
@@ -184,6 +187,28 @@ def fuse(
                 "model": result.model,
             }
 
+    # Round T: the thermodynamic layer (Landauer / solar / E=mc² / VPIN /
+    # O-U / pendulum / AMM / peg) - one more weighted voter, never a veto.
+    physics = physics or {}
+    physics_weight = float(getattr(settings, "weight_physics", 0.0) or 0.0)
+    if physics and physics_weight > 0:
+        p_value = max(-1.0, min(1.0, float(physics.get("vote") or 0.0)))
+        # A layer running on modelled telemetry alone counts half; every live
+        # source (hashrate, gold spot, pools, venues) earns part of the rest.
+        liveness = min(1.0, int(physics.get("live_inputs") or 0) / 3.0)
+        physics_weight = physics_weight * (0.5 + 0.5 * liveness)
+        active["physics"] = physics_weight
+        contributions["physics"] = {
+            "decision": BUY if p_value >= 0 else SELL,
+            "confidence": round(float(physics.get("confidence") or 0.0), 4),
+            "value": round(p_value, 4),
+            "weight": physics_weight,
+            "status": "LIVE" if int(physics.get("live_inputs") or 0) > 0 else "MODEL",
+            "weighted_value": round(physics_weight * p_value, 4),
+            "source": "thermodynamic layer: Landauer·solar·E=mc² + VPIN·O-U·pendulum·AMM·peg (Kelly)",
+            "w_final": (physics.get("weights") or {}).get("w_final"),
+        }
+
     total_weight = sum(active.values()) or 1e-9
     weights_used = {name: weight / total_weight for name, weight in active.items()}
 
@@ -191,6 +216,8 @@ def fuse(
     for name, weight in active.items():
         if name == "drosophila":
             score += weight * max(-1.0, min(1.0, ccs_value))
+        elif name == "physics":
+            score += weight * float(contributions["physics"]["value"])
         else:
             result = agents[name]
             score += weight * _direction_value(result.decision) * float(result.confidence or 0.0)
@@ -375,6 +402,7 @@ def fuse(
         learned=learned if learned.get("active") else {"active": False, "scored": learned.get("scored", 0),
                                                        "min_samples": learned.get("min_samples")},
         spec_score=spec_score,
+        physics=physics,
     )
 
 
@@ -415,6 +443,12 @@ def _explain(
         parts.append(f"Hedge stress low (HSI={hsi:.2f})")
 
     parts.append(f"brain CCSv2={ccs_value:+.2f} at {ccs_confidence:.0%} confidence")
+    physics = contributions.get("physics")
+    if physics:
+        parts.append(
+            f"thermodynamic layer {physics['decision']} ({physics['value']:+.2f}, "
+            f"target BTC weight {float(physics.get('w_final') or 0.5):.0%})"
+        )
     if consensus_note:
         parts.append(consensus_note)
     if accuracy_note:

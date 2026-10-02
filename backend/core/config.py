@@ -205,6 +205,10 @@ class Settings:
     weight_gemini: float = 0.25
     weight_local: float = 0.20
     weight_github: float = 0.15
+    # Round T: the thermodynamic capital layer (backend/physics) votes beside
+    # the agents.  0 disables it; the other weights are renormalised with it.
+    weight_physics: float = field(default_factory=lambda: _env_float("PHYSICS_WEIGHT", 0.20))
+    physics_delta_w: float = field(default_factory=lambda: _env_float("PHYSICS_DELTA_W", 0.15))
     hsi_dampen_threshold: float = 0.80
     hsi_confidence_floor: float = 0.20
     min_fusion_confidence: float = 0.55

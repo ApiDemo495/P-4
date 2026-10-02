@@ -105,6 +105,9 @@ class ApiClient {
   /// What the circuit actually did in the window that is locked right now.
   Future<Map<String, dynamic>?> brainExplain() => _getJson('/api/brain/explain');
 
+  /// The thermodynamic capital layer locked with the window on screen.
+  Future<Map<String, dynamic>?> physicsCurrent() => _getJson('/api/physics/current');
+
   Future<Map<String, dynamic>?> formulasLive() => _getJson('/api/formulas/live');
 
   Future<Map<String, dynamic>?> timings() => _getJson('/api/formulas/timings');
