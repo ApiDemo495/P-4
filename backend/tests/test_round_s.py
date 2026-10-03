@@ -122,4 +122,7 @@ def test_flutter_installer_prefers_the_archive_and_never_hits_already_exists():
     assert "flutter_home" in script
     setup = (ROOT / ".devcontainer/setup.sh").read_text()
     assert "skipping apt (fast path)" in setup and "--prefer-binary" in setup
-    assert '"waitFor": "onCreateCommand"' in (ROOT / ".devcontainer/devcontainer.json").read_text()
+    assert '"waitFor": "postCreateCommand"' in (ROOT / ".devcontainer/devcontainer.json").read_text()
+    auto = (ROOT / "tools/codespace_autostart.sh").read_text()
+    assert "start_placeholder" in auto and "stop_placeholder" in auto
+    assert "still waiting" in auto                              # the lock wait talks

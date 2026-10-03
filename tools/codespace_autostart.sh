@@ -154,10 +154,59 @@ provision() {
 LOCK_FILE="$STATE_DIR/.autostart.lock"
 with_lock() {
   if command -v flock >/dev/null 2>&1; then
-    flock -w 900 9 || { warn "another autostart has held the lock for 15 min - continuing without it"; }
+    if ! flock -n 9; then
+      # Another hook (usually the create hook's pip install) holds the lock.
+      # Say so every 15 s: a silent terminal reads as "nothing is happening".
+      local waited=0
+      log "waiting for the step already running in another hook ($1) - progress: .run/logs/"
+      while ! flock -n 9; do
+        sleep 3
+        waited=$((waited + 3))
+        if [ "$waited" -ge 900 ]; then
+          warn "another autostart has held the lock for 15 min - continuing without it"
+          break
+        fi
+        if [ $((waited % 15)) -eq 0 ]; then
+          printf '%s[auto]%s still waiting (%ss): %s\n' "$DIM" "$R" "$waited" \
+            "$(tail -n 1 "$STATE_DIR"/logs/setup-*.log 2>/dev/null | tail -n 1 | cut -c1-100)"
+        fi
+      done
+    fi
   fi
   "$@"
 } 9>"$LOCK_FILE"
+
+# -----------------------------------------------------------------------------
+# 0. A page on the port *immediately*.  Codespaces opens the forwarded port in
+#    the browser as soon as the container exists; until the engine listens the
+#    user used to see a connection error and conclude "it is not starting".
+#    tools/placeholder_page.py (stdlib only - runs before the venv exists)
+#    shows the journal live and is replaced by the engine the moment it starts.
+# -----------------------------------------------------------------------------
+PLACEHOLDER_PID="$STATE_DIR/placeholder.pid"
+start_placeholder() {
+  engine_answers && return 0
+  port_occupied && return 0
+  local sys_py; sys_py="$(command -v python3 || true)"
+  [ -n "$sys_py" ] || return 0
+  if command -v setsid >/dev/null 2>&1; then
+    setsid nohup "$sys_py" "$REPO_ROOT/tools/placeholder_page.py" --port "$PORT" --root "$REPO_ROOT" \
+      </dev/null >>"$STATE_DIR/logs/placeholder.log" 2>&1 9>&- &
+  else
+    nohup "$sys_py" "$REPO_ROOT/tools/placeholder_page.py" --port "$PORT" --root "$REPO_ROOT" \
+      </dev/null >>"$STATE_DIR/logs/placeholder.log" 2>&1 9>&- &
+  fi
+  echo $! > "$PLACEHOLDER_PID"
+  disown 2>/dev/null || true
+  log "a 'setting up' page is on port ${PORT} until the engine takes over"
+}
+stop_placeholder() {
+  local pid
+  pid="$(cat "$PLACEHOLDER_PID" 2>/dev/null || true)"
+  [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+  pkill -f "[p]laceholder_page.py --port ${PORT}" 2>/dev/null || true
+  rm -f "$PLACEHOLDER_PID"
+}
 
 # -----------------------------------------------------------------------------
 # 1b. Self-update: fast-forward this branch from origin (never a checkout, never
@@ -247,6 +296,8 @@ start_engine() {
     log "the engine is already answering on port ${PORT}"
     return 0
   fi
+  stop_placeholder
+  sleep 0.5
   if port_occupied; then
     warn "port ${PORT} is held by something that does not answer - clearing it"
     bash "$REPO_ROOT/run.sh" --clean >/dev/null 2>&1 9>&- || true
@@ -358,6 +409,7 @@ EOF
 # -----------------------------------------------------------------------------
 case "$MODE" in
   provision)
+    start_placeholder
     # NOTE: start_flutter detaches the download itself (nohup ... &).  Never
     # `wait` on it here: postCreateCommand would then hang for the minutes the
     # Flutter SDK takes, and the user would stare at a frozen "creating
@@ -368,6 +420,7 @@ case "$MODE" in
     ok "provisioning finished - the engine is starting; the attach hook prints the URL"
     ;;
   start)
+    start_placeholder
     with_lock self_update
     with_lock provision
     with_lock start_engine
@@ -376,6 +429,7 @@ case "$MODE" in
     wait_until_ready 150 || true
     ;;
   attach)
+    start_placeholder
     with_lock self_update
     with_lock provision
     with_lock start_engine

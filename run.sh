@@ -618,6 +618,12 @@ if [ "$BG" = 1 ]; then
     warn "a previous instance is still around - restarting it cleanly"
     stop_server || true
   fi
+  # The autostart's "setting up" page (tools/placeholder_page.py) is ours:
+  # it hands the port over to the engine here.
+  if pgrep -f "[p]laceholder_page.py --port ${PORT}" >/dev/null 2>&1; then
+    pkill -f "[p]laceholder_page.py --port ${PORT}" 2>/dev/null || true
+    sleep 0.5
+  fi
   if port_is_open; then
     bad "port ${PORT} is held by another program, not by this app."
     report_open_ports

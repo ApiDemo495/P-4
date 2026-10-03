@@ -156,10 +156,10 @@ def test_the_hooks_cannot_run_two_installs_at_once() -> None:
     provisioning and the engine start are serialised by a lock, and the
     editor is not attached until postCreateCommand has finished."""
     text = AUTOSTART.read_text()
-    assert "flock -w" in text and "with_lock provision" in text
+    assert "flock -n 9" in text and "with_lock provision" in text
     assert "with_lock start_engine" in text
     config = (ROOT / ".devcontainer" / "devcontainer.json").read_text()
-    assert '"waitFor": "onCreateCommand"' in config  # attach as soon as the container exists; postCreate runs in the background
+    assert '"waitFor": "postCreateCommand"' in config
 
 
 def test_long_lived_children_never_inherit_the_lock() -> None:

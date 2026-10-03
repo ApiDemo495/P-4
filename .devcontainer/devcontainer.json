@@ -29,7 +29,9 @@
   // ---------------------------------------------------------------------------
   // The editor is not handed over until provisioning is done, so the first
   // thing the user sees is a running dashboard, not a half-installed venv.
-  "waitFor": "onCreateCommand",
+  // (Round U tried "onCreateCommand" to attach earlier; the attach hook then
+  // sat silently on the provisioning lock and read as "not starting".)
+  "waitFor": "postCreateCommand",
   "postCreateCommand": "bash tools/codespace_autostart.sh --provision",
   "postStartCommand": "bash tools/codespace_autostart.sh --start",
   "postAttachCommand": "bash tools/codespace_autostart.sh --attach",
