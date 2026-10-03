@@ -1,0 +1,461 @@
+#!/usr/bin/env bash
+# =============================================================================
+# DROSOPHILA TRADER v2.0 - zero-command start for GitHub Codespaces.
+#
+# The user's rule: "I don't want to run any command."  So nothing here may ask
+# a question, nothing may block on an optional download, and every step must be
+# safe to run again.  `.devcontainer/devcontainer.json` wires the three hooks:
+#
+#   --provision   (postCreateCommand)  install everything, once per codespace
+#   --start       (postStartCommand)   make sure the engine is running
+#   --attach      (postAttachCommand)  same as --start, then print the status
+#
+# What it does, in order:
+#   1. self-heal - if the virtualenv is missing or requirements.txt changed,
+#      re-run `.devcontainer/setup.sh` (apt + venv + pip + redis + .env);
+#   2. start the engine on the one port (`bash run.sh --bg`, idempotent, with a
+#      supervisor that restarts it if it ever dies);
+#   3. wait until /api/health answers and the first prediction is published;
+#   4. make port 8000 public, so the forwarded URL opens in any browser;
+#   5. kick off the Flutter SDK download + web build **in the background** and
+#      log it to flutter-setup.log, so /flutter comes alive by itself.
+#
+# Environment switches (all optional):
+#   AUTO_FLUTTER=0        skip the Flutter download and web build
+#   PORT=8020             serve on a different port
+#   AUTO_OPEN=0           do not try to make the port public
+# =============================================================================
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+MODE=""
+for arg in "$@"; do
+  case "$arg" in
+    --provision|--start|--attach|--status|--update) MODE="${arg#--}" ;;
+    -h|--help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  esac
+done
+[ -n "$MODE" ] || MODE="attach"
+
+VENV="$REPO_ROOT/.venv"
+PY="$VENV/bin/python"
+# Runtime state lives in .run/, NOT in .devcontainer/: VS Code watches that
+# folder and any file written there ("flutter.pid", the stamp, the lock)
+# pops "We have noticed a change to the dev container configuration -
+# rebuild?".  Only devcontainer.json and setup.sh belong in .devcontainer/.
+STATE_DIR="$REPO_ROOT/.run"
+SETUP_SH="$REPO_ROOT/.devcontainer/setup.sh"
+STAMP="$STATE_DIR/.provisioned"
+FLUTTER_LOG="$REPO_ROOT/flutter-setup.log"
+FLUTTER_PID="$STATE_DIR/flutter.pid"
+PORT="${PORT:-8000}"
+AUTO_FLUTTER="${AUTO_FLUTTER:-1}"
+AUTO_OPEN="${AUTO_OPEN:-1}"
+
+if [ -t 1 ]; then B=$'\033[1m'; DIM=$'\033[2m'; R=$'\033[0m'
+  CYN=$'\033[36m'; GRN=$'\033[32m'; YEL=$'\033[33m'; RED=$'\033[31m'
+else B=""; DIM=""; R=""; CYN=""; GRN=""; YEL=""; RED=""; fi
+mkdir -p "$STATE_DIR" "$STATE_DIR/logs"
+# Every line the hooks print is also journaled, so a failed self-start or
+# self-download is visible in the app (GET /api/system/autostart, Settings ->
+# System) and not only in a terminal tab that Codespaces may have closed.
+JOURNAL="$STATE_DIR/logs/autostart.journal"
+journal() { printf '%s %-5s %-9s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$MODE" "$2" >>"$JOURNAL" 2>/dev/null || true; }
+log()  { printf '%s[auto]%s %s\n' "$CYN" "$R" "$*"; journal info "$*"; }
+ok()   { printf '%s[auto]%s %s\n' "$GRN" "$R" "$*"; journal ok "$*"; }
+warn() { printf '%s[auto]%s %s\n' "$YEL" "$R" "$*"; journal warn "$*"; }
+bad()  { printf '%s[auto]%s %s\n' "$RED" "$R" "$*"; journal fail "$*"; }
+
+# -----------------------------------------------------------------------------
+# URLs - the Codespace URL when there is one, localhost otherwise
+# -----------------------------------------------------------------------------
+codespace_url() {
+  local domain="${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-app.github.dev}"
+  if [ -n "${CODESPACE_NAME:-}" ]; then
+    printf 'https://%s-%s.%s' "$CODESPACE_NAME" "$PORT" "$domain"
+  else
+    printf 'http://localhost:%s' "$PORT"
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# 1. Self-heal: is this environment provisioned *now*?
+# -----------------------------------------------------------------------------
+requirements_fingerprint() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$REPO_ROOT/requirements.txt" | cut -d' ' -f1
+  else
+    shasum -a 256 "$REPO_ROOT/requirements.txt" | cut -d' ' -f1
+  fi
+}
+
+imports_ok() {
+  [ -x "$PY" ] || return 1
+  PYTHONPATH="$REPO_ROOT" "$PY" - <<'PYEOF' >/dev/null 2>&1
+import importlib, sys
+for name in ("numpy", "scipy", "fastapi", "uvicorn", "httpx", "feedparser", "websockets",
+             "pydantic", "dotenv", "redis", "ntplib", "msgpack", "multipart", "pytest"):
+    try:
+        importlib.import_module(name)
+    except Exception:
+        sys.exit(1)
+from backend.formulas.engine import ALL_FORMULAS
+sys.exit(0 if len(ALL_FORMULAS) >= 22 else 1)
+PYEOF
+}
+
+needs_provision() {
+  [ -x "$PY" ] || return 0
+  [ -f "$REPO_ROOT/.env" ] || return 0
+  local want have
+  want="$(requirements_fingerprint)"
+  have="$(cat "$STAMP" 2>/dev/null || true)"
+  [ "$want" = "$have" ] || return 0
+  imports_ok || return 0
+  return 1
+}
+
+provision() {
+  if ! needs_provision; then
+    log "environment already provisioned and up to date - nothing to download"
+    return 0
+  fi
+  log "provisioning (system packages, virtualenv, requirements, .env, redis)"
+  log "the download log for pip is /tmp/pip-install.log; this is the slow step, once"
+  # Up to three passes: a flaky index or a half-written wheel on the first
+  # attempt must not leave the codespace "created" but unusable.
+  local attempt
+  for attempt in 1 2 3; do
+    bash "$SETUP_SH" </dev/null >"$STATE_DIR/logs/setup-$attempt.log" 2>&1 9>&- \
+      || warn "setup.sh reported problems on pass $attempt (log: .run/logs/setup-$attempt.log)"
+    if imports_ok; then
+      requirements_fingerprint > "$STAMP"
+      ok "provisioned on pass $attempt: $(requirements_fingerprint | cut -c1-12)"
+      return 0
+    fi
+    warn "dependencies still missing after pass $attempt - retrying"
+    # A broken .venv (interrupted create, wrong interpreter) is the usual
+    # cause; the second pass starts from a clean one.
+    [ "$attempt" -eq 1 ] && rm -rf "$VENV"
+    sleep 5
+  done
+  bad "the engine is still missing dependencies after three passes"
+  bad "last log: .run/logs/setup-3.log  - and /tmp/pip-install.log"
+  return 1
+}
+
+# Only one copy of the provisioning / engine start may run at a time.  In a
+# Codespace postCreateCommand, postStartCommand and postAttachCommand can
+# overlap (the editor attaches while the container is still being created);
+# two concurrent pip installs into one .venv is exactly how "requirements did
+# not download" happens.
+LOCK_FILE="$STATE_DIR/.autostart.lock"
+with_lock() {
+  if command -v flock >/dev/null 2>&1; then
+    if ! flock -n 9; then
+      # Another hook (usually the create hook's pip install) holds the lock.
+      # Say so every 15 s: a silent terminal reads as "nothing is happening".
+      local waited=0
+      log "waiting for the step already running in another hook ($1) - progress: .run/logs/"
+      while ! flock -n 9; do
+        sleep 3
+        waited=$((waited + 3))
+        if [ "$waited" -ge 900 ]; then
+          warn "another autostart has held the lock for 15 min - continuing without it"
+          break
+        fi
+        if [ $((waited % 15)) -eq 0 ]; then
+          printf '%s[auto]%s still waiting (%ss): %s\n' "$DIM" "$R" "$waited" \
+            "$(tail -n 1 "$STATE_DIR"/logs/setup-*.log 2>/dev/null | tail -n 1 | cut -c1-100)"
+        fi
+      done
+    fi
+  fi
+  "$@"
+} 9>"$LOCK_FILE"
+
+# -----------------------------------------------------------------------------
+# 0. A page on the port *immediately*.  Codespaces opens the forwarded port in
+#    the browser as soon as the container exists; until the engine listens the
+#    user used to see a connection error and conclude "it is not starting".
+#    tools/placeholder_page.py (stdlib only - runs before the venv exists)
+#    shows the journal live and is replaced by the engine the moment it starts.
+# -----------------------------------------------------------------------------
+PLACEHOLDER_PID="$STATE_DIR/placeholder.pid"
+start_placeholder() {
+  engine_answers && return 0
+  port_occupied && return 0
+  local sys_py; sys_py="$(command -v python3 || true)"
+  [ -n "$sys_py" ] || return 0
+  if command -v setsid >/dev/null 2>&1; then
+    setsid nohup "$sys_py" "$REPO_ROOT/tools/placeholder_page.py" --port "$PORT" --root "$REPO_ROOT" \
+      </dev/null >>"$STATE_DIR/logs/placeholder.log" 2>&1 9>&- &
+  else
+    nohup "$sys_py" "$REPO_ROOT/tools/placeholder_page.py" --port "$PORT" --root "$REPO_ROOT" \
+      </dev/null >>"$STATE_DIR/logs/placeholder.log" 2>&1 9>&- &
+  fi
+  echo $! > "$PLACEHOLDER_PID"
+  disown 2>/dev/null || true
+  log "a 'setting up' page is on port ${PORT} until the engine takes over"
+}
+stop_placeholder() {
+  local pid
+  pid="$(cat "$PLACEHOLDER_PID" 2>/dev/null || true)"
+  [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+  pkill -f "[p]laceholder_page.py --port ${PORT}" 2>/dev/null || true
+  rm -f "$PLACEHOLDER_PID"
+}
+
+# -----------------------------------------------------------------------------
+# 1b. Self-update: fast-forward this branch from origin (never a checkout, never
+#     a branch switch, never main).  A Codespace therefore picks up new commits
+#     on its own at every start - no `git pull`, which is how people end up on
+#     the wrong branch.  SELF_UPDATE=0 disables it.
+# -----------------------------------------------------------------------------
+self_update() {
+  [ "${SELF_UPDATE:-1}" = "1" ] || { log "SELF_UPDATE=0 - not fetching"; return 0; }
+  local before after
+  before="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "")"
+  [ -n "$before" ] || return 0
+  PORT="$PORT" bash "$REPO_ROOT/tools/self_update.sh" --apply --no-restart 9>&- || true
+  after="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "")"
+  if [ "$before" != "$after" ]; then
+    ok "updated ${before} -> ${after} ($(git -C "$REPO_ROOT" log -1 --format=%s | cut -c1-70))"
+    # The running engine (if any) is old code now: restart it below.
+    bash "$REPO_ROOT/run.sh" --stop 9>&- >/dev/null 2>&1 || true
+  else
+    log "branch is up to date (${after})"
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# 2. Flutter: download the SDK and build the web client, in the background
+# -----------------------------------------------------------------------------
+flutter_running() {
+  [ -f "$FLUTTER_PID" ] || return 1
+  local pid
+  pid="$(cat "$FLUTTER_PID" 2>/dev/null || true)"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+flutter_ready() {
+  [ -f "$REPO_ROOT/frontend/build/web/index.html" ]
+}
+
+start_flutter() {
+  if [ "$AUTO_FLUTTER" != "1" ]; then
+    log "AUTO_FLUTTER=0 - skipping the Flutter download (set AUTO_FLUTTER=1 to enable)"
+    return 0
+  fi
+  if flutter_ready; then
+    ok "Flutter web bundle already built - served at /flutter"
+    return 0
+  fi
+  if flutter_running; then
+    log "Flutter setup is already running (pid $(cat "$FLUTTER_PID")) - log: flutter-setup.log"
+    return 0
+  fi
+  log "starting the Flutter SDK download + web build in the background"
+  log "it needs no input and does not block the dashboard; watch: tail -f flutter-setup.log"
+  # A new *session* (setsid), not just nohup: when a devcontainer lifecycle
+  # hook finishes, its process group can be cleaned up, and the download used
+  # to die with it - silently.  The engine also supervises this job itself
+  # (backend/api/flutter_build.py: /flutter shows progress, /api/flutter/build
+  # restarts it), so a dead download is visible and one click away from a retry.
+  # Lowest CPU/IO priority: the Dart compiler saturates a 2-core Codespace
+  # for minutes, and at normal priority it starved the engine's event loop -
+  # the WebSocket went silent and the panel froze under a running countdown.
+  local lowprio=""
+  command -v nice >/dev/null 2>&1 && lowprio="nice -n 19"
+  command -v ionice >/dev/null 2>&1 && lowprio="$lowprio ionice -c 3"
+  if command -v setsid >/dev/null 2>&1; then
+    setsid nohup $lowprio env INSTALL_FLUTTER=1 AUTO_FLUTTER=1 PORT="$PORT" \
+      bash "$REPO_ROOT/frontend/run_web.sh" </dev/null >>"$FLUTTER_LOG" 2>&1 &
+  else
+    nohup $lowprio env INSTALL_FLUTTER=1 AUTO_FLUTTER=1 PORT="$PORT" \
+      bash "$REPO_ROOT/frontend/run_web.sh" </dev/null >>"$FLUTTER_LOG" 2>&1 &
+  fi
+  echo $! > "$FLUTTER_PID"
+  disown 2>/dev/null || true
+}
+
+# -----------------------------------------------------------------------------
+# 3. The engine
+# -----------------------------------------------------------------------------
+engine_answers() {
+  curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1
+}
+
+port_occupied() {
+  # Not "is something listening" - curl already told us nothing *answers*.  A
+  # socket that accepts a connection but serves no HTTP is a dead process still
+  # holding the port, which is exactly the state that produces a blank page and
+  # that no amount of restarting fixes.
+  (exec 3<>"/dev/tcp/127.0.0.1/${PORT}") >/dev/null 2>&1
+}
+
+start_engine() {
+  if engine_answers; then
+    log "the engine is already answering on port ${PORT}"
+    return 0
+  fi
+  stop_placeholder
+  sleep 0.5
+  if port_occupied; then
+    warn "port ${PORT} is held by something that does not answer - clearing it"
+    bash "$REPO_ROOT/run.sh" --clean >/dev/null 2>&1 9>&- || true
+  fi
+  log "starting the engine on port ${PORT} (background, supervised)"
+  # 9>&- : the supervisor must NOT inherit the autostart lock (fd 9), or it
+  # would hold it for as long as the engine runs and every later hook would
+  # wait on it.
+  bash "$REPO_ROOT/run.sh" --bg --port "$PORT" 9>&- || warn "run.sh returned non-zero - see server.log"
+}
+
+wait_until_ready() {
+  local waited=0 limit="${1:-150}"
+  while [ "$waited" -lt "$limit" ]; do
+    if engine_answers; then
+      ok "engine up after ${waited}s"
+      return 0
+    fi
+    sleep 3
+    waited=$((waited + 3))
+    if [ $((waited % 15)) -eq 0 ]; then
+      printf '%s[auto]%s waiting for the engine (%ss) - it warms up the 80-node brain on first start\n' \
+        "$DIM" "$R" "$waited"
+    fi
+  done
+  bad "the engine did not answer within ${limit}s - diagnostics:"
+  bash "$REPO_ROOT/run.sh" --status 2>&1 | sed 's/^/      /' || true
+  return 1
+}
+
+prediction_age() {
+  curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/api/signal/current" 2>/dev/null \
+    | sed -n 's/.*"age_seconds"[[:space:]]*:[[:space:]]*\([0-9.]*\).*/\1s old/p' | head -1
+}
+
+wait_until_locked() {
+  # The first prediction needs one window; do not make the user stare at a
+  # "computing" panel wondering whether it worked.
+  local waited=0
+  while [ "$waited" -lt 20 ]; do
+    local side
+    side="$(curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/api/signal/current" 2>/dev/null \
+      | sed -n 's/.*"signal"[[:space:]]*:[[:space:]]*"\(BUY\|SELL\)".*/\1/p' | head -1)"
+    if [ -n "$side" ]; then
+      LOCKED_SIDE="$side"
+      ok "first prediction locked: ${side}"
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  log "no prediction locked yet - the panel will fill on the next window"
+  return 0
+}
+
+# -----------------------------------------------------------------------------
+# 4. Make the forwarded port public, so the URL opens without a login dance
+# -----------------------------------------------------------------------------
+open_port() {
+  [ "$AUTO_OPEN" = "1" ] || return 0
+  [ -n "${CODESPACE_NAME:-}" ] || return 0
+  command -v gh >/dev/null 2>&1 || return 0
+  # Best effort: devcontainer.json already asks for a public port; this is the
+  # belt to that pair of braces when the metadata has not applied yet.
+  nohup gh codespace ports visibility "${PORT}:public" -c "$CODESPACE_NAME" \
+    >/dev/null 2>&1 &
+}
+
+# -----------------------------------------------------------------------------
+# 5. The banner the user actually reads
+# -----------------------------------------------------------------------------
+banner() {
+  local url; url="$(codespace_url)"
+  printf '\n'
+  printf '%s================================================================%s\n' "$B" "$R"
+  printf '%s  DROSOPHILA TRADER v2.0 - running, nothing to do%s\n' "$B" "$R"
+  printf '%s================================================================%s\n' "$B" "$R"
+  printf '  dashboard    %s/\n' "$url"
+  printf '  api keys     %s/settings   (click, paste, test - no terminal)\n' "$url"
+  printf '  brain matrix %s/matrix\n' "$url"
+  printf '  api docs     %s/docs\n' "$url"
+  if flutter_ready; then
+    printf '  flutter app  %s/flutter\n' "$url"
+  elif flutter_running; then
+    printf '  flutter app  %s/flutter   (still building, log: flutter-setup.log)\n' "$url"
+  else
+    printf '  flutter app  %s/flutter   (not built; AUTO_FLUTTER=0 was set)\n' "$url"
+  fi
+  if [ -n "${LOCKED_SIDE:-}" ]; then
+    printf '  right now    %s locked · %s\n' "$LOCKED_SIDE" "$(prediction_age)"
+  fi
+  # The *effective* timing: PREDICTION_MAX_AGE_SECONDS and OUTCOME_HORIZON_SECONDS
+  # default to "0 = as long as its own window", so the raw config would print 0.
+  local timing cadence maxage horizon
+  timing="$(PYTHONPATH="$REPO_ROOT" "$PY" -c \
+    'from backend.core import config as c; s = c.SETTINGS; print(int(s.cycle_period_seconds), int(s.prediction_expired), int(s.outcome_horizon))' \
+    2>/dev/null || true)"
+  read -r cadence maxage horizon <<EOF
+$timing
+EOF
+  [ -n "${cadence:-}" ] || cadence=60
+  printf '\n  %ss countdown · every panel refreshes together at t+15 / t+30 / t+45\n' "$cadence"
+  printf '  the signal on screen is always this window'"'"'s own · scored %ss later\n' "${horizon:-60}"
+  printf '  it restarts itself if it ever stops; this container brings it back on wake\n\n'
+}
+
+# -----------------------------------------------------------------------------
+# Modes
+# -----------------------------------------------------------------------------
+case "$MODE" in
+  provision)
+    start_placeholder
+    # NOTE: start_flutter detaches the download itself (nohup ... &).  Never
+    # `wait` on it here: postCreateCommand would then hang for the minutes the
+    # Flutter SDK takes, and the user would stare at a frozen "creating
+    # container" screen for a step that is entirely optional.
+    with_lock provision
+    with_lock start_engine
+    start_flutter
+    ok "provisioning finished - the engine is starting; the attach hook prints the URL"
+    ;;
+  start)
+    start_placeholder
+    with_lock self_update
+    with_lock provision
+    with_lock start_engine
+    open_port
+    start_flutter
+    wait_until_ready 150 || true
+    ;;
+  attach)
+    start_placeholder
+    with_lock self_update
+    with_lock provision
+    with_lock start_engine
+    open_port
+    start_flutter
+    wait_until_ready 150 || true
+    wait_until_locked
+    banner
+    ;;
+  update)
+    with_lock self_update
+    with_lock provision
+    with_lock start_engine
+    wait_until_ready 150 || true
+    ;;
+  status)
+    printf 'engine: %s\n' "$(engine_answers && echo "answering on ${PORT}" || echo 'not answering')"
+    printf 'flutter: %s\n' "$(flutter_ready && echo built || (flutter_running && echo building || echo 'not started'))"
+    printf 'url: %s\n' "$(codespace_url)"
+    ;;
+esac
+
+exit 0

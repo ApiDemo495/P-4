@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Settings · Drosophila Trader v2.0</title>
+<link rel="stylesheet" href="/static/styles.css?v=2.14.0" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="fly">🪰</span> DROSOPHILA TRADER <span class="ver">v2.0</span></div>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/matrix">Brain Matrix</a>
+    <a href="/settings" class="active">⚙ Settings</a>
+  </nav>
+  <div class="conn"><span id="ws-dot" class="dot"></span><span id="ws-label">—</span></div>
+</header>
+
+<main class="wrap" style="max-width:820px">
+  <h2 style="font-size:15px;letter-spacing:.05em">API KEYS</h2>
+
+  <section class="card">
+    <div class="field">
+      <label>Gemini API Keys — 1 primary + up to 2 temporary stand-ins (all optional)</label>
+      <div class="row key-row">
+        <span class="key-role" id="role-gemini-1" title="always used">primary</span>
+        <input type="password" id="key-gemini-1" data-provider="gemini" data-slot="1" placeholder="AIza…" autocomplete="off" />
+        <button class="btn tiny ghost" data-reveal="key-gemini-1">👁</button>
+        <button class="btn" data-test="gemini" data-input="key-gemini-1" data-slot="1">Test</button>
+      </div>
+      <div class="row key-row">
+        <span class="key-role" id="role-gemini-2" title="only while primary fails">backup 1</span>
+        <input type="password" id="key-gemini-2" data-provider="gemini" data-slot="2" placeholder="optional" autocomplete="off" />
+        <button class="btn tiny ghost" data-reveal="key-gemini-2">👁</button>
+        <button class="btn" data-test="gemini" data-input="key-gemini-2" data-slot="2">Test</button>
+      </div>
+      <div class="row key-row">
+        <span class="key-role" id="role-gemini-3" title="only while primary and backup 1 fail">backup 2</span>
+        <input type="password" id="key-gemini-3" data-provider="gemini" data-slot="3" placeholder="optional" autocomplete="off" />
+        <button class="btn tiny ghost" data-reveal="key-gemini-3">👁</button>
+        <button class="btn" data-test="gemini" data-input="key-gemini-3" data-slot="3">Test</button>
+      </div>
+      <div class="status-line" id="status-gemini">—</div>
+    </div>
+    <div class="field">
+      <label>GitHub PATs (optional) — same failover order</label>
+      <div class="row key-row">
+        <span class="key-role" id="role-github-1" title="always used">primary</span>
+        <input type="password" id="key-github-1" data-provider="github" data-slot="1" placeholder="github_pat_…" autocomplete="off" />
+        <button class="btn tiny ghost" data-reveal="key-github-1">👁</button>
+        <button class="btn" data-test="github" data-input="key-github-1" data-slot="1">Test</button>
+      </div>
+      <div class="row key-row">
+        <span class="key-role" id="role-github-2" title="only while primary fails">backup 1</span>
+        <input type="password" id="key-github-2" data-provider="github" data-slot="2" placeholder="optional" autocomplete="off" />
+        <button class="btn tiny ghost" data-reveal="key-github-2">👁</button>
+        <button class="btn" data-test="github" data-input="key-github-2" data-slot="2">Test</button>
+      </div>
+      <div class="row key-row">
+        <span class="key-role" id="role-github-3" title="only while primary and backup 1 fail">backup 2</span>
+        <input type="password" id="key-github-3" data-provider="github" data-slot="3" placeholder="optional" autocomplete="off" />
+        <button class="btn tiny ghost" data-reveal="key-github-3">👁</button>
+        <button class="btn" data-test="github" data-input="key-github-3" data-slot="3">Test</button>
+      </div>
+      <div class="status-line" id="status-github">—</div>
+    </div>
+    <div class="field">
+      <label>CryptoPanic API Keys (optional)</label>
+      <div class="row key-row">
+        <span class="key-role" id="role-cryptopanic-1" title="always used">primary</span>
+        <input type="password" id="key-cryptopanic-1" data-provider="cryptopanic" data-slot="1" placeholder="token" autocomplete="off" />
+        <button class="btn tiny ghost" data-reveal="key-cryptopanic-1">👁</button>
+        <button class="btn" data-test="cryptopanic" data-input="key-cryptopanic-1" data-slot="1">Test</button>
+      </div>
+      <div class="row key-row">
+        <span class="key-role" id="role-cryptopanic-2" title="only while primary fails">backup 1</span>
+        <input type="password" id="key-cryptopanic-2" data-provider="cryptopanic" data-slot="2" placeholder="optional" autocomplete="off" />
+        <button class="btn tiny ghost" data-reveal="key-cryptopanic-2">👁</button>
+        <button class="btn" data-test="cryptopanic" data-input="key-cryptopanic-2" data-slot="2">Test</button>
+      </div>
+      <div class="row key-row">
+        <span class="key-role" id="role-cryptopanic-3" title="only while primary and backup 1 fail">backup 2</span>
+        <input type="password" id="key-cryptopanic-3" data-provider="cryptopanic" data-slot="3" placeholder="optional" autocomplete="off" />
+        <button class="btn tiny ghost" data-reveal="key-cryptopanic-3">👁</button>
+        <button class="btn" data-test="cryptopanic" data-input="key-cryptopanic-3" data-slot="3">Test</button>
+      </div>
+      <div class="status-line" id="status-cryptopanic">—</div>
+    </div>
+    <div class="field">
+      <label>NewsAPI Keys (optional)</label>
+      <div class="row key-row">
+        <span class="key-role" id="role-newsapi-1" title="always used">primary</span>
+        <input type="password" id="key-newsapi-1" data-provider="newsapi" data-slot="1" placeholder="key" autocomplete="off" />
+        <button class="btn tiny ghost" data-reveal="key-newsapi-1">👁</button>
+        <button class="btn" data-test="newsapi" data-input="key-newsapi-1" data-slot="1">Test</button>
+      </div>
+      <div class="row key-row">
+        <span class="key-role" id="role-newsapi-2" title="only while primary fails">backup 1</span>
+        <input type="password" id="key-newsapi-2" data-provider="newsapi" data-slot="2" placeholder="optional" autocomplete="off" />
+        <button class="btn tiny ghost" data-reveal="key-newsapi-2">👁</button>
+        <button class="btn" data-test="newsapi" data-input="key-newsapi-2" data-slot="2">Test</button>
+      </div>
+      <div class="row key-row">
+        <span class="key-role" id="role-newsapi-3" title="only while primary and backup 1 fail">backup 2</span>
+        <input type="password" id="key-newsapi-3" data-provider="newsapi" data-slot="3" placeholder="optional" autocomplete="off" />
+        <button class="btn tiny ghost" data-reveal="key-newsapi-3">👁</button>
+        <button class="btn" data-test="newsapi" data-input="key-newsapi-3" data-slot="3">Test</button>
+      </div>
+      <div class="status-line" id="status-newsapi">—</div>
+    </div>
+    <div class="status-line" id="failover-note">
+      Slot 1 is always preferred. If it is rejected, rate limited or errors, the engine switches to
+      slot 2, then 3, for that very call and returns to slot 1 the moment its cooldown ends.
+    </div>
+
+    <div class="field">
+      <label>neuPrint token — NEUPRINT_APPLICATION_CREDENTIALS (optional, live hemibrain)</label>
+      <div class="row">
+        <input type="password" id="key-neuprint" placeholder="eyJ… from neuprint.janelia.org → Account" />
+        <button class="btn tiny ghost" data-reveal="key-neuprint">👁</button>
+      </div>
+      <div class="status-line" id="status-neuprint">brain step 2-auth is skipped (not failed) while this is empty</div>
+    </div>
+
+    <div class="field">
+      <label>FlyWire CAVE token — CAVE_TOKEN (optional)</label>
+      <div class="row">
+        <input type="password" id="key-cave" placeholder="token from global.daf-apis.com" />
+        <button class="btn tiny ghost" data-reveal="key-cave">👁</button>
+      </div>
+      <div class="status-line" id="status-cave">brain step 4-flywire is skipped (not failed) while this is empty</div>
+    </div>
+
+    <div class="row" style="justify-content:flex-end">
+      <button class="btn" id="save-keys">Save &amp; Return</button>
+    </div>
+    <div class="status-line" id="keys-note">
+      Keys are held in memory for this session. Tick “persist” to also write them to your local
+      <code>.env</code> (git-ignored) as <code>GEMINI_API_KEY</code>, <code>GEMINI_API_KEY_2</code>,
+      <code>GEMINI_API_KEY_3</code> and so on.
+      <label style="display:inline;margin-left:8px">
+        <input type="checkbox" id="persist" style="width:auto" /> persist to .env
+      </label>
+    </div>
+  </section>
+
+  <h2 style="font-size:15px;letter-spacing:.05em">LOCAL AI MODELS — up to 3 at the same time</h2>
+  <section class="card">
+    <div id="local-status" class="status-line">—</div>
+    <div class="status-line" style="margin-bottom:10px">
+      Every loaded model answers every cycle in parallel; their answers are merged into one local
+      opinion (confidence-weighted majority, trimmed when they disagree). All three slots are optional.
+    </div>
+    <div class="field model-slot" id="model-slot-1">
+      <label>Model 1 — .gguf or .onnx, validated, loaded, then test-inferred</label>
+      <div class="row">
+        <input type="file" id="model-file-1" accept=".gguf,.onnx" />
+        <button class="btn" data-upload="1">Load into slot 1</button>
+        <button class="btn ghost" data-unload="1">Unload</button>
+      </div>
+      <div class="status-line" id="model-status-1">empty</div>
+    </div>
+    <div class="field model-slot" id="model-slot-2">
+      <label>Model 2 (optional) — .gguf or .onnx, validated, loaded, then test-inferred</label>
+      <div class="row">
+        <input type="file" id="model-file-2" accept=".gguf,.onnx" />
+        <button class="btn" data-upload="2">Load into slot 2</button>
+        <button class="btn ghost" data-unload="2">Unload</button>
+      </div>
+      <div class="status-line" id="model-status-2">empty</div>
+    </div>
+    <div class="field model-slot" id="model-slot-3">
+      <label>Model 3 (optional) — .gguf or .onnx, validated, loaded, then test-inferred</label>
+      <div class="row">
+        <input type="file" id="model-file-3" accept=".gguf,.onnx" />
+        <button class="btn" data-upload="3">Load into slot 3</button>
+        <button class="btn ghost" data-unload="3">Unload</button>
+      </div>
+      <div class="status-line" id="model-status-3">empty</div>
+    </div>
+    <div class="row">
+      <button class="btn ghost" id="stub-model">Load dev stub into slot 1</button>
+      <span style="flex:1"></span>
+      <label style="display:inline"><input type="radio" name="lmode" value="ensemble" checked style="width:auto" /> Ensemble</label>
+      <label style="display:inline"><input type="radio" name="lmode" value="replace" style="width:auto" /> Replace</label>
+      <label style="display:inline"><input type="radio" name="lmode" value="off" style="width:auto" /> Off</label>
+    </div>
+    <div class="status-line" id="upload-status"></div>
+  </section>
+
+  <h2 style="font-size:15px;letter-spacing:.05em">BRAIN CONNECTION</h2>
+  <section class="card">
+    <div id="brain-status" class="status-line">—</div>
+    <div style="margin-top:12px">
+      <table>
+        <tbody id="brain-steps"></tbody>
+      </table>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="brain-reconnect">Force Reconnect</button>
+      <a class="btn ghost" href="/matrix" style="text-decoration:none">Show Matrix</a>
+      <button class="btn ghost" id="brain-health">Run Health Check</button>
+    </div>
+    <div class="status-line" id="brain-note"></div>
+  </section>
+
+  <h2 style="font-size:15px;letter-spacing:.05em">NEWS SOURCES</h2>
+  <section class="card">
+    <div id="news-status" class="status-line">—</div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn ghost" id="news-poll">Poll Now</button>
+      <button class="btn ghost" id="test-rss">Check RSS feeds</button>
+      <span style="flex:1"></span>
+      <button class="btn danger" id="test-emergency">Trigger emergency (test)</button>
+    </div>
+    <div class="status-line" id="news-note"></div>
+  </section>
+
+  <h2 style="font-size:15px;letter-spacing:.05em">SYSTEM</h2>
+  <section class="card"><div class="status-line" id="system-info">—</div></section>
+
+  <section class="card">
+    <div class="card-head"><h2>Codespace self-start</h2><span class="muted" id="autostart-verdict">—</span></div>
+    <div class="status-line" id="autostart-summary">—</div>
+    <details><summary class="muted" style="cursor:pointer">journal &amp; download logs</summary>
+      <table><tbody id="autostart-journal"></tbody></table>
+      <pre id="autostart-logs" class="mono" style="max-height:260px;overflow:auto;font-size:11px"></pre>
+    </details>
+    <div class="muted" style="font-size:11px;margin-top:6px">Retries by itself on every container start and editor attach. Manual re-run: <code>bash tools/codespace_autostart.sh --attach</code></div>
+  </section>
+
+  <div class="row" style="justify-content:center;margin:20px 0 60px">
+    <a class="btn" href="/" style="text-decoration:none">← Back to dashboard</a>
+  </div>
+</main>
+
+<script src="/static/settings.js?v=2.14.0"></script>
+</body>
+</html>
