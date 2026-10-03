@@ -39,6 +39,8 @@ ROOT = Path(__file__).resolve().parents[1]
 ALLOW: dict[str, str] = {
     # Entry points and lifecycle hooks
     "main": "process entry point / FastAPI lifespan hook",
+    "log_message": "http.server.BaseHTTPRequestHandler override (tools/placeholder_page.py)",
+    "do_GET": "http.server handler method (tools/placeholder_page.py)",
     "run": "documented entry point",
     "boot": "browser entry point",
     # FastAPI / ASGI surface that is documented in README and /docs
