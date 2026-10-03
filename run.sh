@@ -333,11 +333,42 @@ if [ "$MODE" = "supervise" ]; then
   # and --stop always knows exactly what to kill.
   mkdir -p "$RUN_DIR"
   echo $$ >"$PIDFILE"
-  trap 'echo "[supervisor] stopping $(date -u +%FT%TZ)"; rm -f "$PIDFILE"; exit 0' TERM INT
+  engine_pid=""
+  trap 'echo "[supervisor] stopping $(date -u +%FT%TZ)"; [ -n "$engine_pid" ] && kill -TERM "$engine_pid" 2>/dev/null; rm -f "$PIDFILE"; exit 0' TERM INT
   echo "[supervisor] started $(date -u +%FT%TZ) with $PY"
+  # Liveness, not just "is the process there": an engine that is alive but
+  # hung (starved event loop, a blocked thread) answers nothing on /api/health,
+  # or answers with "stalled": true when its window loop stopped opening
+  # windows.  Either state for ~60 s means a restart - the same 2-second
+  # recovery a crash gets, instead of a frozen panel under a running countdown.
+  HEALTH_URL="http://127.0.0.1:${PORT}/api/health"
   while true; do
     echo "[supervisor] launching engine $(date -u +%FT%TZ)"
-    "$PY" -m backend.api.main
+    "$PY" -m backend.api.main &
+    engine_pid=$!
+    failures=0
+    sleep 15
+    while kill -0 "$engine_pid" 2>/dev/null; do
+      body="$(curl -fsS --max-time 5 "$HEALTH_URL" 2>/dev/null || true)"
+      if [ -z "$body" ]; then
+        failures=$((failures + 1))
+        [ "$failures" -ge 2 ] && echo "[supervisor] health check failed ${failures}x $(date -u +%FT%TZ)"
+      elif printf '%s' "$body" | grep -q '"stalled":[[:space:]]*true'; then
+        failures=$((failures + 1))
+        echo "[supervisor] engine reports a stalled window loop (${failures}x) $(date -u +%FT%TZ)"
+      else
+        failures=0
+      fi
+      if [ "$failures" -ge 6 ]; then
+        echo "[supervisor] engine unresponsive for ~60s - restarting it $(date -u +%FT%TZ)"
+        kill -TERM "$engine_pid" 2>/dev/null || true
+        sleep 3
+        kill -KILL "$engine_pid" 2>/dev/null || true
+        break
+      fi
+      sleep 10
+    done
+    wait "$engine_pid" 2>/dev/null
     code=$?
     if [ "$code" = 0 ]; then
       echo "[supervisor] engine exited cleanly - not restarting"

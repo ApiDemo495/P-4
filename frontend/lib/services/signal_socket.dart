@@ -25,8 +25,16 @@ class SignalSocket {
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _subscription;
   Timer? _retryTimer;
+  Timer? _silenceTimer;
+  DateTime _lastFrame = DateTime.now();
   int _attempt = 0;
   bool _closed = false;
+
+  /// The engine streams the crowd twice a second, so a socket that stays open
+  /// without a frame for this long is a half-open proxy connection (the
+  /// Codespaces forwarder keeps our side alive after the backend stalled).
+  /// Round X: close it, which reconnects and replays `HELLO`.
+  static const Duration silenceLimit = Duration(seconds: 15);
 
   Stream<SignalEvent> get events => _controller.stream;
 
@@ -52,12 +60,22 @@ class SignalSocket {
       );
       _controller.add(const SignalEvent('SOCKET_OPEN', {}));
       _attempt = 0;
+      _lastFrame = DateTime.now();
+      _silenceTimer?.cancel();
+      _silenceTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+        if (_channel == null) return;
+        if (DateTime.now().difference(_lastFrame) > silenceLimit) {
+          _controller.add(const SignalEvent('SOCKET_SILENT', {}));
+          _scheduleReconnect();
+        }
+      });
     } catch (_) {
       _scheduleReconnect();
     }
   }
 
   void _onData(dynamic raw) {
+    _lastFrame = DateTime.now();
     try {
       final decoded = jsonDecode(raw.toString());
       if (decoded is! Map) return;
@@ -82,6 +100,8 @@ class SignalSocket {
   }
 
   void _teardown() {
+    _silenceTimer?.cancel();
+    _silenceTimer = null;
     _subscription?.cancel();
     _subscription = null;
     _channel?.sink.close();

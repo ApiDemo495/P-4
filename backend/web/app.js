@@ -133,6 +133,7 @@ function connect() {
   };
   ws.onerror = () => ws.close();
   ws.onmessage = (event) => {
+    state.lastMessageAt = Date.now();
     let msg;
     try { msg = JSON.parse(event.data); } catch (e) { return; }
     handle(msg);
@@ -402,6 +403,19 @@ async function safetyNet() {
   updateTick += 1;
   lockWatchdog();
   if (updateTick % 60 === 1) checkForUpdate();   // 5 s x 60 = every 5 min, first at boot
+  // A socket that is OPEN but silent is the proxy keeping our side alive
+  // after the backend side died or stalled (Codespaces does exactly this):
+  // the countdown kept running while nothing else moved.  The engine streams
+  // the crowd twice a second, so 15 s of silence is never normal - close the
+  // socket (which reconnects) and fall through to the poll below.
+  const silentMs = state.lastMessageAt ? Date.now() - state.lastMessageAt : 0;
+  if (state.ws && state.ws.readyState === WebSocket.OPEN && silentMs > 15000) {
+    console.warn(`engine silent for ${Math.round(silentMs / 1000)}s - reconnecting`);
+    $("ws-label").textContent = `engine silent ${Math.round(silentMs / 1000)}s — reconnecting…`;
+    $("ws-dot").className = "dot off";
+    state.lastMessageAt = Date.now();
+    try { state.ws.close(); } catch (e) { /* onclose reconnects */ }
+  }
   // Nothing to do while the socket is healthy - the backend is the schedule.
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
     const t0 = performance.now();
@@ -413,6 +427,9 @@ async function safetyNet() {
     }
     const status = await getJSON("/api/signal/status");
     if (status && !status.error) renderStatus(status);
+    if (current && current.error) {
+      $("ws-label").textContent = current.offline ? "engine unreachable — the supervisor restarts it" : `engine error: ${current.error}`;
+    }
   }
   if (!state.ready || state.startError) await pollReadiness();
 }

@@ -239,6 +239,7 @@ class AppState extends ChangeNotifier {
         connected = true;
         break;
       case 'SOCKET_CLOSED':
+      case 'SOCKET_SILENT':
         connected = false;
         break;
       case 'HELLO':

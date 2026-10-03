@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -190,8 +191,13 @@ def start(force: bool = False) -> dict:
     try:
         log_handle.write(f"\n==> engine (re)started the Flutter setup at {time.strftime('%Y-%m-%d %H:%M:%S')}\n".encode())
         log_handle.flush()
+        # Lowest priority: the Dart compiler must never starve the engine that
+        # launched it (the panel froze under a running countdown when it did).
+        command = ["bash", str(RUN_WEB)]
+        if shutil.which("nice"):
+            command = ["nice", "-n", "19"] + command
         proc = subprocess.Popen(  # noqa: S603 - our own script
-            ["bash", str(RUN_WEB)],
+            command,
             cwd=str(REPO_ROOT),
             env=env,
             stdin=subprocess.DEVNULL,

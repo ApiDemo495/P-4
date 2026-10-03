@@ -265,11 +265,17 @@ start_flutter() {
   # to die with it - silently.  The engine also supervises this job itself
   # (backend/api/flutter_build.py: /flutter shows progress, /api/flutter/build
   # restarts it), so a dead download is visible and one click away from a retry.
+  # Lowest CPU/IO priority: the Dart compiler saturates a 2-core Codespace
+  # for minutes, and at normal priority it starved the engine's event loop -
+  # the WebSocket went silent and the panel froze under a running countdown.
+  local lowprio=""
+  command -v nice >/dev/null 2>&1 && lowprio="nice -n 19"
+  command -v ionice >/dev/null 2>&1 && lowprio="$lowprio ionice -c 3"
   if command -v setsid >/dev/null 2>&1; then
-    setsid nohup env INSTALL_FLUTTER=1 AUTO_FLUTTER=1 PORT="$PORT" \
+    setsid nohup $lowprio env INSTALL_FLUTTER=1 AUTO_FLUTTER=1 PORT="$PORT" \
       bash "$REPO_ROOT/frontend/run_web.sh" </dev/null >>"$FLUTTER_LOG" 2>&1 &
   else
-    nohup env INSTALL_FLUTTER=1 AUTO_FLUTTER=1 PORT="$PORT" \
+    nohup $lowprio env INSTALL_FLUTTER=1 AUTO_FLUTTER=1 PORT="$PORT" \
       bash "$REPO_ROOT/frontend/run_web.sh" </dev/null >>"$FLUTTER_LOG" 2>&1 &
   fi
   echo $! > "$FLUTTER_PID"

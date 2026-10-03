@@ -123,7 +123,11 @@ async def test_e01_cold_start_locks_a_complete_signal(manager: CycleManager):
     assert ALL_KEYS <= set(values), sorted(ALL_KEYS - set(values))
     assert manager.last_formula_result is not None
     assert not manager.last_formula_result.errors
-    assert manager.last_formula_result.zero_count <= 3
+    # Round X: the simulator is exchange-like now (no 210 bps/min trend, one
+    # burst per 30 s), so on a cold start DRG (no outcomes yet), BAR (no
+    # absorption), HRDD (no hedge divergence) and RSV (no significant drift)
+    # are *honestly* zero.  Five is the ceiling; a sixth would be a bug.
+    assert manager.last_formula_result.zero_count <= 5
 
     # latency budget: the spec allows ~3 ms for the whole pass
     assert data["total_ms"] < 50.0

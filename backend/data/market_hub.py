@@ -92,7 +92,7 @@ class MarketDataHub:
     def _warm_up(self) -> None:
         """Pre-fill buffers so the very first cycle already computes all formulas."""
         assert self.simulator is not None
-        warm = self.simulator.warm_up(seconds=180)
+        warm = self.simulator.warm_up(seconds=600)  # 10 one-minute candles for RSV / volatility from the first window
         for asset in cfg.ASSETS:
             rows = warm[asset]
             if rows.size:

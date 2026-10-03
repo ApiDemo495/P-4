@@ -165,6 +165,7 @@ class CycleManager:
         #: intermediate numbers (traces) behind each one, not just the value.
         self.last_live_result: FormulaResult | None = None
         self.last_fusion: dict = {}
+        self.last_error: str = ""
         #: The crowd's emotions, measured continuously on the live tape (the
         #: user's "which emotion is dominant, live" ask).  Sampled on its own
         #: timer so the panel moves between PULSE marks too.
@@ -419,6 +420,18 @@ class CycleManager:
                 raise
             except Exception as exc:  # noqa: BLE001
                 log.exception("window failed: %s", exc)
+                self.last_error = f"window {index + 1}: {type(exc).__name__}: {exc}"
+                self.warnings.append(f"window failed: {type(exc).__name__}: {exc}")
+                del self.warnings[:-20]
+                # Never spin on a boundary that is already in the past: the
+                # loop used to retry the same deadline every 0.5 s forever, so
+                # one persistent error froze the panel while the countdown
+                # kept running.  Skip to the next boundary and publish there,
+                # inline if need be (``_open_window`` computes when nothing
+                # was prepared).
+                if time.time() >= deadline:
+                    index += 1
+                    self._pending_signal = None
                 await asyncio.sleep(0.5)
 
     # ------------------------------------------------------------------
@@ -2216,11 +2229,22 @@ class CycleManager:
         # the agent tier is optional by design (degradation level 3 is valid).
         required = ("market_data", "news", "brain")
         overall = all(components[key].healthy for key in required)
+        # A loop that has not opened a window for more than one period plus a
+        # grace is stalled, whatever the components say: the supervisor
+        # (run.sh --supervise) restarts the process on this flag.
+        period = float(self.settings.cycle_period_seconds)
+        since_window = (time.time() - self.window_valid_from) if self.window_valid_from else 0.0
+        stalled = bool(self.ready and self._running and since_window > period + 45.0)
+        if stalled:
+            overall = False
         return {
             "ready": self.ready,
             "warming_up": self.warming,
             "start_error": self.start_error,
-            "cycle_manager": "RUNNING" if self._running else ("WARMING_UP" if self.warming else "IDLE"),
+            "cycle_manager": "STALLED" if stalled else ("RUNNING" if self._running else ("WARMING_UP" if self.warming else "IDLE")),
+            "stalled": stalled,
+            "seconds_since_window": round(since_window, 1),
+            "last_error": self.last_error,
             "healthy": overall,
             "degradation_level": int(self.degradation),
             "degradation_label": self.degradation.label,

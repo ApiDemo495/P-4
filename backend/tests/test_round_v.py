@@ -153,3 +153,20 @@ def test_emergency_override_keeps_the_window_and_is_stamped():
     assert over.computed_at == "2026-10-02T10:19:10Z"
     assert (over.valid_from, over.valid_until, over.window_seconds) == ("vf", "vu", 60)
     assert over.to_dict()["lock_icon"] == "\u26a1"
+
+
+def test_stall_defences_exist_on_every_layer():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    loop = (root / "backend/core/cycle_manager.py").read_text()
+    assert "index += 1" in loop.split("Never spin on a boundary")[1][:900]       # never spin on a past boundary
+    assert '"stalled": stalled' in loop
+    run = (root / "run.sh").read_text()
+    assert '"stalled":[[:space:]]*true' in run and "engine unresponsive" in run
+    js = (root / "backend/web/app.js").read_text()
+    assert "silentMs > 15000" in js and "state.lastMessageAt = Date.now()" in js
+    dart = (root / "frontend/lib/services/signal_socket.dart").read_text()
+    assert "SOCKET_SILENT" in dart and "silenceLimit" in dart
+    auto = (root / "tools/codespace_autostart.sh").read_text()
+    assert "nice -n 19" in auto
