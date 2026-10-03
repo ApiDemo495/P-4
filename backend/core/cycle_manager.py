@@ -1083,6 +1083,9 @@ class CycleManager:
                             "accuracy": self.accuracy_block(),
                             "brain_explain": self.brain_explain_payload(),
                             "physics": self.physics_payload(),
+                            # Round Y: the live mid, so the client can draw the
+                            # realised path over the probability branches.
+                            "live_price": float(self.market.last_price(self.asset) or 0.0) or None,
                         },
                     }
                 )
@@ -1149,6 +1152,7 @@ class CycleManager:
                                 ),
                                 "deep_included": full,
                                 "emotions": streamed,
+                                "live_price": float(self.market.last_price(self.asset) or 0.0) or None,
                                 "dampening": {
                                     "applied": (self.last_fusion or {}).get("crowd_adjustment", 1.0),
                                     "note": (self.last_fusion or {}).get("crowd_note", ""),

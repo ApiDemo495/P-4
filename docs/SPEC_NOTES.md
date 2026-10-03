@@ -1281,3 +1281,29 @@ The countdown is client-side (absolute deadline), so it keeps running when the e
 * **Browser / Flutter**: a WebSocket that is OPEN but silent for 15 s (the Codespaces forwarder keeps the client side alive after the backend side died) is closed, which reconnects and replays `HELLO`; meanwhile the 5 s safety net polls `/api/signal/current` and the header says "engine silent / unreachable" instead of "live".
 * **Most likely trigger**: the Flutter web build saturating a 2-core Codespace ~2 minutes after start (right after the SDK download) and starving the event loop. The build now runs at `nice -n 19` / `ionice -c 3` from both launch paths.
 * Simulator warm-up is 600 s (10 one-minute candles), so RSV and the volatility estimate have history from the first window.
+
+## Y — one logic, history that ramps in, asymmetric risk, probability branches
+
+* **Same TP/SL every window** is what a stale Codespace shows (pre-Round-V
+  code).  The updater refuses to fast-forward a checkout that has local commits
+  or local edits, and the chip used to stay hidden in that case.  Now it shows
+  **STALE BUILD · n updates not applied — reason** in red; the footer build hash
+  is the thing to compare with the branch head.
+* **Decision chain** documented once in `docs/DECISION_CHAIN.md`; every
+  contradiction and its resolution listed there.
+* **Prediction history → formulas**: the EvidenceLedger's verdict now blends in
+  continuously (`λ = scored / CALIBRATION_MIN_SAMPLES`, default 20) instead of
+  switching on at 30; a source needs 6 scored votes (was 10) before it pulls.
+  Reasoning line: `prediction history weighs 45% of this call (9 of 20 …)`.
+* **Risk** is asymmetric by rule: stop = 1.5 σ (clamped), target = `RR_TARGET`
+  × stop (1.5). Tests updated (Round F 1:1 contract superseded).
+* **Probability branches** (`prediction.branches`): drifted-Brownian fan
+  (5/25/50/75/95 %) with drift chosen so P(close on side) = 0.5 + confidence/2 (confidence = edge, one scale everywhere); odds of
+  the three endings; P(target before stop) by gambler's ruin. Analytic, no RNG.
+  Dashboard draws it with the realised path (white) from `live_price` carried on
+  PULSE and EMOTION messages; Flutter prints the odds line.
+* **Synesthesia** (opt-in): WebAudio pitch = depth imbalance, loudness = tick
+  surge; page glow = dominant-emotion intensity. Off by default.
+* Declined honestly: atomic ingestion, neural weave, pre-cognition, guaranteed
+  zero slippage, sovereign capital, ghost hedging, femtosecond yield.
+* Cache-bust `v=2.17.0`.

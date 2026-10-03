@@ -347,8 +347,20 @@ def fuse(
     spec_score = score
     learned_note = ""
     learned = learned or {}
-    if learned.get("active") and learned.get("side") in (BUY, SELL):
-        score = float(learned.get("score") or 0.0)
+    # Round Y - ONE logic, not two recipes with a hand-over: the prediction
+    # history re-weights every source continuously.  ``lam`` is how much of
+    # the decision the record has earned: 0 with no scored windows, 1 once
+    # ``min_samples`` windows are scored (and 0 again if the ledger's own hit
+    # rate falls below the spec recipe's - it never gets to be worse).
+    scored = int(learned.get("scored") or 0)
+    min_samples = max(1, int(learned.get("min_samples") or 30))
+    learned_side_ok = learned.get("side") in (BUY, SELL) and bool(learned.get("enabled", True))
+    lam = 0.0
+    if learned_side_ok and not learned.get("handed_back") and int(learned.get("voters", 3) or 0) >= 3:
+        lam = max(0.0, min(1.0, scored / float(min_samples)))
+    if lam > 0:
+        learned_score = float(learned.get("score") or 0.0)
+        score = (1.0 - lam) * spec_score + lam * learned_score
         p_side = float(learned.get("p_side") or 0.5)
         realised = learned.get("realised_at_this_confidence")
         # The printed confidence is the earned probability of this side
@@ -356,15 +368,19 @@ def fuse(
         # bucket has a record) - neither the spec recipe's optimism nor its
         # pessimism about inputs the ledger has shown to be noise.
         earned = float(realised) if realised is not None else p_side
-        confidence = max(0.05, min(0.95, earned))
+        # ONE confidence scale everywhere: confidence is the EDGE of the call,
+        # 2*P(side)-1 (0 = coin flip, 0.95 = near-certain).  The ledger speaks
+        # in probabilities, so its earned P(side) is converted before blending.
+        earned_edge = max(0.0, min(0.95, 2.0 * earned - 1.0))
+        confidence = (1.0 - lam) * confidence + lam * earned_edge
         flipped = (spec_score > 0) != (score > 0) and spec_score != 0
         top = ", ".join(f"{r['source']} {r['reliability']:.0%}" for r in (learned.get("for") or [])[:3])
         learned_note = (
-            f"learned evidence decides ({learned.get('scored')} windows scored): "
+            f"prediction history weighs {lam:.0%} of this call ({scored} of {min_samples} windows scored): "
             f"P({learned['side']}) {p_side:.0%}"
             + (f", realised {float(realised):.0%} at this confidence" if realised is not None else "")
-            + (f"; overrides the spec recipe ({spec_score:+.2f})" if flipped else "")
-            + (f"; strongest: {top}" if top else "")
+            + (f"; it overrides the spec recipe ({spec_score:+.2f})" if flipped else "")
+            + (f"; most reliable: {top}" if top else "")
         )
 
     # ------------------------------------------------------------------

@@ -152,7 +152,7 @@ def test_the_reasoning_names_the_formulas_behind_the_side():
     assert reasoning["consensus"]["up"] == 3
     assert reasoning["consensus"]["down"] == 1
     assert reasoning["against"]  # the dissenter is reported, not hidden
-    assert "1:1" in reasoning["summary"]
+    assert ":1 (target" in reasoning["summary"]
 
 
 def test_the_consensus_ignores_indicator_formulas():
@@ -171,27 +171,28 @@ def test_the_consensus_ignores_indicator_formulas():
 
 @pytest.mark.parametrize("asset", ["BTC", "PAXG"])
 @pytest.mark.parametrize("signal", ["BUY", "SELL"])
-def test_the_levels_are_one_to_one(asset: str, signal: str):
+def test_the_levels_follow_the_rr_target(asset: str, signal: str):
     block = risk_module.risk_levels(asset, signal, 68_000.0, 12.0, cfg.SETTINGS)
     assert block["rr"] == pytest.approx(cfg.SETTINGS.rr_target)
-    assert block["tp_bps"] == pytest.approx(block["sl_bps"])
+    assert block["tp_bps"] == pytest.approx(block["sl_bps"] * cfg.SETTINGS.rr_target)
     entry = block["entry"]
     assert abs(block["take_profit"] - entry) == pytest.approx(
-        abs(entry - block["stop_loss"]), rel=1e-9
+        abs(entry - block["stop_loss"]) * cfg.SETTINGS.rr_target, rel=1e-9
     )
     if signal == "BUY":
         assert block["take_profit"] > entry > block["stop_loss"]
     else:
         assert block["take_profit"] < entry < block["stop_loss"]
-    assert "1:1" in block["note"]
+    assert f"{cfg.SETTINGS.rr_target:.2f}:1" in block["note"]
 
 
 @pytest.mark.parametrize("volatility", [0.01, 3.0, 12.0, 400.0])
 def test_the_ratio_survives_clipping(volatility: float):
-    """The clamps must not break the 1:1 geometry at either extreme."""
+    """The stop is always bounded and the target never below the stop."""
     block = risk_module.risk_levels("BTC", "BUY", 68_000.0, volatility, cfg.SETTINGS)
-    assert block["tp_bps"] == pytest.approx(block["sl_bps"])
-    assert block["rr"] == pytest.approx(1.0)
+    assert cfg.SETTINGS.min_sl_bps <= block["sl_bps"] <= cfg.SETTINGS.max_sl_bps
+    assert block["tp_bps"] >= block["sl_bps"]
+    assert block["rr"] >= 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +236,7 @@ def test_the_prediction_detail_explains_the_side(manager: CycleManager):
     assert engine["compute_us"] > 0
     assert engine["publish_latency_us"] >= 0
     assert engine["history_samples"] > 0
-    assert detail["levels"]["tp_bps"] == detail["levels"]["sl_bps"]
+    assert detail["levels"]["tp_bps"] == pytest.approx(detail["levels"]["sl_bps"] * cfg.SETTINGS.rr_target, rel=1e-3)
     assert detail["micro"]["available"] is True
     assert detail["micro"]["resolution_us"] > 0
 
@@ -267,8 +268,8 @@ def test_the_live_formula_block_carries_microseconds_and_history(manager: CycleM
 
 def test_the_prediction_exposes_the_levels(manager: CycleManager):
     prediction = manager.signal_payload()["prediction"]
-    assert prediction["rr"] == pytest.approx(1.0)
-    assert prediction["tp_bps"] == pytest.approx(prediction["sl_bps"])
+    assert prediction["rr"] == pytest.approx(cfg.SETTINGS.rr_target)
+    assert prediction["tp_bps"] == pytest.approx(prediction["sl_bps"] * cfg.SETTINGS.rr_target, rel=1e-3)
     if prediction["entry"]:
         assert prediction["take_profit"] and prediction["stop_loss"]
 

@@ -134,7 +134,9 @@ class EvidenceLedger:
                  min_samples: int | None = None, half_life: float | None = None) -> None:
         self.path = path
         self.enabled = (os.environ.get("CALIBRATION_ENABLED", "1").strip() != "0") if enabled is None else enabled
-        self.min_samples = int(_env_float("CALIBRATION_MIN_SAMPLES", 30)) if min_samples is None else int(min_samples)
+        # Round Y: the record ramps in linearly up to this many scored windows
+        # (see fusion.fuse); 20 windows = 20 minutes of live trading.
+        self.min_samples = int(_env_float("CALIBRATION_MIN_SAMPLES", 20)) if min_samples is None else int(min_samples)
         self.half_life = _env_float("CALIBRATION_HALF_LIFE", 120.0) if half_life is None else float(half_life)
         self.decay = 0.5 ** (1.0 / max(1.0, self.half_life))
         self._assets: dict[str, AssetLedger] = {}
@@ -233,7 +235,7 @@ class EvidenceLedger:
             significant = 0
             for name, vote in votes.items():
                 stat = ledger.sources.get(name)
-                if stat is None or stat.n < 10.0:   # a source needs a record before it may pull
+                if stat is None or stat.n < 6.0:   # a source needs a record before it may pull
                     continue
                 w = stat.weight()
                 if name.startswith("crowd:"):

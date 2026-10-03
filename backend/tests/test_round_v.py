@@ -4,8 +4,10 @@ sign-neutral on a flat tape, and every feed builds its own minute candles."""
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import numpy as np
+import pytest
 
 from backend.core import config as cfg
 from backend.core.frozen_snapshot import FrozenMarketSnapshot
@@ -51,7 +53,7 @@ def test_take_profit_and_stop_move_with_volatility():
     loud = risk_levels("BTC", "BUY", 60_000.0, 40.0, cfg.SETTINGS)
     assert loud["tp_bps"] > quiet["tp_bps"] >= cfg.SETTINGS.min_tp_bps
     assert loud["take_profit"] - 60_000.0 > quiet["take_profit"] - 60_000.0
-    assert loud["tp_bps"] == loud["sl_bps"]  # the 1:1 rule is untouched
+    assert loud["tp_bps"] == pytest.approx(loud["sl_bps"] * cfg.SETTINGS.rr_target)
 
 
 def test_drg_turns_negative_after_a_loss():
@@ -170,3 +172,47 @@ def test_stall_defences_exist_on_every_layer():
     assert "SOCKET_SILENT" in dart and "silenceLimit" in dart
     auto = (root / "tools/codespace_autostart.sh").read_text()
     assert "nice -n 19" in auto
+
+
+# ---------------------------------------------------------------------------
+# Round Y: one logic - history ramps in, asymmetric risk, probability branches
+# ---------------------------------------------------------------------------
+def test_round_y_probability_branches_are_one_model_with_the_confidence():
+    from backend.core.prediction import branches
+
+    risk = {"entry": 68_000.0, "volatility_bps": 12.0, "tp_bps": 27.0, "sl_bps": 18.0}
+    for side, conf in (("BUY", 0.62), ("SELL", 0.71)):
+        b = branches(risk, side, conf, 60.0)
+        assert b["available"] is True
+        # The fan's drift is chosen so P(close on the called side) IS the confidence.
+        assert b["p_close_for"] == pytest.approx(0.5 + 0.5 * conf, abs=2e-3)
+        assert 0.0 <= b["p_tp_first"] <= 1.0
+        assert len(b["fan"]) == 13 and b["fan"][0]["q50"] == pytest.approx(68_000.0)
+        last = b["fan"][-1]
+        assert last["q5"] < last["q25"] < last["q50"] < last["q75"] < last["q95"]
+        if side == "BUY":
+            assert last["q50"] > 68_000.0
+        else:
+            assert last["q50"] < 68_000.0
+        assert sum(e["p"] for e in b["branches"]) == pytest.approx(1.0, abs=1e-3)
+        # Deterministic (no sampling): byte-stable within a cycle.
+        assert branches(risk, side, conf, 60.0) == b
+    assert branches({}, "BUY", 0.6, 60.0)["available"] is False
+
+
+def test_round_y_risk_is_asymmetric_by_rule():
+    block = risk_levels("BTC", "BUY", 60_000.0, 12.0, cfg.SETTINGS)
+    assert cfg.SETTINGS.rr_target == pytest.approx(1.5)
+    assert block["tp_bps"] == pytest.approx(block["sl_bps"] * 1.5)
+    assert "target 1.5x the stop" in block["note"]
+
+
+def test_round_y_dashboard_draws_the_branches_and_warns_on_stale_builds():
+    root = Path(__file__).resolve().parents[2]
+    html = (root / "backend/web/index.html").read_text()
+    js = (root / "backend/web/app.js").read_text()
+    assert 'id="w-branches"' in html and 'id="synesthesia-toggle"' in html
+    assert "function renderBranches" in js and "recordPath(msg.data.live_price" in js
+    assert "STALE BUILD" in js and 'classList.add("blocked")' in js
+    # Still exactly one client timer (Round H/X rule).
+    assert js.count("setInterval(") == 1

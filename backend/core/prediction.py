@@ -11,7 +11,7 @@ actionable: the user asked for three things and this module is all three:
 2.  **Reasoning.**  ``reasoning.summary`` plus a list of bullets - which
     formulas back the side, which argue against it, what the brain read out,
     how the hedge and the news look, where the levels come from.
-3.  **Risk.**  The 1:1 take-profit / stop-loss pair, in price and in bps.
+3.  **Risk.**  The take-profit / stop-loss pair (target = rr_target x stop), in price and in bps.
 
 The module is deliberately pure: it takes plain dictionaries and returns plain
 dictionaries, so it can be unit-tested without an engine.
@@ -19,6 +19,7 @@ dictionaries, so it can be unit-tested without an engine.
 
 from __future__ import annotations
 
+import math
 import time
 
 from backend.core.timebase import now_us, us_to_iso
@@ -414,9 +415,9 @@ def build_reasoning(
             "supports": True,
             "text": (
                 f"Levels: entry {risk.get('entry')}, target {risk.get('take_profit')} and stop "
-                f"{risk.get('stop_loss')} — {float(risk.get('tp_bps') or 0.0):.0f} bps each way, "
-                f"a 1:1 reward:risk on {float(risk.get('volatility_bps') or 0.0):.1f} bps realised "
-                f"volatility."
+                f"{risk.get('stop_loss')} — target {float(risk.get('tp_bps') or 0.0):.0f} bps, stop "
+                f"{float(risk.get('sl_bps') or 0.0):.0f} bps, a {float(risk.get('rr') or 0.0):.1f}:1 reward:risk "
+                f"on {float(risk.get('volatility_bps') or 0.0):.1f} bps realised volatility."
             ),
         })
 
@@ -452,7 +453,9 @@ def build_reasoning(
         summary += (
             f" {len(against)} counterpoint{'s' if len(against) != 1 else ''} below."
         )
-    summary += f" Levels are 1:1 on realised {float(risk.get('volatility_bps') or 0.0):.0f} bps volatility."
+    summary += (f" Levels are {float(risk.get('rr') or 0.0):.1f}:1 (target {float(risk.get('tp_bps') or 0.0):.0f} / "
+                f"stop {float(risk.get('sl_bps') or 0.0):.0f} bps) on realised "
+                f"{float(risk.get('volatility_bps') or 0.0):.0f} bps volatility.")
 
     return {
         "summary": summary,
@@ -558,6 +561,107 @@ def detail(
     }
 
 
+def _phi(x: float) -> float:
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def _phi_inv(p: float) -> float:
+    """Inverse normal CDF by bisection (p clamped to (0.001, 0.999))."""
+    p = max(0.001, min(0.999, p))
+    lo, hi = -4.0, 4.0
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        if _phi(mid) < p:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+def branches(risk: dict, side: str, confidence: float, horizon_seconds: float) -> dict:
+    """Round Y - the probability branches of the next window.
+
+    The market's next ``horizon_seconds`` are modelled as a drifted Brownian
+    path whose drift is *exactly* the one that makes P(close on the called
+    side) equal the printed confidence - so the fan, the confidence and the
+    levels are one model, not three; volatility = the realised volatility the
+    levels were sized on.  From that one model come, analytically (no random numbers,
+    so the block is byte-stable within a cycle):
+
+    * ``fan``        - the 5/25/50/75/95 % price quantiles every 5 seconds;
+    * ``p_close_for`` - P(the window closes on the called side) = 0.5 + edge/2;
+    * ``p_tp_first``  - P(the target is touched before the stop) given one of
+      them is touched (gambler's-ruin for drifted Brownian motion);
+    * ``branches``    - the three ways the minute can end, with their odds.
+
+    It is a model of the dispersion of outcomes, not a promise about one.
+    """
+    entry = float(risk.get("entry") or 0.0)
+    sigma_bps = float(risk.get("volatility_bps") or 0.0)
+    tp_bps = float(risk.get("tp_bps") or 0.0)
+    sl_bps = float(risk.get("sl_bps") or 0.0)
+    T = max(1.0, float(horizon_seconds or 60.0))
+    if entry <= 0 or sigma_bps <= 0 or side not in ("BUY", "SELL"):
+        return {"available": False, "fan": [], "branches": []}
+    sign = 1.0 if side == "BUY" else -1.0
+    # ``confidence`` is the call's EDGE (2*P(side)-1, the one scale the whole
+    # engine prints); P(side) = 0.5 + confidence/2.
+    p = max(0.5, min(0.975, 0.5 + 0.5 * float(confidence or 0.0)))
+    var = (sigma_bps ** 2) / T                            # bps^2 / s
+    # Drift over the window, in the called direction, chosen so that
+    # P(close on the called side) == confidence: mu_total = sigma_T * PHI^-1(p).
+    mu_total = sign * sigma_bps * _phi_inv(p)             # bps over T
+    mu = mu_total / T                                     # bps / s
+    z = {"5": -1.6449, "25": -0.6745, "50": 0.0, "75": 0.6745, "95": 1.6449}
+    fan = []
+    step = 5.0 if T >= 30 else max(1.0, T / 12.0)
+    t = 0.0
+    while t <= T + 1e-9:
+        sd = math.sqrt(var * t)
+        row = {"t": round(t, 1)}
+        for q, zq in z.items():
+            row["q" + q] = round(entry * (1.0 + (mu * t + zq * sd) / 1e4), 2)
+        fan.append(row)
+        t += step
+    sd_T = math.sqrt(var * T)
+    p_close_for = _phi(sign * mu_total / sd_T) if sd_T > 0 else 0.5
+    # Gambler's ruin: a = distance to the target, b = distance to the stop,
+    # both in the called direction's frame (drift m = sign * mu).
+    a, b, m = tp_bps, sl_bps, sign * mu
+    if abs(m) < 1e-12:
+        p_tp_first = b / (a + b) if (a + b) > 0 else 0.5
+    else:
+        k = 2.0 * m / var
+        try:
+            p_tp_first = (1.0 - math.exp(k * b)) / (math.exp(-k * a) - math.exp(k * b))
+        except OverflowError:
+            p_tp_first = 1.0 if m > 0 else 0.0
+    p_tp_first = max(0.0, min(1.0, p_tp_first))
+    # Probability that the window ends beyond the target / beyond the stop
+    # (lower bounds on "touched", enough to rank the three endings).
+    p_beyond_tp = 1.0 - _phi((a - sign * mu_total) / sd_T) if sd_T > 0 else 0.0
+    p_beyond_sl = _phi((-b - sign * mu_total) / sd_T) if sd_T > 0 else 0.0
+    p_between = max(0.0, 1.0 - p_beyond_tp - p_beyond_sl)
+    ends = [
+        {"name": "target reached", "p": round(p_beyond_tp, 4), "move_bps": round(sign * a, 1)},
+        {"name": "closes between the levels", "p": round(p_between, 4), "move_bps": round(mu_total, 1)},
+        {"name": "stop hit", "p": round(p_beyond_sl, 4), "move_bps": round(-sign * b, 1)},
+    ]
+    return {
+        "available": True,
+        "model": "drifted Brownian path: drift set so P(close on the called side) = confidence, "
+                 "sigma = realised volatility; quantiles are analytic (no sampling)",
+        "entry": entry,
+        "horizon_seconds": T,
+        "drift_bps": round(mu_total, 2),
+        "sigma_bps": round(sigma_bps, 2),
+        "p_close_for": round(p_close_for, 4),
+        "p_tp_first": round(p_tp_first, 4),
+        "branches": ends,
+        "fan": fan,
+    }
+
+
 def build(
     *,
     side: str,
@@ -610,6 +714,7 @@ def build(
         "horizon_seconds": forecast_seconds,
         # The forward-looking contract, in words and in microseconds.
         "horizon": forecast,
+        "branches": branches(risk, side, confidence, forecast_seconds),
         "forecast_for": forecast["label"],
         "target_at": forecast["target_at"],
         # The reasoning and the numbers behind it.

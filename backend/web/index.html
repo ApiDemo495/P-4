@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>Drosophila Trader v2.0</title>
-<link rel="stylesheet" href="/static/styles.css?v=2.16.0" />
+<link rel="stylesheet" href="/static/styles.css?v=2.17.0" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪰</text></svg>" />
 </head>
 <body>
@@ -26,6 +26,7 @@
       ⬆ <span id="update-text">update available</span>
       <button class="btn tiny" id="update-apply">Apply</button>
     </span>
+    <button class="btn tiny ghost" id="synesthesia-toggle" type="button" title="hear the book: pitch = order-book imbalance, loudness = tape activity (off by default)">🔈 sound off</button>
     <span id="ws-dot" class="dot"></span><span id="ws-label">connecting…</span>
   </div>
 </header>
@@ -172,7 +173,7 @@
           <div class="kv-item"><span>Entry</span><b id="w-entry">—</b></div>
           <div class="kv-item"><span>Take profit</span><b id="w-tp" class="pos">—</b></div>
           <div class="kv-item"><span>Stop loss</span><b id="w-sl" class="neg">—</b></div>
-          <div class="kv-item"><span>Reward : risk (1:1)</span><b id="w-rr">—</b></div>
+          <div class="kv-item"><span>Reward : risk (target 1.5× stop)</span><b id="w-rr">—</b></div>
           <div class="kv-item"><span>Realised vol · 1 min</span><b id="w-vol">—</b></div>
           <div class="kv-item"><span>Levels set</span><b id="w-levels">—</b></div>
           <div class="kv-item wide"><span>Note</span><b id="w-risk-note" class="muted">—</b></div>
@@ -190,6 +191,19 @@
           <div class="kv-item"><span>Evaluated after</span><b id="w-horizon">—</b></div>
           <div class="kv-item wide"><span>Engine</span><b id="w-engine" class="muted">—</b></div>
         </div>
+      </div>
+    </div>
+
+    <!-- Round Y: the probability branches of this window - the engine's own
+         dispersion model (drift fixed by the printed confidence, sigma = the
+         realised volatility the levels were sized on) with the realised path
+         drawn over it as the minute unfolds.  Frozen per window like the rest
+         of the panel; only the realised path moves. -->
+    <div class="widget-row row-branches">
+      <div class="widget-cell wide">
+        <div class="cell-label">PROBABILITY BRANCHES · next 60 s <span class="muted" id="w-branch-note">waiting for the first lock…</span></div>
+        <canvas id="w-branches" class="branch-canvas" width="900" height="170" aria-label="probability branches of the next window"></canvas>
+        <div class="branch-odds" id="w-branch-odds"></div>
       </div>
     </div>
 
@@ -494,6 +508,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=2.16.0"></script>
+<script src="/static/app.js?v=2.17.0"></script>
 </body>
 </html>

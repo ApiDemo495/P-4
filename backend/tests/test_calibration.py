@@ -7,6 +7,7 @@ import random
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from backend.core.calibration import EvidenceLedger, SourceStat
 
@@ -137,8 +138,14 @@ def test_fusion_lets_an_active_ledger_decide_and_caps_confidence() -> None:
     out = fusion.fuse(agents={}, ccs_value=0.8, ccs_confidence=0.9, hsi=0.1, settings=cfg.SETTINGS, learned=learned)
     assert out.decision == "SELL"
     assert out.spec_score > 0 and out.score < 0
-    assert out.confidence <= 0.5 + 0.5 * (2 * 0.55 - 1) + 1e-9
-    assert "learned evidence decides" in out.reasoning and "overrides the spec recipe" in out.reasoning
+    # confidence is the edge: 2 x 0.55 - 1 = 0.10, the realised edge of the bucket
+    assert out.confidence == pytest.approx(2 * 0.55 - 1)
+    assert "prediction history weighs 100%" in out.reasoning and "overrides the spec recipe" in out.reasoning
+    # Round Y: the record ramps in - half the windows scored, half the say.
+    half = fusion.fuse(agents={}, ccs_value=0.8, ccs_confidence=0.9, hsi=0.1, settings=cfg.SETTINGS,
+                       learned={**learned, "scored": 10, "min_samples": 20})
+    assert "weighs 50%" in half.reasoning
+    assert half.score == pytest.approx(0.5 * half.spec_score + 0.5 * -0.6)
     off = fusion.fuse(agents={}, ccs_value=0.8, ccs_confidence=0.9, hsi=0.1, settings=cfg.SETTINGS,
                       learned={"active": False, "scored": 3})
     assert off.decision == "BUY" and off.learned["active"] is False

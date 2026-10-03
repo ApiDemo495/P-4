@@ -105,10 +105,8 @@ COINGECKO_IDS: dict[str, str] = {"BTC": "bitcoin", "PAXG": "pax-gold"}
 #: multiples of the realised 1-minute volatility, so the levels breathe with
 #: the market instead of being fixed pip targets.
 RISK_PARAMS: dict[str, dict[str, float]] = {
-    # One distance for both sides of the trade: the user asked for a 1:1
-    # reward:risk, so the take-profit and the stop-loss are the same number of
-    # bps away from the entry.  The multiplier is in units of the realised
-    # 15-second volatility (`volatility_bps`).
+    # The stop is sigma_mult x the realised volatility (`volatility_bps`);
+    # the target is rr_target x the stop (Round Y, 1.5:1).
     "BTC": {"sigma_mult": 1.5},
     "PAXG": {"sigma_mult": 1.4},
 }
@@ -333,7 +331,10 @@ class Settings:
     )
     #: Target reward:risk ratio.  1.0 = the take-profit and the stop-loss are
     #: the same distance from the entry.
-    rr_target: float = 1.0
+    # Round Y: asymmetric by rule - the target is 1.5x the stop ("capture the
+    # tail, truncate the downside"); the loss is bounded before the window
+    # opens.  This replaces the earlier 1:1 rule (declared in SPEC_NOTES).
+    rr_target: float = field(default_factory=lambda: _env_float("RR_TARGET", 1.5))
 
     # --- Signal pipeline (Section 10.4) ---------------------------------
     #: ``True`` (default): the signal that governs a countdown is *computed

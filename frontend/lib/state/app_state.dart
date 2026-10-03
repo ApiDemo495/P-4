@@ -38,7 +38,7 @@ class AppState extends ChangeNotifier {
   FrozenSignal? signal;
   HoldWarning? holdWarning;
 
-  /// The prediction block: side, freshness, 1:1 levels and reasoning.
+  /// The prediction block: side, freshness, 1.5:1 levels and reasoning.
   Prediction prediction = Prediction.none;
 
   /// When [prediction] was received (server-clock ms), so its age ticks on the

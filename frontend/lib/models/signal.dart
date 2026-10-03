@@ -96,7 +96,7 @@ class AgentDecision {
 /// Take-profit / stop-loss geometry attached to every locked signal
 /// (Section 10.5). Levels are derived from realised volatility, not from a
 /// fixed pip target, and the take-profit is the same distance from the entry
-/// as the stop-loss (1:1), so the ratio is always 1.00.
+/// as 1.5x the stop-loss (Round Y asymmetric rule).
 class SignalRisk {
   const SignalRisk({
     this.tradeable = false,
@@ -203,7 +203,7 @@ class PredictionReasoning {
   }
 }
 
-/// The prediction the panel renders: the side, its fresh-ness, the 1:1 levels
+/// The prediction the panel renders: the side, its fresh-ness, the 1.5:1 levels
 /// and the reasoning behind it.
 ///
 /// `ageSeconds` is the age as of the moment the payload was received; the UI
@@ -236,6 +236,7 @@ class Prediction {
     this.forecastFor = '',
     this.ageMicroseconds = 0,
     this.ageLabel = '',
+    this.branches = const <String, dynamic>{},
   });
 
   final String side;
@@ -264,6 +265,19 @@ class Prediction {
   final String forecastFor;
   final int ageMicroseconds;
   final String ageLabel;
+
+  /// Round Y: the probability branches of the window (fan quantiles, the
+  /// odds of the three endings, P(close on side), P(target before stop)).
+  final Map<String, dynamic> branches;
+
+  bool get hasBranches => branches['available'] == true;
+  double get pCloseFor => _d(branches['p_close_for'], 0.5);
+  double get pTargetFirst => _d(branches['p_tp_first'], 0.5);
+  List<Map<String, dynamic>> get branchEndings =>
+      (branches['branches'] as List? ?? const [])
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
 
   bool get isStale => state != 'LIVE';
 
@@ -307,6 +321,9 @@ class Prediction {
         forecastFor: _s(json['forecast_for']),
         ageMicroseconds: (json['age_microseconds'] as num?)?.toInt() ?? 0,
         ageLabel: _s(json['age_label']),
+        branches: json['branches'] is Map
+            ? Map<String, dynamic>.from(json['branches'] as Map)
+            : const <String, dynamic>{},
       );
 }
 
@@ -1396,7 +1413,7 @@ class FrozenSignal {
   final HoldWarning? holdWarning;
   final Map<String, double> weightsUsed;
 
-  /// Take-profit / stop-loss block, 1:1 by contract.
+  /// Take-profit / stop-loss block, target = 1.5x stop by contract.
   final SignalRisk risk;
 
   /// The prediction block: side, freshness, levels, reasoning and accuracy.

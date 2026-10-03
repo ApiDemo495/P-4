@@ -5,16 +5,16 @@ directional signal carries a take-profit and a stop-loss **derived from the
 market's own volatility** rather than from fixed pip targets:
 
     sigma    = realised volatility of the window, in basis points
-    distance = clip(sigma_mult * sigma, min_bps, max_bps)     # one number
-    tp_bps   = distance                       (1:1 target - the user's rule)
-    sl_bps   = distance / rr_target           (rr_target = 1.0 by default)
+    sl_bps   = clip(sigma_mult * sigma, min_sl_bps, max_sl_bps)   # the bounded loss
+    tp_bps   = clip(sl_bps * rr_target, min_tp_bps, max_tp_bps)   # rr_target = 1.5
 
     BUY :  tp = entry * (1 + tp_bps/1e4)    sl = entry * (1 - sl_bps/1e4)
     SELL:  tp = entry * (1 - tp_bps/1e4)    sl = entry * (1 + sl_bps/1e4)
 
-The take-profit and the stop-loss are the *same distance* from the entry, so the
-reward:risk is exactly 1.00:1.  The distances are also reported in bps, because
-the price alone does not say whether a level is tight or wide.
+Round Y: the risk is asymmetric by rule - the stop is the volatility-sized,
+bounded loss; the target is 1.5x further ("truncate the downside, reach for the
+tail").  The distances are also reported in bps, because the price alone does
+not say whether a level is tight or wide.
 
 Since the signal layer became binary (BUY or SELL only), *every* window has a
 position plan.  What changes instead is the sizing instruction: a LOW conviction
@@ -110,16 +110,14 @@ def risk_levels(
     if not np.isfinite(sigma) or sigma <= 0:
         sigma = settings.default_volatility_bps
 
-    # 1:1 reward:risk (the user's rule).  One distance, clamped once, used for
-    # both sides: tp_bps == sl_bps exactly, so the ratio the UI prints is 1.00.
-    rr = float(getattr(settings, "rr_target", 1.0) or 1.0)
+    # Round Y - one risk rule: the STOP is sized on realised volatility (one
+    # sigma_mult x sigma move, clamped) and the TARGET is rr_target x the stop
+    # (1.5 by default).  The loss is bounded before the window opens; the
+    # target reaches for the tail of the move.
+    rr = float(getattr(settings, "rr_target", 1.5) or 1.5)
     sigma_mult = float(params.get("sigma_mult", 1.5))
-    distance = float(np.clip(sigma_mult * sigma, settings.min_tp_bps, settings.max_tp_bps))
-    # A stop is never allowed to be wider than its own ceiling, and it shares
-    # the take-profit's floor: the two levels must stay symmetric.
-    distance = float(np.clip(distance, settings.min_sl_bps, settings.max_sl_bps))
-    tp_bps = distance
-    sl_bps = distance / rr
+    sl_bps = float(np.clip(sigma_mult * sigma, settings.min_sl_bps, settings.max_sl_bps))
+    tp_bps = float(np.clip(sl_bps * rr, settings.min_tp_bps, settings.max_tp_bps))
 
     entry = float(entry or 0.0)
     block = {
@@ -146,7 +144,7 @@ def risk_levels(
         block["stop_loss"] = round(entry * (1.0 - sign * sl_bps / 1e4), 6)
         block["note"] = (
             f"{tp_bps:.0f} bps target / {sl_bps:.0f} bps stop = "
-            f"{block['rr']:.2f}:1 reward:risk (1:1 target), sized on {sigma:.0f} bps realised volatility"
+            f"{block['rr']:.2f}:1 reward:risk (target {rr:.1f}x the stop), stop sized on {sigma:.0f} bps realised volatility"
             f" - {block['size_hint']} ({conviction.lower()} conviction)"
         )
         if emergency_exit:

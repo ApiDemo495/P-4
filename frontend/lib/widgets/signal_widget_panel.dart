@@ -308,7 +308,7 @@ class SignalWidgetPanel extends StatelessWidget {
             : signal == null
                 ? ''
                 : 'confidence ${(signal.confidence * 100).toStringAsFixed(0)}% · '
-                    '1:1 levels · frozen for this window',
+                    '1.5:1 levels · frozen for this window',
       ),
     );
   }
@@ -336,7 +336,7 @@ class SignalWidgetPanel extends StatelessWidget {
           color: tradeable ? AppTheme.sell : AppTheme.textMuted,
         ),
         _Kv(
-          'Reward : risk (1:1)',
+          'Reward : risk (1.5:1)',
           risk.rr > 0 ? '${risk.rr.toStringAsFixed(2)} : 1' : '—',
         ),
         _Kv(
@@ -358,8 +358,26 @@ class SignalWidgetPanel extends StatelessWidget {
           wide: true,
           small: true,
         ),
+        // Round Y: the probability branches of the window, from the same
+        // model the levels and the confidence come from.
+        _Kv(
+          'Probability branches',
+          _branchesLine(state.signal?.prediction),
+          wide: true,
+          small: true,
+        ),
       ]),
     );
+  }
+
+  static String _branchesLine(Prediction? p) {
+    if (p == null || !p.hasBranches) return 'waiting for the first lock…';
+    final ends = p.branchEndings
+        .map((e) =>
+            '${e['name']} ${((e['p'] as num? ?? 0) * 100).toStringAsFixed(0)}%')
+        .join(' · ');
+    return 'P(close on side) ${(p.pCloseFor * 100).toStringAsFixed(0)}% · '
+        'P(target before stop) ${(p.pTargetFirst * 100).toStringAsFixed(0)}% · $ends';
   }
 
   /// `{evaluated, win_rate}` for one side -> `71% (n=14)` or `—`.

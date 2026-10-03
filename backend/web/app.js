@@ -164,6 +164,7 @@ function handle(msg) {
     }
     case "PULSE": {
       // One message, every panel: this is the "in parallel" contract.
+      recordPath(msg.data.live_price, msg.data.cycle_number);
       applySnapshot(msg.data, { rttMs: state.lastRttMs });
       break;
     }
@@ -213,8 +214,11 @@ function handle(msg) {
       // The crowd's mood, streamed twice a second on the backend's schedule.
       // Only the emotion panel repaints: nothing else on the page is touched,
       // so the countdown and the locked panels stay exactly where they are.
+      recordPath(msg.data.live_price, msg.data.cycle_number);
       adoptEmotions(msg.data);
       renderEmotions();
+      renderBranches();
+      synesthesia.update(msg.data.emotions);
       break;
     }
     case "ASSET_SWITCH": {
@@ -375,11 +379,23 @@ async function checkForUpdate() {
   const res = await getJSON("/api/update/status");
   if (!res || res.error || !res.ok) return;
   const behind = Number(res.behind || 0);
+  chip.classList.remove("blocked");
   if (behind > 0 && res.can_fast_forward) {
     $("update-text").textContent = `${behind} update${behind === 1 ? "" : "s"} available` +
       (res.auto ? " · auto-applies" : "");
     chip.title = `origin/${res.branch} is at ${res.remote} (you are at ${res.local}): ${res.latest || ""}`;
     chip.classList.remove("hidden");
+  } else if (behind > 0) {
+    // Round Y: a Codespace that is behind but CANNOT fast-forward used to
+    // show nothing - the user then judged the latest build by stale code.
+    // Say so, in red, with the reason the updater refuses.
+    const why = Number(res.ahead || 0) > 0 ? `this checkout has ${res.ahead} local commit${res.ahead === 1 ? "" : "s"} the branch does not`
+      : (res.dirty_files || []).length ? `local edits in ${(res.dirty_files || []).slice(0, 3).join(", ")}`
+      : res.fetch_error ? `fetch failed: ${res.fetch_error}` : "unknown reason";
+    $("update-text").textContent = `STALE BUILD · ${behind} update${behind === 1 ? "" : "s"} not applied — ${why}`;
+    chip.title = `you are on ${res.local}; origin/${res.branch} is at ${res.remote}. The self-updater only fast-forwards clean checkouts.`;
+    chip.classList.remove("hidden");
+    chip.classList.add("blocked");
   } else {
     chip.classList.add("hidden");
   }
@@ -1249,9 +1265,151 @@ function renderSignal() {
   if ($("price")) $("price").textContent = fmtMoney(s.price);
 }
 
+/* ------------------------------------------------- Round Y: branches */
+/* The realised path of the current window: one point per PULSE/EMOTION
+   message (the backend's schedule, no client timer).  Reset when the cycle
+   number changes, so the overlay always belongs to the fan it is drawn on. */
+function recordPath(price, cycleNumber) {
+  if (!price || !Number.isFinite(Number(price))) return;
+  if (cycleNumber !== undefined && cycleNumber !== state.pathCycle) {
+    state.pathCycle = cycleNumber;
+    state.path = [];
+  }
+  state.path = state.path || [];
+  const started = state.clock?.startedAtMs;
+  const t = started ? (serverNowMs() - started) / 1000 : null;
+  state.path.push({ t, p: Number(price), at: serverNowMs() });
+  if (state.path.length > 400) state.path.shift();
+}
+
+function renderBranches() {
+  const canvas = $("w-branches");
+  if (!canvas) return;
+  const br = state.prediction?.branches;
+  const note = $("w-branch-note");
+  const odds = $("w-branch-odds");
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  if (!br || !br.available || !br.fan?.length) {
+    if (note) note.textContent = "waiting for the first lock…";
+    if (odds) odds.textContent = "";
+    return;
+  }
+  const fan = br.fan;
+  const T = br.horizon_seconds || 60;
+  const path = state.path || [];
+  const t0 = path.length ? path[0].at : null;
+  const pts = path.map((r) => ({ t: r.t ?? (t0 ? (r.at - t0) / 1000 : 0), p: r.p })).filter((r) => r.t >= 0 && r.t <= T);
+  let lo = Math.min(...fan.map((r) => r.q5)), hi = Math.max(...fan.map((r) => r.q95));
+  for (const r of pts) { lo = Math.min(lo, r.p); hi = Math.max(hi, r.p); }
+  const pad = (hi - lo) * 0.08 || 1;
+  lo -= pad; hi += pad;
+  const X = (t) => 44 + (t / T) * (W - 56);
+  const Y = (p) => H - 18 - ((p - lo) / (hi - lo)) * (H - 30);
+  const band = (a, b, colour) => {
+    ctx.beginPath();
+    fan.forEach((r, i) => (i ? ctx.lineTo(X(r.t), Y(r[a])) : ctx.moveTo(X(r.t), Y(r[a]))));
+    [...fan].reverse().forEach((r) => ctx.lineTo(X(r.t), Y(r[b])));
+    ctx.closePath();
+    ctx.fillStyle = colour;
+    ctx.fill();
+  };
+  const buy = (state.prediction?.side || state.signal?.signal) === "BUY";
+  const tint = buy ? "61,220,132" : "255,92,92";
+  band("q5", "q95", `rgba(${tint},0.10)`);
+  band("q25", "q75", `rgba(${tint},0.18)`);
+  const line = (key, colour, width, dash) => {
+    ctx.beginPath();
+    ctx.setLineDash(dash || []);
+    fan.forEach((r, i) => (i ? ctx.lineTo(X(r.t), Y(r[key])) : ctx.moveTo(X(r.t), Y(r[key]))));
+    ctx.strokeStyle = colour; ctx.lineWidth = width; ctx.stroke();
+    ctx.setLineDash([]);
+  };
+  line("q50", `rgba(${tint},0.9)`, 1.5, [4, 3]);
+  const risk = state.signal?.risk || {};
+  const rule = (price, colour, label) => {
+    if (!price) return;
+    const y = Y(price);
+    if (y < 0 || y > H) return;
+    ctx.beginPath(); ctx.moveTo(44, y); ctx.lineTo(W - 12, y);
+    ctx.strokeStyle = colour; ctx.lineWidth = 1; ctx.setLineDash([2, 3]); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = colour; ctx.font = "10px monospace"; ctx.fillText(label, 46, y - 3);
+  };
+  rule(risk.take_profit, "rgba(61,220,132,0.8)", `TP ${fmtMoney(risk.take_profit)}`);
+  rule(risk.stop_loss, "rgba(255,92,92,0.8)", `SL ${fmtMoney(risk.stop_loss)}`);
+  rule(br.entry, "rgba(255,255,255,0.35)", `entry ${fmtMoney(br.entry)}`);
+  if (pts.length > 1) {
+    ctx.beginPath();
+    pts.forEach((r, i) => (i ? ctx.lineTo(X(r.t), Y(r.p)) : ctx.moveTo(X(r.t), Y(r.p))));
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2; ctx.stroke();
+    const last = pts[pts.length - 1];
+    ctx.beginPath(); ctx.arc(X(last.t), Y(last.p), 3, 0, Math.PI * 2); ctx.fillStyle = "#fff"; ctx.fill();
+  }
+  ctx.fillStyle = "rgba(255,255,255,0.45)"; ctx.font = "10px monospace";
+  ctx.fillText(fmtMoney(hi), 2, 10); ctx.fillText(fmtMoney(lo), 2, H - 4);
+  [0, 15, 30, 45, 60].filter((t) => t <= T).forEach((t) => ctx.fillText(`${t}s`, X(t) - 6, H - 4));
+  if (note) {
+    note.textContent = `drift ${Number(br.drift_bps).toFixed(1)} bps · σ ${Number(br.sigma_bps).toFixed(1)} bps · ` +
+      `P(close ${buy ? "up" : "down"}) ${fmtPct(br.p_close_for)} · P(target before stop) ${fmtPct(br.p_tp_first)}` +
+      ` · 5/25/50/75/95 % bands, realised path in white`;
+  }
+  if (odds) {
+    odds.innerHTML = (br.branches || []).map((b) => {
+      const cls = b.name === "target reached" ? "pos" : b.name === "stop hit" ? "neg" : "";
+      return `<span class="${cls}">${b.name} <b>${fmtPct(b.p)}</b> <span class="muted">(${b.move_bps > 0 ? "+" : ""}${Number(b.move_bps).toFixed(1)} bps)</span></span>`;
+    }).join("");
+  }
+}
+
+/* --------------------------------------------- Round Y: synesthesia */
+/* Hear the book.  Off by default; a click starts a WebAudio oscillator whose
+   pitch follows the depth imbalance (bids heavier = higher) and whose loudness
+   follows tape activity (tick surge).  The page glow follows the dominant
+   emotion's intensity.  Purely a rendering of numbers already on screen. */
+const synesthesia = {
+  ctx: null, osc: null, gain: null, on: false,
+  toggle() {
+    this.on = !this.on;
+    const btn = $("synesthesia-toggle");
+    if (this.on) {
+      try {
+        this.ctx = this.ctx || new (window.AudioContext || window.webkitAudioContext)();
+        this.osc = this.ctx.createOscillator();
+        this.gain = this.ctx.createGain();
+        this.osc.type = "sine";
+        this.osc.frequency.value = 220;
+        this.gain.gain.value = 0.0;
+        this.osc.connect(this.gain).connect(this.ctx.destination);
+        this.osc.start();
+        if (this.ctx.state === "suspended") this.ctx.resume();
+      } catch (e) { this.on = false; }
+    } else if (this.osc) {
+      try { this.osc.stop(); } catch (e) { /* already stopped */ }
+      this.osc = null;
+    }
+    if (btn) { btn.textContent = this.on ? "🔊 sound on" : "🔈 sound off"; btn.classList.toggle("on", this.on); }
+  },
+  update(emotions) {
+    const f = emotions?.features || {};
+    const dom = emotions?.dominant || {};
+    const glow = Math.max(0, Math.min(1, Number(dom.intensity || 0)));
+    const tone = dom.tone === "negative" ? "255,92,92" : dom.tone === "positive" ? "61,220,132" : "120,140,255";
+    document.body.classList.add("glow");
+    document.body.style.boxShadow = `inset 0 0 ${Math.round(40 + 120 * glow)}px rgba(${tone},${(0.04 + 0.16 * glow).toFixed(3)})`;
+    if (!this.on || !this.osc) return;
+    const imb = Math.max(-1, Math.min(1, Number(f.depth_imbalance || 0)));
+    const surge = Math.max(0, Math.min(3, Number(f.tick_surge || 0)));
+    const now = this.ctx.currentTime;
+    this.osc.frequency.linearRampToValueAtTime(220 * Math.pow(2, imb), now + 0.4);
+    this.gain.gain.linearRampToValueAtTime(0.02 + 0.06 * (surge / 3), now + 0.4);
+  },
+};
+
 /* ============================ WIDGET PANEL ==============================
    Row 1: prediction | countdown (1-60) | signal + conviction box
    Row 2: take profit & stop loss | prediction accuracy
+   Row 3: probability branches (Round Y)
    ======================================================================== */
 function renderWidgetPanel() {
   const s = state.signal;
@@ -1358,6 +1516,7 @@ function renderWidgetPanel() {
     `${engine}${state.window?.pipeline ? " · pipelined" : ""}` +
     ` · ${Math.round(state.window?.window_seconds || state.cyclePeriod || 60)}s predictions` +
     ` · build ${state.config?.build || "?"}`;
+  renderBranches();
 }
 
 /* ---- lock watchdog ----------------------------------------------------------
@@ -2166,6 +2325,7 @@ document.querySelectorAll("[data-test]").forEach((btn) => {
 
 $("open-keys").addEventListener("click", (event) => { event.preventDefault(); openKeys(); });
 $("setup-open").addEventListener("click", openKeys);
+$("synesthesia-toggle")?.addEventListener("click", () => synesthesia.toggle());
 $("keys-close").onclick = closeKeys;
 $("keys-cancel").onclick = closeKeys;
 $("keys-save").onclick = saveKeys;
