@@ -130,6 +130,8 @@ def fuse(
     crowd: dict | None = None,
     learned: dict | None = None,
     physics: dict | None = None,
+    news_impact: dict | None = None,
+    asset: str = "BTC",
 ) -> FusionResult:
     """Combine the Drosophila brain with the available AI agents.
 
@@ -228,6 +230,28 @@ def fuse(
             "w_final": (physics.get("weights") or {}).get("w_final"),
         }
 
+    # Round Z: the news wire votes - signed impact on THIS asset (a war is
+    # bearish BTC and bullish PAXG), weight scaled by how much fresh,
+    # classified news there is (no news -> no vote, never an imputed 0).
+    news_impact = news_impact or {}
+    news_weight = float(getattr(settings, "weight_news", 0.0) or 0.0)
+    n_value = float(news_impact.get(asset.upper()) or 0.0)
+    n_mass = float(news_impact.get("weight") or 0.0)
+    if news_weight > 0 and n_mass > 0 and abs(n_value) > 1e-6:
+        news_weight = news_weight * min(1.0, n_mass / 1.5)
+        active["news"] = news_weight
+        top = (news_impact.get("drivers") or {}).get(asset.upper()) or []
+        contributions["news"] = {
+            "decision": BUY if n_value >= 0 else SELL,
+            "confidence": round(min(1.0, abs(n_value)), 4),
+            "value": round(n_value, 4),
+            "weight": news_weight,
+            "status": "LIVE",
+            "weighted_value": round(news_weight * n_value, 4),
+            "source": "news impact: " + "; ".join(f"{d['theme']} ({d['impact']:+.2f})" for d in top[:2]),
+            "drivers": top[:3],
+        }
+
     total_weight = sum(active.values()) or 1e-9
     weights_used = {name: weight / total_weight for name, weight in active.items()}
 
@@ -235,7 +259,7 @@ def fuse(
     for name, weight in active.items():
         if name == "drosophila":
             score += weight * max(-1.0, min(1.0, ccs_value))
-        elif name in ("physics", "formulas"):
+        elif name in ("physics", "formulas", "news"):
             score += weight * float(contributions[name]["value"])
         else:
             result = agents[name]
@@ -486,6 +510,12 @@ def _explain(
         parts.append(
             f"thermodynamic layer {physics['decision']} ({physics['value']:+.2f}, "
             f"target BTC weight {float(physics.get('w_final') or 0.5):.0%})"
+        )
+    news = contributions.get("news")
+    if news:
+        parts.append(
+            f"news impact {news['decision']} ({news['value']:+.2f} on this asset: "
+            + "; ".join(f"{d['theme']}" for d in (news.get("drivers") or [])[:2]) + ")"
         )
     if consensus_note:
         parts.append(consensus_note)

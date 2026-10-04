@@ -1307,3 +1307,49 @@ The countdown is client-side (absolute deadline), so it keeps running when the e
 * Declined honestly: atomic ingestion, neural weave, pre-cognition, guaranteed
   zero slippage, sovereign capital, ghost hedging, femtosecond yield.
 * Cache-bust `v=2.17.0`.
+
+## Z — the fresh-Codespace root cause, `&b`, `¶gn`, world news impact, the geometric emotion layer
+
+* **Root cause of "same TP/SL, same signal, stuck after 1–2 predictions"**
+  (only reproducible in a fresh Codespace with a real Binance connection):
+  `MarketDataHub` started the seeded simulator two seconds after boot
+  because Binance had not connected *yet*, and nothing ever stopped it when
+  Binance did connect.  Both feeds wrote into one tape (simulator ≈65k
+  alternating with the real price).  Realised volatility pinned the levels at
+  their ceilings every window, every formula read noise, and - the simulator
+  being seeded - every new Codespace failed identically.  Fix: all data enters
+  through `hub.ingest(source, …)`; a feed that is not the active source is
+  rejected and counted; **any** source change flushes the tape; a real feed
+  gets `REAL_FEED_GRACE_SECONDS` (45) before the simulator may start; the
+  simulator task is cancelled the moment a real feed is healthy.  The header
+  shows `live tape · binance · N ticks` / `SIMULATED TAPE` (red) /
+  `connecting to the market…` from `/api/signal/status.tape`, live.
+  Tests: `test_round_z.py`.
+* **Second real tape**: `backend/data/kraken_ws.py` (Kraken v2 public,
+  BTC/USD + PAXG/USD, trade + book 25, reachable from US Codespaces).  Order:
+  Binance → Kraken → CoinGecko → simulator.
+* **`&b`** (direct internet connection per formula): every `FormulaSpec` has
+  `feeds` (tape/book/candles/news/cross/formulas); each pass carries
+  `provenance` (source, per-feed liveness and age) and `feed_status`
+  per formula; the explorer shows `&b live / simulated / offline` per row.
+* **`¶gn`** (sync with the timer): each pass carries `phase`
+  (`offset_seconds`, `mark t+15s…`, `window_start`) from the shared UTC
+  minute grid; shown per row.
+* **News impact** (`backend/news/impact.py`): 15 themes incl. war, terror /
+  cyber attack, sanctions / tariffs, hawkish / dovish central banks, dollar,
+  recession, gold, hack, depeg, regulation, adoption; signed per asset
+  (war: BTC −, PAXG +).  Aggregated with a 20-min half-life and tier weights
+  → `fusion` voter `news` (`NEWS_WEIGHT` 0.15, scaled by news mass), per
+  asset.  World feeds added to `RSS_FEEDS` (BBC World, Al Jazeera, Fed press,
+  CNBC World, Google News query).  News card shows the net impact and the
+  theme tag on each headline.
+* **Geometric emotion layer** (`backend/core/geometry.py`): TDA of the book
+  (0-dim persistence of liquidity cavities, Betti-0 curve, tearing), Takens
+  (3,1) embedding + Rosenstein Lyapunov, critical slowing down (Δa₁ × variance
+  ratio), BTC↔PAXG entropy production σ = J·X, non-commutative decision
+  interference I = P(A) − Σ P(B)P(A|B).  Six new evidence variables in the
+  Bayesian emotion filter; "GEOMETRY OF THE CROWD" block in the dashboard.
+* Not yet done from the same request (next rounds): premium UI redesign,
+  rewrite of countdown / lock weighting / TP-SL as new modules, inverse-RL
+  risk-aversion estimation, Flutter rendering of the geometry block.
+* Cache-bust `v=2.18.0`.

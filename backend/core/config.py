@@ -210,6 +210,9 @@ class Settings:
     # to reach the side only through the brain, so a model-only physics vote
     # could out-vote twenty live formulas).  0 disables it.
     weight_formulas: float = field(default_factory=lambda: _env_float("FORMULAS_WEIGHT", 0.30))
+    #: Round Z: the news wire's signed impact (impact.py) votes with this
+    #: weight, scaled by how much classified, fresh news there is.
+    weight_news: float = field(default_factory=lambda: _env_float("NEWS_WEIGHT", 0.15))
     physics_delta_w: float = field(default_factory=lambda: _env_float("PHYSICS_DELTA_W", 0.15))
     hsi_dampen_threshold: float = 0.80
     hsi_confidence_floor: float = 0.20
@@ -257,7 +260,14 @@ class Settings:
                 "RSS_FEEDS",
                 "https://www.coindesk.com/arc/outboundfeeds/rss/,"
                 "https://cointelegraph.com/rss,"
-                "https://www.theblock.co/rss.xml",
+                "https://www.theblock.co/rss.xml,"
+                # Round Z: the world, not only crypto - wars, sanctions, tariffs,
+                # central banks, gold.  Keyless public feeds.
+                "https://feeds.bbci.co.uk/news/world/rss.xml,"
+                "https://www.aljazeera.com/xml/rss/all.xml,"
+                "https://www.federalreserve.gov/feeds/press_all.xml,"
+                "https://www.cnbc.com/id/100727362/device/rss/rss.html,"
+                "https://news.google.com/rss/search?q=war+OR+sanctions+OR+tariffs+OR+%22rate+cut%22+OR+%22rate+hike%22+OR+gold+price&hl=en-US&gl=US&ceid=US:en",
             ).split(",")
             if f
         ]
@@ -283,6 +293,10 @@ class Settings:
         default_factory=lambda: _env("COINGECKO_BASE", "https://api.coingecko.com/api/v3")
     )
     stale_tick_seconds: float = 30.0
+    #: Round Z: how long a real feed may take to connect before the simulator
+    #: is allowed to touch the tape (auto mode).  Until then the source is
+    #: "none" and the UI says so.
+    real_feed_grace_seconds: float = field(default_factory=lambda: _env_float("REAL_FEED_GRACE_SECONDS", 45.0))
     reconnect_max_seconds: float = 60.0
 
     # Persistence

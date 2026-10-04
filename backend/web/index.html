@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>Drosophila Trader v2.0</title>
-<link rel="stylesheet" href="/static/styles.css?v=2.17.0" />
+<link rel="stylesheet" href="/static/styles.css?v=2.18.0" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪰</text></svg>" />
 </head>
 <body>
@@ -26,6 +26,7 @@
       ⬆ <span id="update-text">update available</span>
       <button class="btn tiny" id="update-apply">Apply</button>
     </span>
+    <span id="tape-chip" class="tape-chip none" title="where the tape comes from">connecting to the market…</span>
     <button class="btn tiny ghost" id="synesthesia-toggle" type="button" title="hear the book: pitch = order-book imbalance, loudness = tape activity (off by default)">🔈 sound off</button>
     <span id="ws-dot" class="dot"></span><span id="ws-label">connecting…</span>
   </div>
@@ -298,6 +299,10 @@
         <div class="deep-bands" id="deep-bands"></div>
       </div>
       <div class="deep-detectors" id="deep-detectors"></div>
+      <!-- Round Z: the geometric layer - TDA of the book, Takens/Lyapunov,
+           critical slowing down, BTC<->PAXG entropy production, quantum
+           interference.  Emotion read off the deformation of the numbers. -->
+      <div class="deep-geometry" id="deep-geometry"></div>
       <div class="deep-spectrum" id="deep-spectrum"></div>
       <details class="deep-chain-wrap" id="deep-chain-wrap" open>
         <summary>reasoning chain <span class="muted" id="deep-chain-meta">step by step</span></summary>
@@ -320,6 +325,7 @@
       <span class="pill" id="news-smd">SMD —</span>
       <span class="pill" id="news-coverage">coverage —</span>
     </div>
+    <div class="news-impact" id="news-impact" title="net impact of the live wire on each asset — the number the fusion votes with">impact — waiting for the wire…</div>
     <div class="news-list" id="news-list"></div>
   </section>
 
@@ -508,6 +514,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=2.17.0"></script>
+<script src="/static/app.js?v=2.18.0"></script>
 </body>
 </html>

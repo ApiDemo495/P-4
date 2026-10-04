@@ -913,6 +913,25 @@ function renderFormulaAgreement(agree) {
    wavelet spectrum, regime filter, ignition / stuffing / spoofing) and the
    Bayesian filter's belief, plus the ordered reasoning chain.  Everything is
    computed on the server at the emotion cadence; the client only draws it. */
+function renderGeometry(geo) {
+  const el = $("deep-geometry");
+  if (!el) return;
+  if (!geo || !geo.available) { el.innerHTML = ""; return; }
+  const g = (v, d = 2) => (v === null || v === undefined || Number.isNaN(Number(v)) ? "—" : Number(v).toFixed(d));
+  const bar = (v) => `<span class="geo-bar"><span style="width:${Math.round(Math.max(0, Math.min(1, Number(v) || 0)) * 100)}%"></span></span>`;
+  const tda = geo.tda || {}, tak = geo.takens || {}, csd = geo.csd || {}, th = geo.thermo || {}, qi = geo.quantum || {};
+  el.innerHTML =
+    `<div class="geo-head">GEOMETRY OF THE CROWD <span class="muted">${geo.live_measurements}/5 live · stress ${g(geo.stress)}</span></div>` +
+    `<div class="geo-grid">` +
+    `<div title="0-dim persistent homology of the liquidity surface: gaps ≥ 3× the median gap are cavities; tearing = depth behind them"><span>TDA · book manifold</span>${bar(tda.tearing)}<b>${g(tda.tearing)}</b><i>${tda.cavities ?? 0} cavities · β₀ ${(tda.betti0 || []).join("/")}</i></div>` +
+    `<div title="Takens (3,1) delay embedding of 1 s returns; Rosenstein local Lyapunov exponent"><span>Takens · attractor</span>${bar(tak.chaotic)}<b>λ ${g(tak.lyapunov)}</b><i>${Number(tak.lyapunov) > 0.2 ? "spiralling" : "stable"}</i></div>` +
+    `<div title="lag-1 autocorrelation and variance both rising = precursor of a phase transition"><span>Critical slowing</span>${bar(csd.csd)}<b>${g(csd.csd)}</b><i>a₁ ${g(csd.a1_now)} · var×${g(csd.variance_ratio)}</i></div>` +
+    `<div title="σ = J·X: capital flux between BTC (hot) and PAXG (cold) times the return differential"><span>Entropy production</span>${bar(th.entropy_production)}<b>${g(th.entropy_production)}</b><i>${escapeHtml(th.heat_direction || "—")}</i></div>` +
+    `<div title="order effect: P(up) − [P(buyer)P(up|buyer) + P(seller)P(up|seller)] on interleaved halves"><span>Quantum interference</span>${bar(qi.polarisation)}<b>I ${g(qi.interference, 3)}</b><i>${Number(qi.polarisation) > 0.3 ? "non-classical" : "classical"}</i></div>` +
+    `</div>` +
+    `<div class="geo-read muted">${escapeHtml(geo.read || "")}</div>`;
+}
+
 function renderDeep(deep, top) {
   const belief = $("deep-belief");
   if (!belief) return;
@@ -929,6 +948,7 @@ function renderDeep(deep, top) {
   const flow = deep.flow || {};
   const hawkes = deep.hawkes || {};
   const book = deep.book || {};
+  renderGeometry(deep.geometry);
   $("deep-meta").textContent =
     `${deep.ticks || 0} ticks · ${(deep.chain || []).length} formulas · computed in ${deep.compute_us ? fmtUs(deep.compute_us) : "—"}`;
   const evidenceChips = ((post.evidence_for || {})[post.argmax] || []).slice(0, 4).map((ev) =>
@@ -1114,9 +1134,31 @@ function renderStatus(status) {
     $("foot-status").textContent += " · NTP: system clock";
   }
   anchorWindow(status.window);
+  if (status.tape) state.tape = status.tape;
   renderWidgetPanel();
   renderWindowStrip();
   renderWarming(status);
+  renderTape();
+}
+
+/* Round Z: the tape's provenance, live.  "simulated" is said in red; a feed
+   that is still connecting is said as such instead of showing a fake price. */
+function renderTape() {
+  const chip = $("tape-chip");
+  if (!chip || !state.tape) return;
+  const t = state.tape;
+  chip.classList.remove("sim", "none", "live");
+  if (t.source === "simulator") {
+    chip.textContent = `SIMULATED TAPE · not live market data`;
+    chip.classList.add("sim");
+  } else if (!t.source || t.source === "none") {
+    chip.textContent = `connecting to the market…`;
+    chip.classList.add("none");
+  } else {
+    chip.textContent = `live tape · ${t.source} · ${t.btc_ticks} ticks`;
+    chip.classList.add("live");
+  }
+  chip.title = `source for ${t.source_age_seconds}s; writes rejected from other feeds: ${JSON.stringify(t.rejected_writes || {})}`;
 }
 
 /* The port answers before the engine is ready; say so instead of looking dead. */
@@ -1509,9 +1551,10 @@ function renderWidgetPanel() {
     ? `${Math.round(livePrediction.horizon_seconds)}s`
     : (state.window?.window_seconds ? `${Math.round(state.window.window_seconds)}s` : "—");
 
-  const engine = state.config?.simulated
-    ? `simulated market data · ${state.config?.market_source || "simulator"}`
-    : `${state.config?.market_source || "live feed"} · ${state.config?.cycle_period_seconds || 60}s windows`;
+  const src = state.tape?.source || state.config?.market_source || "live feed";
+  const engine = (state.tape ? state.tape.simulated : state.config?.simulated)
+    ? `simulated market data · ${src}`
+    : `${src} · ${state.config?.cycle_period_seconds || 60}s windows`;
   $("w-engine").textContent =
     `${engine}${state.window?.pipeline ? " · pipelined" : ""}` +
     ` · ${Math.round(state.window?.window_seconds || state.cyclePeriod || 60)}s predictions` +
@@ -1676,13 +1719,32 @@ function renderNewsList(data) {
   $("news-coverage").textContent = `coverage ${data.status?.coverage ?? "—"}`;
   const list = $("news-list");
   list.innerHTML = "";
+  // Round Z: the wire's net impact on each asset - the number the fusion
+  // votes with - and the headlines that produced it.
+  const imp = data.impact;
+  const impactEl = $("news-impact");
+  if (impactEl && imp) {
+    const cell = (asset) => {
+      const v = Number(imp[asset] || 0);
+      const cls = v > 0.05 ? "pos" : v < -0.05 ? "neg" : "";
+      const top = (imp.drivers?.[asset] || [])[0];
+      return `<span class="impact-cell"><span class="muted">${asset}</span> <b class="${cls}">${fmtSigned(v, 2)}</b>` +
+        (top ? `<span class="muted"> ← ${escapeHtml(top.theme)}</span>` : "") + `</span>`;
+    };
+    impactEl.innerHTML = `${cell("BTC")} ${cell("PAXG")} <span class="muted">· ${imp.classified || 0} themed, ${imp.world_items || 0} world</span>`;
+  }
   (data.items || []).forEach((item) => {
     const row = document.createElement("div");
     row.className = "news-item";
     const sentClass = item.sentiment > 0.1 ? "pos" : item.sentiment < -0.1 ? "neg" : "";
+    const ii = item.impact;
+    const tag = ii && ii.theme !== "neutral"
+      ? `<span class="impact-tag ${ii.scope}" title="${escapeHtml(`matched “${ii.matched}” → BTC ${ii.btc >= 0 ? "+" : ""}${ii.btc}, PAXG ${ii.paxg >= 0 ? "+" : ""}${ii.paxg}`)}">` +
+        `${escapeHtml(ii.label)} · BTC ${ii.btc > 0 ? "▲" : ii.btc < 0 ? "▼" : "·"} PAXG ${ii.paxg > 0 ? "▲" : ii.paxg < 0 ? "▼" : "·"}</span>`
+      : "";
     row.innerHTML =
       `<span class="tier">T${item.tier}</span>` +
-      `<span style="flex:1">${escapeHtml(item.headline)}<br><span class="muted">${escapeHtml(item.source)} · ${Math.round(item.age_seconds)}s ago</span></span>` +
+      `<span style="flex:1">${escapeHtml(item.headline)}<br><span class="muted">${escapeHtml(item.source)} · ${Math.round(item.age_seconds)}s ago</span> ${tag}</span>` +
       `<span class="sent ${sentClass}">${fmtSigned(item.sentiment, 2)}</span>`;
     list.appendChild(row);
   });
@@ -1993,6 +2055,9 @@ function renderLiveFormulas(data) {
   state.liveTimingsUs = data.timings_us || {};
   state.liveChecks = data.checks || {};
   state.liveMicro = data.micro || {};
+  state.liveProvenance = data.provenance || state.liveProvenance || {};
+  state.livePhase = data.phase || state.livePhase || {};
+  state.liveFeedStatus = data.feed_status || state.liveFeedStatus || {};
   if (data.double_check && data.double_check.formulas) {
     const note = $("live-note");
     const dc = data.double_check;
@@ -2098,6 +2163,20 @@ function formulaRow(name, value, description, meta, readings = {}, traces = {}) 
       `${check.verdict === "verified" ? "✓✓ double-checked" : check.ok ? "✓ checked" : "✗ check failed → 0"}</span>`
     : "";
 
+  // Round Z: &b - the live feeds behind this value, green only when every one
+  // of them is a real connected feed; ¶gn - the window phase of the pass.
+  const feed = state.liveFeedStatus?.[name];
+  const phase = state.livePhase || {};
+  const src = state.liveProvenance?.source || "";
+  const feedChip = feed
+    ? `<span class="verdict ${feed.live ? "pass" : "fail"}" title="${escapeHtml(
+        `&b feeds: ${feed.feeds.join(", ")} · source ${src}` + (feed.missing?.length ? ` · not live: ${feed.missing.join(", ")}` : ""))}">` +
+      `&amp;b ${feed.live ? "live" : (src === "simulator" ? "simulated" : "offline")}</span>`
+    : "";
+  const phaseChip = phase.label
+    ? `<span class="verdict phase" title="¶gn — this pass sits at ${escapeHtml(phase.label)}; every panel shares the same minute grid">¶gn ${escapeHtml(phase.mark || "")}</span>`
+    : "";
+
   const html =
     `<div class="formula-row">` +
     `  <div class="formula-name" title="${escapeHtml(meta?.brain_node || "")}">${name}</div>` +
@@ -2114,7 +2193,7 @@ function formulaRow(name, value, description, meta, readings = {}, traces = {}) 
         (timingUs ? ` · ${fmtUs(timingUs)}` : "") +
         `</span>`
       : (timingUs ? `<span class="formula-stats">${fmtUs(timingUs)}</span>` : "")) +
-    `    ${verdictChip} ${checkChip}` +
+    `    ${verdictChip} ${checkChip} ${feedChip} ${phaseChip}` +
     `    <button class="logic-toggle" type="button">${open ? "▾ hide logic" : "▸ logic"}</button>` +
     `  </div>` +
     (state.explain && description ? `<div class="formula-desc">${escapeHtml(description)}</div>` : "") +

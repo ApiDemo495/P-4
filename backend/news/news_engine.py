@@ -245,6 +245,12 @@ class NewsEngine:
             log.warning("critical event dispatch failed: %s", exc)
 
     # ------------------------------------------------------------------
+    def impact(self, limit: int = 40) -> dict:
+        """Round Z: the live wire's signed impact on each asset (see impact.py)."""
+        from backend.news import impact as impact_module
+
+        return impact_module.aggregate(self.cache.latest(limit))
+
     def current_niv(self) -> float:
         """Quick NIV over the newest five items (mirrors Formula 19)."""
         items = self.cache.latest(5)
@@ -259,7 +265,14 @@ class NewsEngine:
         return float(num / den) if den > 0 else 0.0
 
     def latest_items(self, limit: int = 8) -> list[dict]:
-        return [item.to_dict() for item in self.cache.latest(limit)]
+        from backend.news import impact as impact_module
+
+        out = []
+        for item in self.cache.latest(limit):
+            row = item.to_dict()
+            row["impact"] = impact_module.classify(item.headline)
+            out.append(row)
+        return out
 
     def _update_status(self) -> None:
         self.status.last_poll = self.cache.last_poll

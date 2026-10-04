@@ -137,6 +137,7 @@ class CycleManager:
 
         self.physics = PhysicsEngine()
         self.last_physics: dict | None = None
+        self.last_news_impact: dict = {}
         self.lock = SignalLockController()
 
         self.outcomes = OutcomeBuffer()
@@ -1348,6 +1349,7 @@ class CycleManager:
     def news_payload(self, limit: int = 30) -> dict:
         return {
             "items": self.news.latest_items(limit),
+            "impact": self._news_impact_safe(),
             "status": self.news.status.to_dict(),
             "niv": round(self.news.current_niv(), 4),
             "cache_size": len(self.news.cache.all()),
@@ -1437,6 +1439,10 @@ class CycleManager:
             "stats": dict(result.stats) if result is not None else {},
             "history_window": getattr(result, "history_window", 0) if result is not None else 0,
             "micro": dict(result.micro) if result is not None else {},
+            # Round Z: &b (what fed this pass) and ¶gn (where in the window it sits).
+            "provenance": dict(getattr(result, "provenance", {}) or {}) if result is not None else {},
+            "phase": dict(getattr(result, "phase", {}) or {}) if result is not None else {},
+            "feed_status": result.feed_status() if result is not None else {},
         }
         return payload
 
@@ -1557,6 +1563,14 @@ class CycleManager:
             },
             "window": self.window_status(),
             "pipeline": self.settings.signal_pipeline,
+            # Round Z: the tape's provenance, live - never a start-up constant.
+            "tape": {
+                "source": self.market.active_source,
+                "simulated": self.market.tape_is_simulated,
+                "btc_ticks": self.market.tick_count("BTC"),
+                "rejected_writes": dict(self.market.rejected),
+                "source_age_seconds": round(time.time() - self.market.source_changed_at, 1),
+            },
             "infrastructure": {
                 "redis": self.store.backend,
                 "outcomes": len(self.outcomes),
@@ -1567,6 +1581,15 @@ class CycleManager:
     # ==================================================================
     # Prediction block (freshness + reasoning + 1:1 levels)
     # ==================================================================
+    def _news_impact_safe(self) -> dict:
+        try:
+            impact = self.news.impact()
+            self.last_news_impact = impact
+            return impact
+        except Exception as exc:  # noqa: BLE001
+            log.debug("news impact failed: %s", exc)
+            return {}
+
     def _fuse(self, snapshot, formula_result, agent_results: dict, warnings: list,
               crowd: dict | None = None) -> fusion_module.FusionResult:
         """The spec recipe, then the evidence ledger's verdict on top of it.
@@ -1600,6 +1623,8 @@ class CycleManager:
             recent_accuracy=self.accuracy_block(),
             crowd=crowd if crowd is not None else self.emotion_locked,
             physics=physics_report,
+            news_impact=self._news_impact_safe(),
+            asset=self.asset,
         )
         crowd = common["crowd"]
         spec = fusion_module.fuse(**common)

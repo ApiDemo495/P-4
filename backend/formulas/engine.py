@@ -67,6 +67,20 @@ class FormulaSpec:
     def description(self) -> str:
         return str(getattr(self.module, "DESCRIPTION", ""))
 
+    @property
+    def feeds(self) -> tuple[str, ...]:
+        """``&b`` - the live internet feeds this formula is computed from.
+
+        A module may declare ``FEEDS``; otherwise the category decides:
+        A/B/E/F read the trade tape and the order book, C the synchronised
+        BTC+PAXG tapes, D the minute candles, G the news wire, H the other
+        formulas (and so, transitively, everything).
+        """
+        declared = getattr(self.module, "FEEDS", None)
+        if declared:
+            return tuple(declared)
+        return CATEGORY_FEEDS.get(self.category, ("tape",))
+
     def to_dict(self) -> dict:
         return {
             "index": self.order,
@@ -77,7 +91,88 @@ class FormulaSpec:
             "latency_ms": self.latency_ms,
             "directional": self.directional,
             "description": self.description,
+            "feeds": list(self.feeds),
         }
+
+
+#: ``&b`` defaults per category (see ``FormulaSpec.feeds``).
+CATEGORY_FEEDS: dict[str, tuple[str, ...]] = {
+    "A": ("tape", "book"),
+    "B": ("book", "tape"),
+    "C": ("cross", "tape"),
+    "D": ("candles", "tape"),
+    "E": ("tape", "book"),
+    "F": ("tape", "book"),
+    "G": ("news", "tape"),
+    "H": ("formulas", "tape", "book", "news"),
+}
+
+REAL_SOURCES = ("binance", "kraken", "coingecko")
+
+
+def provenance(snapshot, asset: str) -> dict:
+    """``&b`` for one pass: which live feeds are actually connected, and how
+    old each one is, as seen from the frozen snapshot the formulas read."""
+    now_ms = time.time() * 1000.0
+    source = str(getattr(snapshot, "source", "") or "")
+    simulated = source == "simulator"
+    real = source in REAL_SOURCES
+    out: dict = {"source": source or "none", "simulated": simulated, "feeds": {}}
+    try:
+        ticks = snapshot.ticks(asset)
+        tick_age_ms = float(now_ms - ticks[-1, 0]) if ticks is not None and len(ticks) else None
+    except Exception:  # noqa: BLE001
+        tick_age_ms = None
+    stale_ms = float(cfg.SETTINGS.stale_tick_seconds) * 1000.0
+    out["feeds"]["tape"] = {
+        "live": bool(real and tick_age_ms is not None and tick_age_ms < stale_ms),
+        "age_ms": None if tick_age_ms is None else round(tick_age_ms, 1),
+        "source": source,
+    }
+    try:
+        book = snapshot.book(asset)
+        book_ok = bool(book is not None and book[0, 0, 0] > 0 and book[1, 0, 0] > 0)
+    except Exception:  # noqa: BLE001
+        book_ok = False
+    out["feeds"]["book"] = {"live": bool(real and book_ok), "source": source}
+    try:
+        candles = snapshot.candles(asset)
+        n_candles = int(len(candles)) if candles is not None else 0
+    except Exception:  # noqa: BLE001
+        n_candles = 0
+    out["feeds"]["candles"] = {"live": bool(real and n_candles >= 2), "count": n_candles}
+    items = tuple(getattr(snapshot, "news_items", ()) or ())
+    freshest = None
+    if items:
+        try:
+            freshest = max(0.0, time.time() - max(float(getattr(i, "published_at", 0.0)) for i in items))
+        except Exception:  # noqa: BLE001
+            freshest = None
+    out["feeds"]["news"] = {
+        "live": bool(items and freshest is not None and freshest < 3 * 3600.0),
+        "items": len(items),
+        "freshest_age_s": None if freshest is None else round(freshest, 1),
+    }
+    synced = getattr(snapshot, "synced", None)
+    out["feeds"]["cross"] = {"live": bool(real and synced is not None)}
+    out["feeds"]["formulas"] = {"live": True}
+    return out
+
+
+def phase_of(timestamp: float) -> dict:
+    """``¶gn`` - where in the window this pass sits, from the one clock every
+    panel shares (the UTC minute grid)."""
+    period = float(cfg.SETTINGS.cycle_period_seconds or 60.0)
+    offset = float(timestamp) % period if timestamp else 0.0
+    marks = sorted(float(m) for m in getattr(cfg.SETTINGS, "pulse_offsets", (15.0, 30.0, 45.0)))
+    mark = max((m for m in marks if m <= offset + 1e-6), default=0.0)
+    return {
+        "window_seconds": period,
+        "offset_seconds": round(offset, 3),
+        "mark": f"t+{int(mark)}s",
+        "window_start": round(float(timestamp) - offset, 3) if timestamp else 0.0,
+        "label": f"t+{offset:0.1f}s of {int(period)}s",
+    }
 
 
 CATEGORY_NAMES = {
@@ -236,6 +331,19 @@ class FormulaResult:
     micro: dict = field(default_factory=dict)
     #: How many past windows the statistics above are computed over.
     history_window: int = 0
+    #: ``&b`` - the live feeds this pass was computed from (see ``provenance``).
+    provenance: dict = field(default_factory=dict)
+    #: ``¶gn`` - the window phase this pass belongs to (see ``phase_of``).
+    phase: dict = field(default_factory=dict)
+
+    def feed_status(self) -> dict:
+        """``{formula: {"feeds": [...], "live": bool, "missing": [...]}}``."""
+        feeds = (self.provenance or {}).get("feeds", {})
+        out = {}
+        for spec in ALL_FORMULAS:
+            missing = [f for f in spec.feeds if not feeds.get(f, {}).get("live")]
+            out[spec.name] = {"feeds": list(spec.feeds), "live": not missing, "missing": missing}
+        return out
 
     def check_summary(self) -> dict:
         verdicts = [c.get("verdict") for c in self.checks.values()]
@@ -292,6 +400,9 @@ class FormulaResult:
             "total_ms": round(self.total_ms, 4),
             "total_us": int(self.total_us),
             "history_window": FORMULA_HISTORY,
+            "provenance": dict(self.provenance),
+            "phase": dict(self.phase),
+            "feed_status": self.feed_status(),
         }
 
 
@@ -420,6 +531,12 @@ class FormulaEngine:
         result.total_us = perf_us() - started_us
         result.total_ms = result.total_us / 1000.0
         result.history_window = FORMULA_HISTORY
+        # &b and ¶gn: what the pass was fed by, and where in the window it sits.
+        try:
+            result.provenance = provenance(snapshot, asset)
+        except Exception as exc:  # noqa: BLE001
+            result.provenance = {"source": "unknown", "error": str(exc), "feeds": {}}
+        result.phase = phase_of(float(snapshot.timestamp or 0.0))
         result.values.setdefault("_hsi", result.values.get("HSI", 0.0))
 
         # --- the microsecond picture of the tape this pass ran on -----------

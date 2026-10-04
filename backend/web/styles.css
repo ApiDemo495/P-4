@@ -822,3 +822,26 @@ th { color: var(--muted); font-weight: 600; }
 #synesthesia-toggle { margin-right: 10px; }
 #synesthesia-toggle.on { border-color: var(--green, #3ddc84); color: var(--green, #3ddc84); }
 body.glow { transition: box-shadow 0.6s ease; box-shadow: inset 0 0 0 0 transparent; }
+.tape-chip { display:inline-flex; align-items:center; margin-right:10px; padding:2px 8px; border-radius:999px;
+  font-size:11px; border:1px solid rgba(255,255,255,0.15); color: var(--muted); }
+.tape-chip.live { border-color: rgba(61,220,132,0.6); color: #3ddc84; }
+.tape-chip.sim { border-color: rgba(255,92,92,0.8); color: #ff5c5c; font-weight: 600; }
+.tape-chip.none { border-color: rgba(245,214,122,0.6); color: #f5d67a; }
+.verdict.phase { border-color: rgba(120,140,255,0.6); color: #9aa8ff; }
+.news-impact { display:flex; gap:14px; flex-wrap:wrap; font-size:11.5px; color: var(--muted); margin: 4px 0 8px; }
+.news-impact .impact-cell b { font-family: var(--mono); color: var(--text); }
+.news-impact .pos, .impact-tag .pos { color: #3ddc84; } .news-impact .neg { color: #ff5c5c; }
+.impact-tag { display:inline-block; margin-top:2px; padding:0 6px; border-radius:999px; font-size:10.5px;
+  border:1px solid rgba(154,168,255,0.45); color:#9aa8ff; }
+.impact-tag.world { border-color: rgba(245,214,122,0.6); color:#f5d67a; }
+.deep-geometry { margin: 10px 0 6px; }
+.geo-head { font-size: 10.5px; letter-spacing: .08em; color: var(--muted); margin-bottom: 6px; }
+.geo-grid { display:grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.geo-grid > div { display:flex; flex-direction:column; gap:3px; padding:8px; border-radius:8px;
+  background: rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.06); font-size:11px; }
+.geo-grid span { color: var(--muted); } .geo-grid b { font-family: var(--mono); font-size: 13px; }
+.geo-grid i { font-style: normal; color: var(--muted); font-size: 10.5px; }
+.geo-bar { display:block; height:3px; border-radius:2px; background: rgba(255,255,255,0.08); overflow:hidden; }
+.geo-bar span { display:block; height:100%; background: linear-gradient(90deg, #3ddc84, #f5d67a, #ff5c5c); }
+.geo-read { font-size: 11px; margin-top: 6px; }
+@media (max-width: 900px) { .geo-grid { grid-template-columns: repeat(2, 1fr); } }

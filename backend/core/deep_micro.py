@@ -58,6 +58,7 @@ from typing import Any
 
 import numpy as np
 
+from backend.core import geometry
 from backend.core.timebase import format_us, now_us
 
 EMOTION_NAMES = (
@@ -82,16 +83,21 @@ LIKELIHOOD: dict[str, dict[str, float]] = {
         "formula_down": 1.5, "formula_up": -1.0,
         "down_mid": 2.0, "down_slow": 1.0, "stress": 1.5, "blowout": 1.0,
         "toxicity": 0.8, "book_pressure": -0.8, "news": -0.8, "calm": -1.5,
+        # Round Z geometry: cavities opening in the book and critical slowing
+        # down are fear *before* the market orders arrive.
+        "tearing": 1.2, "csd": 1.0, "cooling": 0.8,
     },
     "PANIC": {
         "formula_down": 1.2,
         "down_fast": 2.5, "cascade": 2.0, "stress": 1.5, "toxicity": 1.2,
         "blowout": 1.2, "momentum": 0.3, "calm": -2.0,
+        "tearing": 1.0, "chaotic": 1.2, "polarised": 0.8,
     },
     "CAPITULATION": {
         "formula_down": 1.0,
         "drawdown": 2.5, "down_slow": 1.5, "toxicity": 1.0, "momentum": -0.5,
         "herd_memory": 0.8, "persistence": 0.6, "calm": -1.5,
+        "cooling": 1.2, "csd": 0.6,
     },
     "DENIAL": {
         "formula_down": 1.2, "formula_up": -0.8,
@@ -112,12 +118,14 @@ LIKELIHOOD: dict[str, dict[str, float]] = {
         "formula_up": 1.2,
         "up_fast": 2.5, "cascade": 2.0, "toxicity": 1.0, "momentum": 1.0,
         "herd_memory": 1.2, "calm": -1.5,
+        "heating": 1.0, "chaotic": 0.8, "polarised": 0.8,
     },
     "COMPLACENCY": {
         "formula_conviction": -1.5,
         "calm": 2.5, "disorder": 1.0, "stress": -2.0, "down_fast": -1.5,
         "up_fast": -1.5, "down_mid": -1.5, "up_mid": -1.5, "cascade": -1.0,
         "toxicity": -0.8,
+        "tearing": -1.0, "csd": -0.8, "chaotic": -0.8, "polarised": -0.6,
     },
 }
 
@@ -134,6 +142,9 @@ EVIDENCE_LABEL = {
     "book_pressure": "book pressure (microprice)", "news": "news tone",
     "formula_up": "22-formula consensus (bullish)", "formula_down": "22-formula consensus (bearish)",
     "formula_conviction": "22-formula conviction |C|",
+    "tearing": "book manifold tearing (TDA persistence)", "chaotic": "attractor divergence (Lyapunov)",
+    "csd": "critical slowing down (a1 ↑, variance ↑)", "cooling": "heat BTC→PAXG (entropy production)",
+    "heating": "heat PAXG→BTC (entropy production)", "polarised": "non-classical decision interference",
 }
 
 
@@ -566,6 +577,7 @@ def _evidence(
     the vote and the crowd only a bounded confidence modifier).
     """
     z1 = _safe(f.get("z_1s")); z5 = _safe(f.get("z_5s")); z60 = _safe(f.get("z_60s"))
+    geo = deep.get("geometry") or {}
     bands = deep["bands"]
     reg = deep["regime"]
     c = _clip(_safe(formula_consensus), -1.0, 1.0) if formula_voters >= 3 else 0.0
@@ -595,6 +607,15 @@ def _evidence(
         ),
         "book_pressure": _clip(_safe(deep["book"]["pressure_top5"]), -1.0, 1.0),
         "news": _clip(_safe(f.get("news_sentiment")), -1.0, 1.0),
+        # Round Z: the geometric layer (backend/core/geometry.py)
+        "tearing": _safe((geo.get("tda") or {}).get("tearing")),
+        "chaotic": _safe((geo.get("takens") or {}).get("chaotic")),
+        "csd": _safe((geo.get("csd") or {}).get("csd")),
+        "cooling": (_safe((geo.get("thermo") or {}).get("entropy_production"))
+                    if _safe((geo.get("thermo") or {}).get("flux_J")) < 0 else 0.0),
+        "heating": (_safe((geo.get("thermo") or {}).get("entropy_production"))
+                    if _safe((geo.get("thermo") or {}).get("flux_J")) > 0 else 0.0),
+        "polarised": _safe((geo.get("quantum") or {}).get("polarisation")),
     }
 
 
@@ -888,6 +909,10 @@ def analyze(
             "pushable": round(_ramp(kyle["impact_norm"], 0.8, 2.5) * _ramp(kyle["r2"], 0.15, 0.6), 4),
         },
     }
+    try:
+        deep["geometry"] = geometry.analyze(tape, asset, one_s)
+    except Exception as exc:  # noqa: BLE001
+        deep["geometry"] = {"available": False, "reason": str(exc)[:120]}
     evidence = _evidence(f, deep, formula_consensus, formula_voters)
     deep["formula_consensus"] = round(_safe(formula_consensus), 4)
     deep["formula_voters"] = int(formula_voters)
@@ -917,6 +942,16 @@ def compact(deep: dict) -> dict:
         "book": deep["book"],
         "regime": deep["regime"],
         "manipulation": deep["manipulation"],
+        "geometry": {
+            k: v for k, v in (deep.get("geometry") or {}).items()
+            if k in ("available", "live_measurements", "stress", "read")
+        } | {
+            "tda": {k: (deep.get("geometry") or {}).get("tda", {}).get(k) for k in ("tearing", "cavities", "max_persistence", "betti0")},
+            "takens": {k: (deep.get("geometry") or {}).get("takens", {}).get(k) for k in ("lyapunov", "chaotic")},
+            "csd": {k: (deep.get("geometry") or {}).get("csd", {}).get(k) for k in ("csd", "a1_now", "variance_ratio")},
+            "thermo": {k: (deep.get("geometry") or {}).get("thermo", {}).get(k) for k in ("entropy_production", "heat_direction", "flux_J", "affinity_X")},
+            "quantum": {k: (deep.get("geometry") or {}).get("quantum", {}).get(k) for k in ("interference", "polarisation")},
+        } if (deep.get("geometry") or {}).get("available") else {"available": False},
         "spectrum": [{"scale_label": s["scale_label"], "share": s["share"]} for s in deep["spectrum"]],
         "posterior": {
             k: post[k] for k in ("posterior", "argmax", "argmax_probability", "runner_up",

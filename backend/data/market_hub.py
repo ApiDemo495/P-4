@@ -12,6 +12,7 @@ Responsibilities
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import time
 
@@ -22,6 +23,7 @@ from backend.core.errors import ComponentStatus, DegradationLevel
 from backend.data import cross_asset_sync as sync
 from backend.data.binance_ws import BinanceWebSocket
 from backend.data.coingecko_fallback import CoinGeckoFeed
+from backend.data.kraken_ws import KrakenWebSocket
 from backend.data.ring_buffer import CandleBuffer, L2Buffer, TickBuffer
 from backend.data.simulator import MarketSimulator, run_simulator
 
@@ -49,9 +51,15 @@ class MarketDataHub:
         self.buffers: dict[str, AssetBuffers] = {a: AssetBuffers(a) for a in cfg.ASSETS}
         self.binance: BinanceWebSocket | None = None
         self.coingecko: CoinGeckoFeed | None = None
+        self.kraken: KrakenWebSocket | None = None
         self.simulator: MarketSimulator | None = None
         self.active_source = "none"
         self.warnings: list[str] = []
+        # Round Z: writes from a feed that is not the active source are
+        # dropped and counted - one tape, one source, always.
+        self.rejected: dict[str, int] = {}
+        self.source_changed_at: float = time.time()
+        self._started_at: float = time.time()
         self._tasks: list[asyncio.Task] = []
         self._stop = asyncio.Event()
         self._day_high: dict[str, float] = {}
@@ -64,24 +72,41 @@ class MarketDataHub:
         mode = self.settings.market_data_mode
         log.info("Starting market data hub (mode=%s)", mode)
 
+        self._started_at = time.time()
         if mode in ("auto", "binance"):
-            self.binance = BinanceWebSocket(self._on_data, self._on_candle, self.settings)
+            self.binance = BinanceWebSocket(
+                functools.partial(self.ingest, "binance"), self._on_candle, self.settings
+            )
             self._tasks.append(asyncio.create_task(self.binance.run(), name="binance-ws"))
             self.active_source = "binance"
+        if mode in ("auto", "kraken"):
+            # Round Z: a second REAL tape with an order book, reachable from
+            # the US regions Codespaces run in.  Always connected in auto mode
+            # so the switch-over is instant when Binance drops.
+            self.kraken = KrakenWebSocket(functools.partial(self.ingest, "kraken"), self.settings)
+            self._tasks.append(asyncio.create_task(self.kraken.run(), name="kraken-ws"))
+            if mode == "kraken":
+                self.active_source = "kraken"
         if mode in ("auto", "coingecko"):
-            self.coingecko = CoinGeckoFeed(self._on_data, self.settings)
+            self.coingecko = CoinGeckoFeed(functools.partial(self.ingest, "coingecko"), self.settings)
             if mode == "coingecko":
                 self._tasks.append(asyncio.create_task(self.coingecko.run(), name="coingecko"))
                 self.active_source = "coingecko"
         if mode == "simulator" or self.settings.market_allow_simulator:
             self.simulator = MarketSimulator()
-            self._warm_up()
+            if mode == "simulator":
+                # Only a deliberately simulated engine is pre-filled with a
+                # simulated history.  In auto mode the real feed gets a clean
+                # tape; the simulator is a last resort and warms up its own
+                # buffers if and when it is switched on.
+                self.active_source = "simulator"
+                self._warm_up()
 
         self._tasks.append(asyncio.create_task(self._supervisor(), name="feed-supervisor"))
 
     async def stop(self) -> None:
         self._stop.set()
-        for client in (self.binance, self.coingecko):
+        for client in (self.binance, self.kraken, self.coingecko):
             if client is not None:
                 client.stop()
         for task in self._tasks:
@@ -115,10 +140,35 @@ class MarketDataHub:
     # ------------------------------------------------------------------
     # Feed callbacks
     # ------------------------------------------------------------------
+    @property
+    def tape_is_simulated(self) -> bool:
+        return self.active_source == "simulator"
+
+    async def ingest(
+        self,
+        source: str,
+        asset: str,
+        ticks: list[tuple[float, float, float, float]] | None,
+        book: np.ndarray | None,
+    ) -> None:
+        """The ONLY way data enters the buffers.
+
+        Round Z: a feed writes only while it is the active source.  Before
+        this guard a fresh Codespace ran the simulator *and* Binance into the
+        same tape (the simulator started during Binance's connect, and nothing
+        ever stopped it); the alternating 65k/real prices pinned every TP/SL at
+        its ceiling and made every formula read noise - identically in every
+        new Codespace, because the simulator is seeded.
+        """
+        if source != self.active_source:
+            self.rejected[source] = self.rejected.get(source, 0) + 1
+            return
+        await self._on_data(asset, ticks, book)
+
     async def _on_data(
         self,
         asset: str,
-        ticks: list[tuple[float, float, float, float]],
+        ticks: list[tuple[float, float, float, float]] | None,
         book: np.ndarray | None,
     ) -> None:
         buf = self.buffers.get(asset)
@@ -201,13 +251,30 @@ class MarketDataHub:
         mode = self.settings.market_data_mode
         # 1) Is Binance healthy?
         if self.binance is not None and self.binance.status.connected and not self.binance.status.stale():
+            self._stop_simulator_task()
             self._set_source("binance")
+            return
+        # 1b) Kraken healthy?  (second real tape, with a book)
+        if self.kraken is not None and self.kraken.status.connected and not self.kraken.status.stale():
+            if mode == "kraken" or self.binance is None or self.binance.status.stale():
+                self._stop_simulator_task()
+                self._set_source("kraken")
+                return
+        # A real feed gets a grace period to connect before anything simulated
+        # is allowed near the tape (Round Z).  While waiting, the source is
+        # "none" and the UI says "connecting to the market", not a fake price.
+        waiting = (time.time() - self._started_at) < float(
+            getattr(self.settings, "real_feed_grace_seconds", 45.0)
+        )
+        if waiting and mode in ("auto", "binance", "kraken") and self.active_source in ("none", "binance", "kraken"):
+            self._set_source("none")
             return
 
         # 2) Binance unhealthy -> CoinGecko?
         if mode in ("auto", "coingecko") and self.coingecko is not None:
             if mode == "coingecko" or self.binance is None or self.binance.status.consecutive_failures >= 10:
                 if self.coingecko.connected:
+                    self._stop_simulator_task()
                     self._set_source("coingecko")
                     return
                 if mode == "coingecko":
@@ -226,10 +293,33 @@ class MarketDataHub:
         self._set_source("none")
 
     def _set_source(self, source: str) -> None:
+        self.set_source(source)
+
+    def set_source(self, source: str) -> None:
+        """Switch the active source.  Any change of source flushes every
+        buffer - one tape, one source, one history."""
         if source == self.active_source:
             return
-        log.warning("Market data source -> %s", source)
+        previous = self.active_source
+        log.warning("Market data source -> %s (was %s)", source, previous)
+        # Every change of source flushes: a simulated and a real tape must
+        # never share a history, and two exchanges differ by a basis (USDT vs
+        # USD) that would print as a fake jump in volatility.
+        if previous != "none" or source == "simulator":
+            for buf in self.buffers.values():
+                buf.ticks.clear()
+                buf.book = L2Buffer()
+                buf.candles = CandleBuffer()
+                buf.candle_minute = -1
+                buf.candle_close = 0.0
+                buf.candles_from_ticks = False
+            self._flash_marks = {a: [] for a in cfg.ASSETS}
+            self._day_high = {}
+            log.warning("tape flushed: %s -> %s share no history", previous, source)
         self.active_source = source
+        self.source_changed_at = time.time()
+        if source == "simulator" and self.simulator is not None and not self.buffers["BTC"].ticks.size:
+            self._warm_up()
 
     def _ensure_coingecko_task(self) -> None:
         if self.coingecko is None:
@@ -239,6 +329,14 @@ class MarketDataHub:
         log.warning("Switching to CoinGecko fallback after Binance failures")
         self._tasks.append(asyncio.create_task(self.coingecko.run(), name="coingecko"))
 
+    def _stop_simulator_task(self) -> None:
+        """A real feed is healthy: the simulator must not touch the tape again."""
+        for task in list(self._tasks):
+            if task.get_name() == "simulator":
+                task.cancel()
+                self._tasks.remove(task)
+                log.warning("simulator stopped: a real feed is healthy")
+
     def _ensure_simulator_task(self) -> None:
         if self.simulator is None:
             return
@@ -246,7 +344,10 @@ class MarketDataHub:
             return
         log.warning("Market data unavailable or simulated mode: using built-in simulator")
         self._tasks.append(
-            asyncio.create_task(run_simulator(self.simulator, self._on_data), name="simulator")
+            asyncio.create_task(
+                run_simulator(self.simulator, functools.partial(self.ingest, "simulator")),
+                name="simulator",
+            )
         )
 
     # ------------------------------------------------------------------
@@ -318,12 +419,16 @@ class MarketDataHub:
             return DegradationLevel.MINIMAL
         if self.active_source == "coingecko":
             return DegradationLevel.COINGECKO
+        if self.active_source == "none":
+            return DegradationLevel.MINIMAL
         return DegradationLevel.FULL
 
     def status(self) -> ComponentStatus:
         src = self.active_source
         details = {
             "binance": "aggTrade + depth20@100ms",
+            "kraken": "trade + book depth 25 (Kraken v2, USD pairs)",
+            "none": "connecting to a live feed - no tape yet",
             "coingecko": "REST polling (no order book)",
             "simulator": "built-in simulator - simulated tape, not live market data",
         }
@@ -337,9 +442,15 @@ class MarketDataHub:
             "btc_price": round(self.last_price("BTC"), 2),
             "paxg_price": round(self.last_price("PAXG"), 2),
             "book_valid": self.buffers["BTC"].book.is_valid(),
+            "tape_is_simulated": self.tape_is_simulated,
+            "rejected_writes": dict(self.rejected),
+            "source_age_seconds": round(time.time() - self.source_changed_at, 1),
         }
         if self.binance is not None:
             extra["binance_failures"] = self.binance.status.consecutive_failures
+        if self.kraken is not None:
+            extra["kraken_connected"] = self.kraken.status.connected
+            extra["kraken_failures"] = self.kraken.status.consecutive_failures
         return ComponentStatus(
             name="market_data",
             healthy=healthy,
