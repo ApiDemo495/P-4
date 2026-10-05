@@ -166,6 +166,7 @@ function handle(msg) {
       // One message, every panel: this is the "in parallel" contract.
       recordPath(msg.data.live_price, msg.data.cycle_number);
       applySnapshot(msg.data, { rttMs: state.lastRttMs });
+      pulseBreath();
       break;
     }
     case "CYCLE_START": {
@@ -309,6 +310,33 @@ function applyClock(payload, opts = {}) {
   return !sameWindow;
 }
 
+/* Round AA - the ¶gn mark: one soft breath over the whole surface and a
+   whisper of haptic, so the user feels the panels refresh together. */
+function pulseBreath() {
+  document.body.classList.remove("pulse");
+  void document.body.offsetWidth;   // restart the animation
+  document.body.classList.add("pulse");
+  haptic([5]);
+}
+
+/* The ¶gn marks drawn on the countdown ring itself (SVG, pathLength 100). */
+function renderRingMarks() {
+  const g = $("w-ring-marks");
+  if (!g) return;
+  const period = state.cyclePeriod || 60;
+  const ticks = state.clock?.ticks || [];
+  const key = ticks.map((t) => `${t.offset_seconds}:${t.done ? 1 : 0}`).join("|") + `@${period}`;
+  if (g.dataset.key === key) return;
+  g.dataset.key = key;
+  g.innerHTML = ticks.map((t) => {
+    // ring is rotated -90deg in CSS, so angle 0 is the top; marks sit on the arc radius
+    const a = (Number(t.offset_seconds) / period) * 2 * Math.PI;
+    const x1 = 60 + 46 * Math.cos(a), y1 = 60 + 46 * Math.sin(a);
+    const x2 = 60 + 58 * Math.cos(a), y2 = 60 + 58 * Math.sin(a);
+    return `<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}" class="${t.done ? "done" : ""}"><title>${(t.parts || []).join(" + ")} at +${t.offset_seconds}s</title></line>`;
+  }).join("");
+}
+
 function windowRemaining() {
   if (!state.clock) return state.cyclePeriod || 60;
   return Math.max(0, (state.clock.endsAtMs - serverNowMs()) / 1000);
@@ -330,13 +358,29 @@ function frame() {
   const ring = $("w-ring");
   if (ring) {
     ring.style.setProperty("--frac", clamp(remaining / period, 0, 1).toFixed(4));
-    ring.classList.toggle("ready", !!state.window?.prefetch_ready);
+    const ready = !!state.window?.prefetch_ready;
+    if (ready && !ring.classList.contains("ready")) haptic([10]);   // the next window is sealed
+    ring.classList.toggle("ready", ready);
     ring.classList.toggle("urgent", secs <= 5);
   }
   if (secs !== state.lastSecondShown) {
+    const previous = state.lastSecondShown;
     state.lastSecondShown = secs;
     const el = $("w-countdown");
-    if (el) el.textContent = String(secs);
+    if (el) {
+      el.textContent = String(secs);
+      el.classList.remove("tick");
+      void el.offsetWidth;
+      el.classList.add("tick");
+    }
+    // minor haptics: the last three seconds tap, the reveal is felt by the
+    // SIGNAL handler itself (never twice).
+    if (previous !== null && secs > 0 && secs <= 3) haptic([6]);
+    if (state.clock?.ticks) {
+      const elapsed = period - remaining;
+      state.clock.ticks.forEach((t) => { t.done = Number(t.offset_seconds) <= elapsed; });
+    }
+    renderRingMarks();
     // state + utc used to be written inside a guard on the long-gone #timer
     // panel, so they only moved when that element existed - which it never did.
     if ($("lock-state")) $("lock-state").textContent = state.lockState;
@@ -932,6 +976,36 @@ function renderGeometry(geo) {
     `<div class="geo-read muted">${escapeHtml(geo.read || "")}</div>`;
 }
 
+/* Round AA - the inverse-RL utility read (λ, γ, α) under the geometry. */
+function renderUtility(util) {
+  let el = $("deep-utility");
+  if (!el) {
+    const host = $("deep-geometry");
+    if (!host || !host.parentNode) return;
+    el = document.createElement("div");
+    el.className = "deep-utility";
+    el.id = "deep-utility";
+    host.parentNode.insertBefore(el, host.nextSibling);
+  }
+  if (!util || !util.available) { el.innerHTML = ""; return; }
+  const g = (v, d = 2) => (v === null || v === undefined || Number.isNaN(Number(v)) ? "—" : Number(v).toFixed(d));
+  const lam = util.lambda || {}, gam = util.gamma || {}, alp = util.alpha || {};
+  const pos = (v, lo, hi) => Math.max(0, Math.min(1, (Number(v) - lo) / (hi - lo))).toFixed(3);
+  const tile = (title, big, sub, p, tip) =>
+    `<div title="${escapeHtml(tip)}"><span>${title}</span><b>${big}</b><i>${escapeHtml(sub)}</i><span class="util-scale" style="--pos:${p}"></span></div>`;
+  el.innerHTML =
+    `<div class="geo-head">WHAT THE CROWD IS MAXIMISING <span class="muted">inverse RL · ${util.live_measurements}/3 live</span></div>` +
+    `<div class="util-grid">` +
+    (lam.available ? tile("loss aversion λ", g(lam.lambda), lam.lambda > 2.5 ? "sells losses far harder than it buys gains" : lam.lambda < 0.5 ? "chases gains, ignores losses" : "symmetric (KT population ≈ 2.25)", pos(Math.log(lam.lambda || 1), -1.5, 1.5),
+      `flow_t = β⁻·min(r,0) + β⁺·max(r,0) over ${lam.buckets} one-second buckets; λ = β⁻/β⁺ = ${g(lam.beta_loss, 3)} / ${g(lam.beta_gain, 3)}`) : `<div><span>loss aversion λ</span><b>—</b><i>needs 24 s of tape</i></div>`) +
+    (gam.available ? tile("risk aversion γ", g(gam.gamma), gam.gamma > 0.3 ? "steps back when the tape gets wild" : gam.gamma < -0.3 ? "chases volatility" : "indifferent to volatility", pos(gam.gamma, -2, 2),
+      `γ = ln(participation in calm seconds / participation in volatile seconds) = ln(${g(gam.participation_calm, 0)} / ${g(gam.participation_volatile, 0)})`) : `<div><span>risk aversion γ</span><b>—</b><i>needs 24 s of tape</i></div>`) +
+    (alp.available ? tile("probability weighting α", g(alp.alpha), alp.alpha < 0.85 ? "book braced for a jump (tails overweighted)" : alp.alpha > 1.25 ? "book complacent (tails neglected)" : "tails priced about right", pos(alp.alpha, 0.2, 2.0),
+      `w(p) = p^α; α = ln(tail share ${g(alp.tail_share, 3)}) / ln(uniform tail ${g(alp.uniform_tail, 3)}), tail = beyond ${g(alp.tail_bps, 0)} bps`) : `<div><span>probability weighting α</span><b>—</b><i>${escapeHtml(alp.reason || "book too shallow")}</i></div>`) +
+    `</div>` +
+    `<div class="util-read muted">${escapeHtml(util.read || "")}</div>`;
+}
+
 function renderDeep(deep, top) {
   const belief = $("deep-belief");
   if (!belief) return;
@@ -949,6 +1023,7 @@ function renderDeep(deep, top) {
   const hawkes = deep.hawkes || {};
   const book = deep.book || {};
   renderGeometry(deep.geometry);
+  renderUtility(deep.utility);
   $("deep-meta").textContent =
     `${deep.ticks || 0} ticks · ${(deep.chain || []).length} formulas · computed in ${deep.compute_us ? fmtUs(deep.compute_us) : "—"}`;
   const evidenceChips = ((post.evidence_for || {})[post.argmax] || []).slice(0, 4).map((ev) =>
@@ -2591,6 +2666,21 @@ async function boot() {
 
   /* ONE frame loop drives the countdown and every clock-derived readout. */
   state.raf = requestAnimationFrame(frame);
+
+  /* Round AA: numbers that change glow for a moment (no timers - a single
+     MutationObserver on the text of the numeric cells). */
+  if (window.MutationObserver) {
+    const flash = new MutationObserver((records) => {
+      records.forEach((r) => {
+        const b = (r.target.nodeType === 3 ? r.target.parentElement : r.target)?.closest?.(".kv-item b, .hedge-item b, .formula-value");
+        if (!b) return;
+        b.classList.remove("changed");
+        void b.offsetWidth;
+        b.classList.add("changed");
+      });
+    });
+    flash.observe(document.body, { subtree: true, characterData: true, childList: true });
+  }
 
   /* ONE safety net, and it does nothing while the socket is healthy. */
   const applyBtn = $("update-apply");
