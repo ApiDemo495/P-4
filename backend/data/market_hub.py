@@ -23,6 +23,7 @@ from backend.core.errors import ComponentStatus, DegradationLevel
 from backend.data import cross_asset_sync as sync
 from backend.data.binance_ws import BinanceWebSocket
 from backend.data.coingecko_fallback import CoinGeckoFeed
+from backend.data import connectivity
 from backend.data.kraken_rest import KrakenRest
 from backend.data.kraken_ws import KrakenWebSocket
 from backend.data.ring_buffer import CandleBuffer, L2Buffer, TickBuffer
@@ -62,6 +63,7 @@ class MarketDataHub:
         self.rejected: dict[str, int] = {}
         self.source_changed_at: float = time.time()
         self._started_at: float = time.time()
+        self.connectivity: dict = {"summary": "not probed", "hosts": {}}
         self._tasks: list[asyncio.Task] = []
         self._stop = asyncio.Event()
         self._day_high: dict[str, float] = {}
@@ -75,6 +77,10 @@ class MarketDataHub:
         log.info("Starting market data hub (mode=%s)", mode)
 
         self._started_at = time.time()
+        if mode != "simulator":
+            # Round AB: find the live internet NOW, in parallel, instead of
+            # discovering a geo-block by failing a socket for 45 seconds.
+            self.connectivity = await connectivity.probe()
         if mode in ("auto", "binance"):
             self.binance = BinanceWebSocket(
                 functools.partial(self.ingest, "binance"), self._on_candle, self.settings
@@ -111,6 +117,12 @@ class MarketDataHub:
                 self.active_source = "simulator"
                 self._warm_up()
 
+        if mode == "auto" and self.kraken_rest is not None and not self.connectivity.get("binance_reachable", True):
+            # Binance is blocked from here (451 in US regions): start the HTTPS
+            # tape immediately so the first window already has real prices.
+            log.warning("Binance unreachable from this network (%s) - starting Kraken REST now",
+                        (self.connectivity.get("hosts", {}).get("binance_vision") or {}).get("error"))
+            self._tasks.append(asyncio.create_task(self.kraken_rest.run(), name="krakenrest"))
         self._tasks.append(asyncio.create_task(self._supervisor(), name="feed-supervisor"))
 
     async def stop(self) -> None:
@@ -259,13 +271,13 @@ class MarketDataHub:
     async def _reconcile_source(self) -> None:
         mode = self.settings.market_data_mode
         # 1) Is Binance healthy?
-        if self.binance is not None and self.binance.status.connected and not self.binance.status.stale():
+        if self.binance is not None and self.binance.status.healthy():
             self._stop_simulator_task()
             self._set_source("binance")
             return
         # 1b) Kraken healthy?  (second real tape, with a book)
-        if self.kraken is not None and self.kraken.status.connected and not self.kraken.status.stale():
-            if mode == "kraken" or self.binance is None or self.binance.status.stale():
+        if self.kraken is not None and self.kraken.status.healthy():
+            if mode == "kraken" or self.binance is None or not self.binance.status.healthy():
                 self._stop_simulator_task()
                 self._set_source("kraken")
                 return
@@ -275,13 +287,16 @@ class MarketDataHub:
         waiting = (time.time() - self._started_at) < float(
             getattr(self.settings, "real_feed_grace_seconds", 45.0)
         )
-        if waiting and mode in ("auto", "binance", "kraken") and self.active_source in ("none", "binance", "kraken"):
+        probed = bool(self.connectivity.get("hosts"))
+        sockets_possible = (not probed) or self.connectivity.get("binance_reachable") or self.connectivity.get("kraken_reachable")
+        if waiting and sockets_possible and mode in ("auto", "binance", "kraken") and self.active_source in ("none", "binance", "kraken"):
             self._set_source("none")
             return
 
         # 1c) Both sockets failing -> Kraken over HTTPS (real tape + book).
-        sockets_down = (self.binance is None or self.binance.status.consecutive_failures >= 2) and (
-            self.kraken is None or self.kraken.status.consecutive_failures >= 2)
+        sockets_down = ((self.binance is None or self.binance.status.consecutive_failures >= 2) and (
+            self.kraken is None or self.kraken.status.consecutive_failures >= 2)) or (
+            probed and not sockets_possible)
         if self.kraken_rest is not None and mode in ("auto", "krakenrest") and (sockets_down or mode == "krakenrest"):
             if not any(t.get_name() == "krakenrest" for t in self._tasks):
                 log.warning("WebSocket feeds unreachable - polling Kraken REST for a real tape")
@@ -461,7 +476,12 @@ class MarketDataHub:
         comes with the reason (451, DNS, timeout, refused…)."""
         out: dict = {"active": self.active_source, "simulated": self.tape_is_simulated,
                      "grace_seconds": float(getattr(self.settings, "real_feed_grace_seconds", 45.0)),
-                     "uptime_seconds": round(time.time() - self._started_at, 1), "feeds": {}}
+                     "uptime_seconds": round(time.time() - self._started_at, 1), "feeds": {},
+                     "connectivity": {"summary": self.connectivity.get("summary", "not probed"),
+                                      "internet": self.connectivity.get("internet"),
+                                      "hosts": {k: {"ok": v.get("ok"), "status": v.get("status"), "ms": v.get("ms"),
+                                                    "error": v.get("error")}
+                                                for k, v in (self.connectivity.get("hosts") or {}).items()}}}
         for name, client in (("binance", self.binance), ("kraken", self.kraken)):
             if client is None:
                 out["feeds"][name] = {"enabled": False}

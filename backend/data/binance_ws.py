@@ -44,6 +44,12 @@ class BinanceStatus:
     server: str = ""
     last_error: str = ""
     last_error_at: float = 0.0
+    #: messages that carried market data (a handshake that is followed by
+    #: silence is NOT a working feed - Round AB)
+    data_messages: int = 0
+
+    def healthy(self) -> bool:
+        return self.connected and self.data_messages > 0 and not self.stale()
 
     def stale(self) -> bool:
         if not self.connected:
@@ -128,9 +134,10 @@ class BinanceWebSocket:
             max_queue=512,
         ) as ws:
             previous_error = self.status.last_error
+            # failures are only forgiven once real data arrives (see _handle)
             self.status = BinanceStatus(
-                connected=True, consecutive_failures=0, last_message_ts=time.time(), server=self.url,
-                last_error=previous_error,
+                connected=True, consecutive_failures=self.status.consecutive_failures,
+                last_message_ts=time.time(), server=self.url, last_error=previous_error,
             )
             log.info("Binance WS connected (aggTrade + kline_1m + depth20@100ms)")
             watchdog = asyncio.create_task(self._watchdog(ws))
@@ -142,6 +149,8 @@ class BinanceWebSocket:
             finally:
                 watchdog.cancel()
                 self.status.connected = False
+            if self.status.data_messages == 0 and not self._stop.is_set():
+                raise RuntimeError("connected but no market data arrived (silent stream)")
 
     async def _watchdog(self, ws) -> None:
         """Force a reconnect if the stream goes silent (stale data check)."""
@@ -170,6 +179,8 @@ class BinanceWebSocket:
         if asset is None:
             return
 
+        self.status.data_messages += 1
+        self.status.consecutive_failures = 0
         if kind.startswith("aggtrade"):
             tick = self._parse_agg_trade(data)
             if tick is not None:

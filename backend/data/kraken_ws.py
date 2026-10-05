@@ -49,6 +49,12 @@ class KrakenStatus:
     server: str = WS_URL
     last_error: str = ""
     last_error_at: float = 0.0
+    #: messages that carried market data (a handshake that is followed by
+    #: silence is NOT a working feed - Round AB)
+    data_messages: int = 0
+
+    def healthy(self) -> bool:
+        return self.connected and self.data_messages > 0 and not self.stale()
 
     def stale(self) -> bool:
         if not self.connected:
@@ -145,8 +151,9 @@ class KrakenWebSocket:
             await ws.send(json.dumps({"method": "subscribe",
                                       "params": {"channel": "book", "symbol": symbols, "depth": BOOK_DEPTH,
                                                  "snapshot": True}}))
-            self.status = KrakenStatus(connected=True, consecutive_failures=0,
-                                       last_message_ts=time.time(), server=self.url)
+            self.status = KrakenStatus(connected=True, consecutive_failures=self.status.consecutive_failures,
+                                       last_message_ts=time.time(), server=self.url,
+                                       last_error=self.status.last_error)
             for book in self._books.values():
                 book.bids.clear()
                 book.asks.clear()
@@ -160,6 +167,8 @@ class KrakenWebSocket:
             finally:
                 watchdog.cancel()
                 self.status.connected = False
+            if self.status.data_messages == 0 and not self._stop.is_set():
+                raise RuntimeError("connected but no market data arrived (silent stream)")
 
     async def _watchdog(self, ws) -> None:
         while True:
@@ -180,6 +189,9 @@ class KrakenWebSocket:
         if not isinstance(msg, dict):
             return
         channel = msg.get("channel")
+        if channel in ("trade", "book") and msg.get("data"):
+            self.status.data_messages += 1
+            self.status.consecutive_failures = 0
         if channel == "trade":
             await self._handle_trades(msg.get("data") or [])
         elif channel == "book":

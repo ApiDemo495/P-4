@@ -76,9 +76,13 @@ def test_the_simulator_is_a_last_resort_and_is_stopped_when_a_real_feed_is_healt
         connected = False
         consecutive_failures = 0
         last_message_ts = 0.0
+        data_messages = 0
 
         def stale(self):
             return not self.connected
+
+        def healthy(self):
+            return self.connected and self.data_messages > 0
 
     class FakeBinance:
         status = FakeStatus()
@@ -98,9 +102,13 @@ def test_the_simulator_is_a_last_resort_and_is_stopped_when_a_real_feed_is_healt
     hub._started_at = time.time() - cfg.Settings().real_feed_grace_seconds - 1
     _run(hub._reconcile_source())
     assert started == ["sim"] and hub.active_source == "simulator" and hub.tape_is_simulated
-    # Binance comes up -> simulator stopped, tape flushed, source = binance.
+    # Binance handshake alone is NOT health (Round AB: a silent stream stays down)
     FakeBinance.status.connected = True
     FakeBinance.status.last_message_ts = time.time()
+    _run(hub._reconcile_source())
+    assert stopped == [] and hub.active_source == "simulator"
+    # ...real data arrives -> simulator stopped, tape flushed, source = binance.
+    FakeBinance.status.data_messages = 5
     _run(hub._reconcile_source())
     assert stopped == ["sim"] and hub.active_source == "binance" and not hub.tape_is_simulated
 

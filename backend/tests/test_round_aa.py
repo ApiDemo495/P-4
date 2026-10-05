@@ -115,3 +115,75 @@ def test_window_clock_is_absolute_and_carries_the_phase():
     assert [t["done"] for t in block["ticks"]] == [True, True, False]
     late = window_clock.phase(started, ends, started + 59.0)
     assert late["label"] == "closing" and late["remaining_seconds"] == 1.0
+
+
+def test_connectivity_probe_never_raises_and_summarises(monkeypatch):
+    import asyncio
+    from backend.data import connectivity
+
+    class FakeResp:
+        def __init__(self, code):
+            self.status_code = code
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            if "binance" in url:
+                return FakeResp(451)
+            if "kraken" in url:
+                return FakeResp(200)
+            raise OSError("Network is unreachable")
+
+    monkeypatch.setattr(connectivity.httpx, "AsyncClient", FakeClient)
+    report = asyncio.run(connectivity.probe())
+    assert report["internet"] and report["kraken_reachable"] and not report["binance_reachable"]
+    assert "geo-blocked" in report["hosts"]["binance"]["error"]
+    assert "OSError" in report["hosts"]["coingecko"]["error"]
+    assert "reachable: kraken" in report["summary"] and "blocked:" in report["summary"]
+
+
+def test_a_silent_socket_is_not_a_healthy_feed():
+    from backend.data.binance_ws import BinanceStatus
+    from backend.data.kraken_ws import KrakenStatus
+    for cls in (BinanceStatus, KrakenStatus):
+        st = cls(connected=True, last_message_ts=1e12)
+        assert not st.healthy()
+        st.data_messages = 1
+        assert st.healthy()
+
+
+def test_hub_skips_the_grace_period_when_the_probe_says_sockets_are_blocked(monkeypatch):
+    import asyncio
+    import time as _t
+    monkeypatch.setenv("MARKET_DATA_MODE", "auto")
+    from backend.data.market_hub import MarketDataHub
+    hub = MarketDataHub(cfg.Settings())
+    hub.connectivity = {"hosts": {"binance": {"ok": False}}, "binance_reachable": False, "kraken_reachable": False}
+    started = []
+
+    class FakeRest:
+        connected = False
+        polls = 0
+        last_error = ""
+
+        async def run(self):
+            started.append("rest")
+            await asyncio.sleep(0)
+
+    hub.kraken_rest = FakeRest()  # type: ignore[assignment]
+    hub._started_at = _t.time()
+
+    async def go():
+        await hub._reconcile_source()
+        await asyncio.sleep(0)
+
+    asyncio.run(go())
+    assert started == ["rest"], "Kraken REST must start at once when the probe says the sockets cannot connect"
