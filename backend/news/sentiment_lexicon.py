@@ -77,14 +77,56 @@ def _count(text: str, keywords: tuple[str, ...]) -> int:
     return hits
 
 
+#: Round AE - the spec lists are crypto-desk vocabulary; a real world wire
+#: (BBC / Reuters / AP) is written in other words.  "Israel strikes Gaza",
+#: "tariffs on Chinese goods", "drone attack hits power grid", "stocks fall as
+#: yields climb" all scored exactly 0.0, so NIV read 0.00 on every real
+#: Codespace while the fixtures looked fine.  These are the risk-on / risk-off
+#: words a macro desk actually reads, scored with the same tanh(·/3) rule.
+RISK_ON_KEYWORDS: tuple[str, ...] = (
+    "ceasefire", "truce", "peace deal", "peace talks", "agreement", "deal reached", "deal signed",
+    "rebound", "rebounds", "recover", "recovers", "recovery", "climbs", "rises", "jumps", "advances",
+    "optimism", "relief", "eases", "easing", "cools", "cooling", "beats expectations", "better than expected",
+    "stimulus", "rate cut", "cuts rates", "dovish", "demand accelerates", "record inflows",
+)
+RISK_OFF_KEYWORDS: tuple[str, ...] = (
+    "war", "strikes", "strike", "airstrike", "missile", "missiles", "attack", "attacks", "attacked", "invasion",
+    "invades", "troops", "escalation", "escalates", "shelling", "bombing", "explosion", "killed", "kills",
+    "casualties", "hostage", "terror", "nuclear", "sanction", "sanctions", "tariff", "tariffs", "trade war",
+    "embargo", "blockade", "falls", "fall", "drops", "slides", "slump", "slumps", "tumbles", "sell-off",
+    "selloff", "default", "recession", "layoffs", "bankruptcy", "collapse", "collapses", "crisis", "turmoil",
+    "shutdown", "hawkish", "rate hike", "hikes rates", "yields climb", "yields surge", "inflation rises",
+    "hotter than expected", "worse than expected", "warning", "warns", "threatens", "threat", "unrest",
+    "coup", "protests", "riots", "outage", "breach", "shortage", "stall", "stalls", "stalled",
+)
+
+
 def score_headline(headline: str) -> float:
-    """Lexicon sentiment in [-1, +1]."""
+    """Headline sentiment in [-1, +1] for a risk asset.
+
+    s = tanh( (bull_hits - bear_hits) / 3 ) over the spec lists **plus** the
+    macro risk-on / risk-off lists, blended with the signed BTC impact of the
+    headline's theme (``impact.classify``) so a war headline that uses none of
+    the crypto words still moves the needle.
+    """
     text = (headline or "").lower()
     if not text:
         return 0.0
-    bullish = _count(text, BULLISH_KEYWORDS)
-    bearish = _count(text, BEARISH_KEYWORDS)
-    return float(np.tanh((bullish - bearish) / DIVISOR))
+    bullish = _count(text, BULLISH_KEYWORDS) + _count(text, RISK_ON_KEYWORDS)
+    bearish = _count(text, BEARISH_KEYWORDS) + _count(text, RISK_OFF_KEYWORDS)
+    lexical = float(np.tanh((bullish - bearish) / DIVISOR))
+    try:
+        from backend.news import impact as _impact  # local import: impact imports nothing from here
+
+        theme = _impact.classify(headline)
+        thematic = float(theme["btc"]) * float(theme["magnitude"])
+    except Exception:  # noqa: BLE001 - scoring must never fail a poll
+        thematic = 0.0
+    if thematic == 0.0:
+        return lexical
+    # the theme carries the direction a desk would trade; the words carry the
+    # intensity.  Equal blend, then squashed back into [-1, 1].
+    return float(np.tanh(0.5 * lexical * DIVISOR / 2.0 + 0.5 * thematic * 2.0))
 
 
 #: A critical headline must also be *about the markets this engine trades*.

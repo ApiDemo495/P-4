@@ -1513,3 +1513,24 @@ is in the image). `.devcontainer/setup.sh` and `run.sh` adopt `/opt/venv` as
 every required module already imports. Measured: provision 1.3 s, `run.sh
 --setup-only` 0.6 s. Combined with the committed Flutter bundle (§AC) a fresh
 Codespace downloads nothing: image pull → engine up → `/flutter` served.
+
+## AE — real wire read 0.00; hub stuck on "none"
+
+**News 0.00.** The spec keyword lists are crypto-desk words; a real world wire
+("Israel strikes Gaza", "tariffs on Chinese goods", "drone attack hits power
+grid", "stocks fall as yields climb") scored exactly 0.0, so NIV / news impact
+read 0.00 in every real Codespace while the offline fixtures looked fine.
+`score_headline` now adds macro risk-on / risk-off lists and blends in the
+signed BTC impact of the headline's theme (`impact.classify`); the war/attack
+themes gained the phrasings wires actually use.
+
+**&b offline / hedge 0.00.** `_reconcile_source` could hold `"none"` while a
+real feed (Kraken REST started at boot because Binance is geo-blocked,
+CoinGecko) was delivering and having every write counted as *rejected*. The hub
+now records `last_delivery[source]` in `ingest` and adopts a delivering real
+feed whenever neither socket is healthy — evidence beats state.
+
+**Diagnosis.** `GET /api/feeds/diagnose`: HTTP probes, a real WebSocket
+handshake + subscribe on Kraken and Binance, one RSS fetch, the hub's active
+source / delivery ages / rejected writes and the news engine's item count and
+NIV, with a one-line verdict. Tests: `test_round_ae.py` (284 total).

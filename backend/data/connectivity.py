@@ -76,3 +76,64 @@ def summarize(report: dict) -> str:
     good = [k for k, v in hosts.items() if v.get("ok")]
     bad = [f"{k} ({v.get('error')})" for k, v in hosts.items() if not v.get("ok")]
     return f"reachable: {', '.join(good)}" + (f" · blocked: {', '.join(bad)}" if bad else "")
+
+
+async def _ws_probe(url: str, subscribe: str | None, timeout: float = 8.0) -> dict:
+    """Open a real WebSocket, optionally subscribe, wait for the first frame."""
+    import websockets
+
+    t0 = time.perf_counter()
+    try:
+        async with websockets.connect(url, open_timeout=timeout, close_timeout=2) as ws:
+            if subscribe:
+                await ws.send(subscribe)
+            frame = await asyncio.wait_for(ws.recv(), timeout=timeout)
+            ms = (time.perf_counter() - t0) * 1000.0
+            text = frame if isinstance(frame, str) else frame.decode("utf-8", "replace")
+            return {"ok": True, "ms": round(ms, 1), "url": url, "first_frame": text[:160], "error": ""}
+    except Exception as exc:  # noqa: BLE001
+        ms = (time.perf_counter() - t0) * 1000.0
+        return {"ok": False, "ms": round(ms, 1), "url": url, "first_frame": "",
+                "error": f"{type(exc).__name__}: {str(exc)[:120]}".strip(": ")}
+
+
+async def diagnose(settings=None) -> dict:
+    """Round AE - everything the engine needs from the network, tested live:
+    HTTP probes, a real WebSocket handshake + subscribe on Kraken and Binance,
+    and one RSS fetch.  Served at ``/api/feeds/diagnose`` so a single
+    ``curl`` shows WHY a Codespace reads &b offline."""
+    import json
+
+    http_task = probe()
+    kraken_sub = json.dumps({"method": "subscribe", "params": {"channel": "trade", "symbol": ["BTC/USD"], "snapshot": True}})
+    ws_tasks = {
+        "kraken_ws": _ws_probe("wss://ws.kraken.com/v2", kraken_sub),
+        "binance_ws": _ws_probe("wss://data-stream.binance.vision/ws/btcusdt@aggTrade", None),
+    }
+
+    async def rss() -> dict:
+        t0 = time.perf_counter()
+        try:
+            from backend.news import rss_source
+
+            feeds = list(getattr(settings, "rss_feeds", None) or []) or ["https://feeds.bbci.co.uk/news/world/rss.xml"]
+            items = await rss_source.fetch_feed(feeds[0], 5)
+            return {"ok": bool(items), "ms": round((time.perf_counter() - t0) * 1000.0, 1), "url": feeds[0],
+                    "items": len(items), "sample": [getattr(i, "headline", str(i))[:100] for i in list(items)[:3]],
+                    "error": "" if items else "feed parsed but empty"}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "ms": round((time.perf_counter() - t0) * 1000.0, 1), "url": "", "items": 0,
+                    "sample": [], "error": f"{type(exc).__name__}: {str(exc)[:120]}"}
+
+    http, kraken_ws, binance_ws, rss_result = await asyncio.gather(http_task, ws_tasks["kraken_ws"], ws_tasks["binance_ws"], rss())
+    out = {"http": http, "websocket": {"kraken_ws": kraken_ws, "binance_ws": binance_ws}, "rss": rss_result}
+    verdict = []
+    if not http.get("internet"):
+        verdict.append("no HTTP egress at all - the engine cannot reach any market or news host")
+    if kraken_ws["ok"] or binance_ws["ok"]:
+        verdict.append("a WebSocket tape is reachable: " + ", ".join(k for k, v in (("kraken", kraken_ws), ("binance", binance_ws)) if v["ok"]))
+    else:
+        verdict.append("no WebSocket egress - the engine must run on Kraken REST / CoinGecko polling")
+    verdict.append("news RSS " + ("ok" if rss_result["ok"] else "FAILED: " + rss_result["error"]))
+    out["verdict"] = "; ".join(verdict)
+    return out

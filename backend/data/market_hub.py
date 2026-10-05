@@ -61,6 +61,7 @@ class MarketDataHub:
         # Round Z: writes from a feed that is not the active source are
         # dropped and counted - one tape, one source, always.
         self.rejected: dict[str, int] = {}
+        self.last_delivery: dict[str, float] = {}
         self.source_changed_at: float = time.time()
         self._started_at: float = time.time()
         self.connectivity: dict = {"summary": "not probed", "hosts": {}}
@@ -181,6 +182,11 @@ class MarketDataHub:
         its ceiling and made every formula read noise - identically in every
         new Codespace, because the simulator is seeded.
         """
+        # Round AE: remember when each feed last DELIVERED, active or not -
+        # the supervisor adopts a delivering real feed instead of waiting on a
+        # socket that is "connected" but silent.
+        if ticks or book is not None:
+            self.last_delivery[source] = time.time()
         if source != self.active_source:
             self.rejected[source] = self.rejected.get(source, 0) + 1
             return
@@ -281,6 +287,20 @@ class MarketDataHub:
                 self._stop_simulator_task()
                 self._set_source("kraken")
                 return
+        # Round AE: evidence beats state.  If neither socket is healthy but a
+        # real feed is delivering right now (Kraken REST started at boot
+        # because Binance is geo-blocked, CoinGecko polling), use it - never
+        # sit on "none" (every formula 0.00, &b "offline") while real prices
+        # are being thrown away as "rejected".
+        now = time.time()
+        delivering = [src for src in ("krakenrest", "coingecko")
+                      if now - self.last_delivery.get(src, 0.0) < 20.0]
+        if delivering:
+            if self.active_source not in delivering:
+                self._stop_simulator_task()
+                log.info("adopting %s - it is delivering while the sockets are not", delivering[0])
+                self._set_source(delivering[0])
+            return
         # A real feed gets a grace period to connect before anything simulated
         # is allowed near the tape (Round Z).  While waiting, the source is
         # "none" and the UI says "connecting to the market", not a fake price.
@@ -522,6 +542,8 @@ class MarketDataHub:
             "running": any(t.get_name() == "simulator" for t in self._tasks),
         }
         out["rejected_writes"] = dict(self.rejected)
+        now = time.time()
+        out["last_delivery_seconds_ago"] = {k: round(now - v, 1) for k, v in self.last_delivery.items()}
         return out
 
     def status(self) -> ComponentStatus:

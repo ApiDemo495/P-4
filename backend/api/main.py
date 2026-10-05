@@ -177,6 +177,31 @@ app.include_router(routes_emotions.router)
 app.include_router(routes_physics.router)
 
 
+@app.get("/api/feeds/diagnose")
+async def feeds_diagnose() -> dict:
+    """Round AE - live network diagnosis (HTTP, WebSocket handshakes, RSS) plus
+    the hub's own view (active source, per-feed delivery ages, rejected
+    writes).  One ``curl`` answers "why does &b say offline here?"."""
+    from backend.data import connectivity as _conn
+
+    manager = state.manager_or_none()
+    report = await _conn.diagnose(manager.settings if manager else None)
+    if manager is not None:
+        hub = manager.market.feeds_report()
+        report["hub"] = {
+            "active_source": manager.market.active_source,
+            "btc_ticks": manager.market.tick_count("BTC"),
+            "last_delivery_seconds_ago": hub.get("last_delivery_seconds_ago"),
+            "rejected_writes": hub.get("rejected_writes"),
+            "feeds": hub.get("feeds"),
+            "boot_connectivity": (manager.market.connectivity or {}).get("summary"),
+        }
+        news = manager.news
+        report["news"] = {"items": news.status.items, "niv": round(news.current_niv(), 4),
+                          "providers": dict(news.cache.providers), "coverage": news.status.coverage}
+    return report
+
+
 @app.get("/api/health")
 async def health() -> dict:
     manager = state.manager_or_none()
