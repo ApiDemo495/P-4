@@ -16,6 +16,7 @@ on:
     paths:
       - "frontend/**"
       - ".github/workflows/flutter-web.yml"
+      - ".github/scripts/**"
   workflow_dispatch: {}
 
 concurrency:
