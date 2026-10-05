@@ -317,6 +317,10 @@ function applyClock(payload, opts = {}) {
 const PANEL_SEEN = {};
 function markPanel(name) { PANEL_SEEN[name] = Date.now(); }
 function panelFeedClass() {
+  // Round AF: the engine's own grade of the last pass wins (live / partial /
+  // simulated / offline); the tape source is the fallback before any pass.
+  const grade = state.liveProvenance?.grade;
+  if (grade) return grade;
   const src = state.tape?.source;
   if (!src || src === "none") return "offline";
   return src === "simulator" ? "simulated" : "live";
@@ -343,7 +347,12 @@ function renderPanelRails() {
     }
     const f = rail.querySelector(".rail-feed");
     f.className = `rail-feed ${feed}`;
-    f.textContent = `&b ${feed === "live" ? src : feed}`;
+    const cov = state.liveProvenance?.coverage;
+    f.textContent = `&b ${feed === "live" ? src : feed === "partial" ? `${src} ${Math.round((cov ?? 0) * 100)}%` : feed}`;
+    const rows = state.liveProvenance?.feeds || {};
+    f.title = "&b - " + (Object.keys(rows).length
+      ? Object.entries(rows).map(([k, r]) => `${k}: ${r.state}${r.note && r.state !== "live" ? ` (${r.note})` : ""}`).join(" · ")
+      : "the internet source behind this panel right now");
     rail.querySelector(".rail-phase").textContent = `¶gn ${phase}`;
     const seen = PANEL_SEEN[name];
     const age = seen ? Math.max(0, Math.round((Date.now() - seen) / 1000)) : null;
@@ -2318,14 +2327,19 @@ function formulaRow(name, value, description, meta, readings = {}, traces = {}) 
 
   // Round Z: &b - the live feeds behind this value, green only when every one
   // of them is a real connected feed; ¶gn - the window phase of the pass.
+  // Round AF: &b is a graded coverage - live / partial n% / simulated /
+  // offline - and the tooltip names every feed and WHY it is not live.
   const feed = state.liveFeedStatus?.[name];
   const phase = state.livePhase || {};
   const src = state.liveProvenance?.source || "";
-  const feedChip = feed
-    ? `<span class="verdict ${feed.live ? "pass" : "fail"}" title="${escapeHtml(
-        `&b feeds: ${feed.feeds.join(", ")} · source ${src}` + (feed.missing?.length ? ` · not live: ${feed.missing.join(", ")}` : ""))}">` +
-      `&amp;b ${feed.live ? "live" : (src === "simulator" ? "simulated" : "offline")}</span>`
-    : "";
+  const feedChip = feed ? (() => {
+    const grade = feed.grade || (feed.live ? "live" : (src === "simulator" ? "simulated" : "offline"));
+    const cls = grade === "live" ? "pass" : grade === "partial" ? "warn" : "fail";
+    const pct = Math.round((feed.coverage ?? (feed.live ? 1 : 0)) * 100);
+    const label = grade === "partial" ? `partial ${pct}%` : grade;
+    const tip = `&b · source ${src || "none"} · ` + (feed.detail || `feeds: ${feed.feeds.join(", ")}`);
+    return `<span class="verdict ${cls}" title="${escapeHtml(tip)}">&amp;b ${escapeHtml(label)}</span>`;
+  })() : "";
   const phaseChip = phase.label
     ? `<span class="verdict phase" title="¶gn — this pass sits at ${escapeHtml(phase.label)}; every panel shares the same minute grid">¶gn ${escapeHtml(phase.mark || "")}</span>`
     : "";

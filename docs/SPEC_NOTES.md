@@ -1534,3 +1534,31 @@ feed whenever neither socket is healthy — evidence beats state.
 handshake + subscribe on Kraken and Binance, one RSS fetch, the hub's active
 source / delivery ages / rejected writes and the news engine's item count and
 NIV, with a one-line verdict. Tests: `test_round_ae.py` (284 total).
+
+## AF — Gemini keys, hedge pair on a real tape, graded `&b`
+
+**Gemini.** The default model `gemini-1.5-flash` is retired (404 → "HTTP
+error" on Test). `GEMINI_MODEL=auto` now asks ListModels which models *this
+key* can call and picks the first of `PREFERRED_MODELS`; a 404 mid-run
+re-discovers and retries once. The Test button validates through ListModels
+(no prefix check — `AQ.Ab…` and `AIza…` both fine) and names the chosen model.
+
+**Hedge 0.00 on real feeds.** HSI/HRDD/SHRP/GCDV read `synced` — BTC and PAXG
+LOCF'd onto a fixed 60 s grid. A real PAXG tape prints a few times a minute
+(Kraken) or every 10 s (CoinGecko), so on 60 s it was a flat line: zero
+variance, every hedge formula 0.00, while the dense simulator looked fine.
+`synchronise()` now widens the grid along 60→120→300→600→900→1800 s until
+both legs have ≥ 6 distinct prices (`SyncedSeries.describe()` reports window,
+updates, `widened`, `reason`), and an invalid pair says which leg is thin.
+
+**`&b` rewrite.** `provenance()` grades every feed (tape, book, candles, news,
+cross) as live / delayed / derived / warming / stale / simulated / offline
+with a note, and the pass gets `grade` ∈ {live, partial, simulated, offline}
+plus `coverage` (weighted mean). `feed_status()[formula]` carries `grade`,
+`coverage`, `detail`. Dashboard chips read `&b live` / `&b partial 62 %` /
+`&b simulated` / `&b offline`; tooltips and panel rails list each feed and
+why. "offline" now means *no real data at all*.
+
+**Also.** `tools/self_update.sh --check` emitted an all-digit short SHA bare
+(`"local":0971472`) → invalid JSON; SHAs are always strings now. Assets
+`v=2.21.0`. Tests: `test_round_af.py` (288 total), payload check 69/69.

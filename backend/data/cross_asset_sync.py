@@ -50,10 +50,21 @@ def log_returns(prices: np.ndarray) -> np.ndarray:
     return np.diff(np.log(safe))
 
 
+#: Round AF - a real PAXG tape is thin (a few prints a minute on Kraken, one
+#: CoinGecko price every 10 s).  On a fixed 60 s grid that is a flat line, so
+#: every hedge formula divided by a zero variance and printed 0.00 - the
+#: "hedge status 0.00" seen on every real feed while the (dense) simulator
+#: looked fine.  The grid now WIDENS until the thin leg has enough distinct
+#: prices to carry a covariance, and says so.
+MIN_UPDATES = 6
+WINDOW_LADDER = (60, 120, 300, 600, 900, 1800)
+
+
 class SyncedSeries:
     """Synchronised BTC/PAXG prices and returns for one signal cycle."""
 
-    __slots__ = ("grid", "btc_prices", "paxg_prices", "btc_returns", "paxg_returns", "valid")
+    __slots__ = ("grid", "btc_prices", "paxg_prices", "btc_returns", "paxg_returns", "valid",
+                 "window_seconds", "btc_updates", "paxg_updates", "widened", "reason")
 
     def __init__(
         self,
@@ -61,6 +72,11 @@ class SyncedSeries:
         btc_prices: np.ndarray,
         paxg_prices: np.ndarray,
         valid: bool = True,
+        window_seconds: int = cfg.SYNC_WINDOW_SECONDS,
+        btc_updates: int = 0,
+        paxg_updates: int = 0,
+        widened: bool = False,
+        reason: str = "",
     ) -> None:
         self.grid = grid
         self.btc_prices = btc_prices
@@ -68,6 +84,26 @@ class SyncedSeries:
         self.btc_returns = log_returns(btc_prices)
         self.paxg_returns = log_returns(paxg_prices)
         self.valid = valid
+        self.window_seconds = int(window_seconds)
+        self.btc_updates = int(btc_updates)
+        self.paxg_updates = int(paxg_updates)
+        self.widened = bool(widened)
+        self.reason = reason
+
+    def describe(self) -> dict:
+        return {"valid": self.valid, "window_seconds": self.window_seconds, "btc_updates": self.btc_updates,
+                "paxg_updates": self.paxg_updates, "widened": self.widened, "reason": self.reason}
+
+
+def _updates_in(times: np.ndarray, prices: np.ndarray, start: float) -> int:
+    """Distinct price changes at or after ``start`` (what a covariance can use)."""
+    if times.size == 0:
+        return 0
+    mask = times >= start
+    if not mask.any():
+        return 0
+    p = prices[mask]
+    return int(1 + np.count_nonzero(np.diff(p)))
 
 
 def synchronise(
@@ -83,7 +119,6 @@ def synchronise(
     import time as _time
 
     now = now if now is not None else _time.time()
-    grid = build_grid(now, window_seconds)
 
     def _prepare(ticks: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         if ticks is None or ticks.size == 0:
@@ -96,9 +131,32 @@ def synchronise(
     b_times, b_prices = _prepare(btc_ticks)
     p_times, p_prices = _prepare(paxg_ticks)
 
-    valid = b_prices.size >= 2 and p_prices.size >= 2
+    # widen the grid while the thin leg has too few distinct prices on it
+    chosen = int(window_seconds)
+    ladder = [w for w in WINDOW_LADDER if w > chosen]
+    b_upd = _updates_in(b_times, b_prices, now - chosen)
+    p_upd = _updates_in(p_times, p_prices, now - chosen)
+    widened = False
+    while min(b_upd, p_upd) < MIN_UPDATES and ladder:
+        nxt = ladder.pop(0)
+        nb = _updates_in(b_times, b_prices, now - nxt)
+        np_ = _updates_in(p_times, p_prices, now - nxt)
+        if nb == b_upd and np_ == p_upd:
+            break  # no older data to widen into
+        chosen, b_upd, p_upd, widened = nxt, nb, np_, True
+    grid = build_grid(now, chosen)
+
+    valid = b_upd >= 2 and p_upd >= 2
+    if not valid:
+        reason = ("PAXG tape has %d price update(s) in %d s - the hedge pair needs 2" % (p_upd, chosen)
+                  if p_upd < 2 else "BTC tape has %d price update(s) in %d s" % (b_upd, chosen))
+    elif widened:
+        reason = "grid widened to %d s so PAXG (%d updates) carries a covariance" % (chosen, p_upd)
+    else:
+        reason = ""
     btc_synced = locf_resample(b_times, b_prices, grid)
     paxg_synced = locf_resample(p_times, p_prices, grid)
-    return SyncedSeries(grid, btc_synced, paxg_synced, valid=valid)
+    return SyncedSeries(grid, btc_synced, paxg_synced, valid=valid, window_seconds=chosen,
+                        btc_updates=b_upd, paxg_updates=p_upd, widened=widened, reason=reason)
 
 

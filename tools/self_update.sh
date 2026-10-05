@@ -42,7 +42,10 @@ json() {  # json key=value ... (values are strings unless they look like numbers
     k="${kv%%=*}"; v="${kv#*=}"
     [ "$first" = 1 ] || out+=","
     first=0
-    if [[ "$v" =~ ^(-?[0-9]+|true|false|null)$ ]]; then out+="\"$k\":$v"
+    # numbers/bools stay bare; everything else is a string.  Commit SHAs
+    # (local/remote/latest) are ALWAYS strings - an all-digit short SHA such
+    # as 0971472 once went out bare and broke the JSON of every --check.
+    if [[ "$k" != local && "$k" != remote && "$v" =~ ^(-?(0|[1-9][0-9]*)|true|false|null)$ ]]; then out+="\"$k\":$v"
     else v="${v//\\/\\\\}"; v="${v//\"/\\\"}"; out+="\"$k\":\"$v\""; fi
   done
   printf '%s}\n' "$out"

@@ -110,53 +110,137 @@ CATEGORY_FEEDS: dict[str, tuple[str, ...]] = {
 REAL_SOURCES = ("binance", "kraken", "krakenrest", "coingecko")
 
 
+#: Round AF - ``&b`` is a graded COVERAGE, not a binary.  Each feed a formula
+#: reads is in one of these states; the formula's grade is the weakest state
+#: among its feeds and its coverage is the weighted mean.  "offline" is now
+#: reserved for *no real data at all* - a missing order book on a REST tape
+#: reads "partial · book: source has no order book", never "offline".
+FEED_STATE_WEIGHT = {"live": 1.0, "delayed": 0.75, "derived": 0.6, "warming": 0.5,
+                     "stale": 0.4, "simulated": 0.0, "offline": 0.0}
+
+
+def _feed(state: str, note: str = "", **extra) -> dict:
+    row = {"state": state, "live": state == "live", "weight": FEED_STATE_WEIGHT.get(state, 0.0), "note": note}
+    row.update(extra)
+    return row
+
+
 def provenance(snapshot, asset: str) -> dict:
-    """``&b`` for one pass: which live feeds are actually connected, and how
-    old each one is, as seen from the frozen snapshot the formulas read."""
-    now_ms = time.time() * 1000.0
+    """``&b`` for one pass: for every feed the formulas read - the tape, the
+    order book, the minute candles, the news wire and the BTC/PAXG cross grid
+    - its state, age and the reason, as seen from the frozen snapshot."""
+    now = time.time()
+    now_ms = now * 1000.0
     source = str(getattr(snapshot, "source", "") or "")
     simulated = source == "simulator"
     real = source in REAL_SOURCES
-    out: dict = {"source": source or "none", "simulated": simulated, "feeds": {}}
+    out: dict = {"source": source or "none", "simulated": simulated, "real": real, "feeds": {}}
+    feeds = out["feeds"]
+    stale_s = float(cfg.SETTINGS.stale_tick_seconds)
+
+    # --- tape --------------------------------------------------------------
     try:
         ticks = snapshot.ticks(asset)
-        tick_age_ms = float(now_ms - ticks[-1, 0]) if ticks is not None and len(ticks) else None
+        n_ticks = int(len(ticks)) if ticks is not None else 0
+        tick_age = float(now_ms - ticks[-1, 0]) / 1000.0 if n_ticks else None
     except Exception:  # noqa: BLE001
-        tick_age_ms = None
-    stale_ms = float(cfg.SETTINGS.stale_tick_seconds) * 1000.0
-    out["feeds"]["tape"] = {
-        "live": bool(real and tick_age_ms is not None and tick_age_ms < stale_ms),
-        "age_ms": None if tick_age_ms is None else round(tick_age_ms, 1),
-        "source": source,
-    }
+        n_ticks, tick_age = 0, None
+    if simulated:
+        feeds["tape"] = _feed("simulated", "built-in simulator", source=source, ticks=n_ticks)
+    elif not real or tick_age is None:
+        feeds["tape"] = _feed("offline", "no ticks from a live feed yet" if real else f"source {source or 'none'}",
+                              source=source, ticks=n_ticks)
+    elif tick_age < stale_s:
+        feeds["tape"] = _feed("live", f"{source} · last print {tick_age:.1f} s ago · {n_ticks} ticks",
+                              source=source, age_s=round(tick_age, 1), ticks=n_ticks)
+    elif tick_age < 5 * stale_s:
+        feeds["tape"] = _feed("delayed", f"{source} · last print {tick_age:.0f} s ago",
+                              source=source, age_s=round(tick_age, 1), ticks=n_ticks)
+    else:
+        feeds["tape"] = _feed("stale", f"{source} · last print {tick_age:.0f} s ago",
+                              source=source, age_s=round(tick_age, 1), ticks=n_ticks)
+
+    # --- order book --------------------------------------------------------
     try:
         book = snapshot.book(asset)
         book_ok = bool(book is not None and book[0, 0, 0] > 0 and book[1, 0, 0] > 0)
     except Exception:  # noqa: BLE001
         book_ok = False
-    out["feeds"]["book"] = {"live": bool(real and book_ok), "source": source}
+    if simulated:
+        feeds["book"] = _feed("simulated", "simulated book", source=source)
+    elif real and book_ok:
+        feeds["book"] = _feed("live", f"{source} depth snapshot", source=source)
+    elif real and source == "coingecko":
+        feeds["book"] = _feed("derived", "CoinGecko has no order book - book formulas use the tape's spread proxy",
+                              source=source)
+    elif real:
+        feeds["book"] = _feed("warming", f"{source} book not received yet", source=source)
+    else:
+        feeds["book"] = _feed("offline", "no live source", source=source)
+
+    # --- minute candles ----------------------------------------------------
     try:
         candles = snapshot.candles(asset)
         n_candles = int(len(candles)) if candles is not None else 0
     except Exception:  # noqa: BLE001
         n_candles = 0
-    out["feeds"]["candles"] = {"live": bool(real and n_candles >= 2), "count": n_candles}
+    if simulated:
+        feeds["candles"] = _feed("simulated", "simulated history", count=n_candles)
+    elif real and n_candles >= 2:
+        feeds["candles"] = _feed("live", f"{n_candles} one-minute closes rolled from the tape", count=n_candles)
+    elif real:
+        feeds["candles"] = _feed("warming", f"{n_candles}/2 minute closes - regime formulas fill in after 2 minutes",
+                                 count=n_candles)
+    else:
+        feeds["candles"] = _feed("offline", "no live source", count=n_candles)
+
+    # --- news wire ---------------------------------------------------------
     items = tuple(getattr(snapshot, "news_items", ()) or ())
     freshest = None
     if items:
         try:
-            freshest = max(0.0, time.time() - max(float(getattr(i, "published_at", 0.0)) for i in items))
+            freshest = max(0.0, now - max(float(getattr(i, "published_at", 0.0)) for i in items))
         except Exception:  # noqa: BLE001
             freshest = None
-    out["feeds"]["news"] = {
-        "live": bool(items and freshest is not None and freshest < 3 * 3600.0),
-        "items": len(items),
-        "freshest_age_s": None if freshest is None else round(freshest, 1),
-    }
+    if items and freshest is not None and freshest < 3 * 3600.0:
+        feeds["news"] = _feed("live", f"{len(items)} headlines · freshest {freshest / 60:.0f} min old",
+                              items=len(items), freshest_age_s=round(freshest, 1))
+    elif items:
+        feeds["news"] = _feed("stale", f"{len(items)} headlines · freshest {(freshest or 0) / 3600:.1f} h old",
+                              items=len(items), freshest_age_s=None if freshest is None else round(freshest, 1))
+    else:
+        feeds["news"] = _feed("offline", "no headlines fetched yet", items=0, freshest_age_s=None)
+
+    # --- BTC/PAXG cross grid -----------------------------------------------
     synced = getattr(snapshot, "synced", None)
-    out["feeds"]["cross"] = {"live": bool(real and synced is not None)}
-    out["feeds"]["formulas"] = {"live": True}
+    desc = synced.describe() if synced is not None and hasattr(synced, "describe") else {}
+    if simulated:
+        feeds["cross"] = _feed("simulated", "simulated pair", **desc)
+    elif synced is not None and getattr(synced, "valid", False) and real:
+        state = "derived" if desc.get("widened") else "live"
+        feeds["cross"] = _feed(state, desc.get("reason") or f"BTC/PAXG on a {desc.get('window_seconds', 60)} s grid",
+                               **desc)
+    elif real:
+        feeds["cross"] = _feed("warming", desc.get("reason") or "waiting for both legs", **desc)
+    else:
+        feeds["cross"] = _feed("offline", "no live source", **desc)
+
+    feeds["formulas"] = _feed("live", "upstream formula values of this very pass")
+    weights = [f["weight"] for k, f in feeds.items() if k != "formulas"]
+    out["coverage"] = round(sum(weights) / len(weights), 3) if weights else 0.0
+    out["grade"] = _grade(feeds.values(), real, simulated)
     return out
+
+
+def _grade(feed_rows, real: bool, simulated: bool) -> str:
+    states = [f["state"] for f in feed_rows]
+    if simulated:
+        return "simulated"
+    if not real or all(s == "offline" for s in states):
+        return "offline"
+    if all(s == "live" for s in states):
+        return "live"
+    return "partial"
 
 
 def phase_of(timestamp: float) -> dict:
@@ -337,12 +421,27 @@ class FormulaResult:
     phase: dict = field(default_factory=dict)
 
     def feed_status(self) -> dict:
-        """``{formula: {"feeds": [...], "live": bool, "missing": [...]}}``."""
-        feeds = (self.provenance or {}).get("feeds", {})
+        """``{formula: {feeds, live, grade, coverage, missing, detail}}`` - the
+        ``&b`` of every formula: grade = the weakest of its feeds, coverage =
+        the weighted mean, detail = why (one clause per feed)."""
+        prov = self.provenance or {}
+        feeds = prov.get("feeds", {})
+        real = bool(prov.get("real"))
+        simulated = bool(prov.get("simulated"))
         out = {}
         for spec in ALL_FORMULAS:
-            missing = [f for f in spec.feeds if not feeds.get(f, {}).get("live")]
-            out[spec.name] = {"feeds": list(spec.feeds), "live": not missing, "missing": missing}
+            rows = [feeds.get(f) or _feed("offline", "not in this pass") for f in spec.feeds]
+            missing = [f for f, r in zip(spec.feeds, rows) if r["state"] != "live"]
+            cov = round(sum(r["weight"] for r in rows) / len(rows), 3) if rows else 0.0
+            out[spec.name] = {
+                "feeds": list(spec.feeds),
+                "live": not missing,
+                "grade": _grade(rows, real, simulated),
+                "coverage": cov,
+                "missing": missing,
+                "detail": " · ".join(f"{f} {r['state']}" + (f" ({r['note']})" if r["state"] != "live" and r["note"] else "")
+                                     for f, r in zip(spec.feeds, rows)),
+            }
         return out
 
     def check_summary(self) -> dict:

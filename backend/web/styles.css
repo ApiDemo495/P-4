@@ -188,6 +188,7 @@ body {
 .verdict { font-size: 10px; padding: 1px 7px; border-radius: 999px; border: 1px solid; }
 .verdict.pass { color: var(--green); border-color: #1d5c3a; background: #0e2018; }
 .verdict.fail { color: var(--red); border-color: #6b2020; background: #24100f; }
+.verdict.warn { color: var(--amber); border-color: #6b5420; background: #241d0f; }
 .logic-toggle { margin-left: auto; background: #16203a; border: 1px solid #26365a; color: #b9cbea; font-size: 11px; border-radius: 6px; padding: 2px 8px; cursor: pointer; }
 .logic-toggle:hover { background: #1d2b45; }
 .logic-block { grid-column: 1 / -1; margin: 2px 0 8px 74px; padding: 10px 12px; background: #0d1424; border: 1px solid var(--line); border-left: 3px solid #2f4d80; border-radius: 8px; }
@@ -1066,6 +1067,7 @@ body.pulse .widget-panel, body.pulse .card { animation: pulse-breath .6s var(--e
 .panel-rail .rail-feed.live { color: var(--green); border-color: rgba(52,211,153,.45); box-shadow: 0 0 10px -4px var(--green); }
 .panel-rail .rail-feed.simulated { color: var(--red); border-color: rgba(251,113,133,.6); }
 .panel-rail .rail-feed.offline { color: var(--amber); border-color: rgba(251,191,36,.5); }
+.panel-rail .rail-feed.partial { color: var(--amber); border-color: rgba(251,191,36,.5); box-shadow: 0 0 10px -4px var(--amber); }
 .panel-rail .rail-phase { color: #c4b5fd; border-color: rgba(167,139,250,.4); }
 .panel-rail .rail-age.old { color: var(--red); }
 @media (max-width: 700px) { .panel-rail { width: 100%; margin-left: 0; flex-wrap: wrap; } }
