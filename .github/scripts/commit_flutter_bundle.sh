@@ -31,6 +31,10 @@ if git diff --cached --quiet; then
   report 0
 fi
 run git commit -m "Flutter web bundle (built by GitHub Actions) [skip ci]" || report $?
+# "flutter pub get" rewrites analysis_options.yaml / pubspec.lock; drop those
+# so the rebase below starts from a clean tree (only the bundle is wanted)
+run git checkout -- .
+run git status --short
 # the branch may have moved while we built: rebase our one commit onto it
 run git fetch origin "${GITHUB_REF_NAME}" || report $?
 if ! run git rebase "origin/${GITHUB_REF_NAME}"; then
