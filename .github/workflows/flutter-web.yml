@@ -24,6 +24,8 @@ concurrency:
 
 permissions:
   contents: write
+  pull-requests: write
+  issues: write
 
 jobs:
   build:
@@ -47,12 +49,31 @@ jobs:
         env:
           FLUTTER_SUPPRESS_ANALYTICS: "true"
           CI: "true"
+        id: build
         run: |
-          flutter --version
-          flutter config --enable-web
-          flutter pub get
-          flutter build web --release --base-href /flutter/
-          test -f build/web/index.html
+          set -o pipefail
+          {
+            flutter --version
+            flutter config --enable-web
+            flutter pub get
+            flutter build web --release --base-href /flutter/
+            test -f build/web/index.html
+          } 2>&1 | tee /tmp/flutter-build.log
+
+      - name: Publish the build log where it can be read without the Actions UI
+        if: failure() && steps.build.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "### flutter build web failed (run ${{ github.run_id }}, ${GITHUB_SHA::8})"
+            echo '```'
+            grep -v "^Downloading\|^Resolving\|^Got dependencies" /tmp/flutter-build.log | tail -150
+            echo '```'
+          } > /tmp/comment.md
+          cat /tmp/comment.md >> "$GITHUB_STEP_SUMMARY"
+          PR=$(gh pr list --head "${GITHUB_REF_NAME}" --state open --json number --jq '.[0].number' || true)
+          if [ -n "$PR" ]; then gh pr comment "$PR" --body-file /tmp/comment.md || true; fi
 
       - name: Commit the bundle to this branch (fast-forward only, never main)
         run: |
