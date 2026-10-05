@@ -28,6 +28,7 @@ from __future__ import annotations
 import numpy as np
 
 from backend.core import config as cfg
+from backend.core.risk_engine import size_levels
 from backend.formulas._util import EPS
 
 
@@ -92,6 +93,19 @@ SIZE_HINT = {
 }
 
 
+def quoted_spread_bps(snapshot, asset: str) -> float:
+    """Latest quoted spread in bps from the frozen spread history (0 if none)."""
+    hist = np.asarray(snapshot.spread_history(asset), dtype=np.float64)
+    prices = np.asarray(snapshot.prices(asset), dtype=np.float64)
+    if hist.ndim != 2 or hist.shape[0] == 0 or prices.size == 0:
+        return 0.0
+    mid = float(prices[-1])
+    spread = float(hist[-1, 1])
+    if not np.isfinite(spread) or not np.isfinite(mid) or mid <= 0 or spread < 0:
+        return 0.0
+    return spread / mid * 1e4
+
+
 def risk_levels(
     asset: str,
     signal: str,
@@ -101,23 +115,25 @@ def risk_levels(
     horizon_seconds: float = 60.0,
     conviction: str = "HIGH",
     emergency_exit: bool = False,
+    edge: float = 0.0,
+    spread_bps: float = 0.0,
 ) -> dict:
     """Build the risk block embedded in every locked signal."""
     settings = settings or cfg.SETTINGS
-    params = cfg.risk_params(asset)
 
     sigma = float(volatility_bps)
     if not np.isfinite(sigma) or sigma <= 0:
         sigma = settings.default_volatility_bps
 
-    # Round Y - one risk rule: the STOP is sized on realised volatility (one
-    # sigma_mult x sigma move, clamped) and the TARGET is rr_target x the stop
-    # (1.5 by default).  The loss is bounded before the window opens; the
-    # target reaches for the tail of the move.
+    # Round AA - excursion-quantile risk engine (backend/core/risk_engine.py):
+    # the stop is the 80% quantile of the maximum adverse excursion over the
+    # window, the target reaches further the stronger the edge.
+    levels = size_levels(
+        asset, sigma, edge=edge, spread_bps=spread_bps, horizon_seconds=horizon_seconds, settings=settings
+    )
     rr = float(getattr(settings, "rr_target", 1.5) or 1.5)
-    sigma_mult = float(params.get("sigma_mult", 1.5))
-    sl_bps = float(np.clip(sigma_mult * sigma, settings.min_sl_bps, settings.max_sl_bps))
-    tp_bps = float(np.clip(sl_bps * rr, settings.min_tp_bps, settings.max_tp_bps))
+    sl_bps = levels.sl_bps
+    tp_bps = levels.tp_bps
 
     entry = float(entry or 0.0)
     block = {
@@ -129,6 +145,7 @@ def risk_levels(
         "sl_bps": round(sl_bps, 2),
         "rr": round(tp_bps / sl_bps, 3) if sl_bps > 0 else 0.0,
         "rr_target": rr,
+        "engine": levels.as_dict(),
         "horizon_seconds": round(horizon_seconds, 1),
         "take_profit": None,
         "stop_loss": None,
@@ -144,7 +161,7 @@ def risk_levels(
         block["stop_loss"] = round(entry * (1.0 - sign * sl_bps / 1e4), 6)
         block["note"] = (
             f"{tp_bps:.0f} bps target / {sl_bps:.0f} bps stop = "
-            f"{block['rr']:.2f}:1 reward:risk (target {rr:.1f}x the stop), stop sized on {sigma:.0f} bps realised volatility"
+            f"{block['rr']:.2f}:1 reward:risk - {levels.method}"
             f" - {block['size_hint']} ({conviction.lower()} conviction)"
         )
         if emergency_exit:

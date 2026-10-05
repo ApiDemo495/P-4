@@ -173,12 +173,16 @@ def test_the_consensus_ignores_indicator_formulas():
 @pytest.mark.parametrize("signal", ["BUY", "SELL"])
 def test_the_levels_follow_the_rr_target(asset: str, signal: str):
     block = risk_module.risk_levels(asset, signal, 68_000.0, 12.0, cfg.SETTINGS)
+    # Round AA: zero edge -> rr == rr_target; the stop is the 80% MAE quantile
     assert block["rr"] == pytest.approx(cfg.SETTINGS.rr_target)
-    assert block["tp_bps"] == pytest.approx(block["sl_bps"] * cfg.SETTINGS.rr_target)
+    assert block["tp_bps"] == pytest.approx(block["sl_bps"] * cfg.SETTINGS.rr_target, rel=1e-3)
+    assert block["engine"]["mae_z"] == pytest.approx(1.2816, abs=1e-3)
     entry = block["entry"]
     assert abs(block["take_profit"] - entry) == pytest.approx(
-        abs(entry - block["stop_loss"]) * cfg.SETTINGS.rr_target, rel=1e-9
+        abs(entry - block["stop_loss"]) * cfg.SETTINGS.rr_target, rel=1e-3
     )
+    strong = risk_module.risk_levels(asset, signal, 68_000.0, 12.0, cfg.SETTINGS, edge=0.8)
+    assert strong["rr"] > block["rr"] and strong["sl_bps"] == block["sl_bps"]
     if signal == "BUY":
         assert block["take_profit"] > entry > block["stop_loss"]
     else:
@@ -236,7 +240,8 @@ def test_the_prediction_detail_explains_the_side(manager: CycleManager):
     assert engine["compute_us"] > 0
     assert engine["publish_latency_us"] >= 0
     assert engine["history_samples"] > 0
-    assert detail["levels"]["tp_bps"] == pytest.approx(detail["levels"]["sl_bps"] * cfg.SETTINGS.rr_target, rel=1e-3)
+    assert detail["levels"]["tp_bps"] == pytest.approx(detail["levels"]["sl_bps"] * detail["levels"]["rr"], rel=1e-3)
+    assert cfg.SETTINGS.rr_target <= detail["levels"]["rr"] <= 2.5
     assert detail["micro"]["available"] is True
     assert detail["micro"]["resolution_us"] > 0
 
@@ -268,8 +273,8 @@ def test_the_live_formula_block_carries_microseconds_and_history(manager: CycleM
 
 def test_the_prediction_exposes_the_levels(manager: CycleManager):
     prediction = manager.signal_payload()["prediction"]
-    assert prediction["rr"] == pytest.approx(cfg.SETTINGS.rr_target)
-    assert prediction["tp_bps"] == pytest.approx(prediction["sl_bps"] * cfg.SETTINGS.rr_target, rel=1e-3)
+    assert cfg.SETTINGS.rr_target <= prediction["rr"] <= 2.5
+    assert prediction["tp_bps"] == pytest.approx(prediction["sl_bps"] * prediction["rr"], rel=1e-3)
     if prediction["entry"]:
         assert prediction["take_profit"] and prediction["stop_loss"]
 

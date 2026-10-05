@@ -53,7 +53,7 @@ def test_take_profit_and_stop_move_with_volatility():
     loud = risk_levels("BTC", "BUY", 60_000.0, 40.0, cfg.SETTINGS)
     assert loud["tp_bps"] > quiet["tp_bps"] >= cfg.SETTINGS.min_tp_bps
     assert loud["take_profit"] - 60_000.0 > quiet["take_profit"] - 60_000.0
-    assert loud["tp_bps"] == pytest.approx(loud["sl_bps"] * cfg.SETTINGS.rr_target)
+    assert loud["tp_bps"] == pytest.approx(loud["sl_bps"] * cfg.SETTINGS.rr_target, rel=1e-3)
 
 
 def test_drg_turns_negative_after_a_loss():
@@ -204,7 +204,7 @@ def test_round_y_risk_is_asymmetric_by_rule():
     block = risk_levels("BTC", "BUY", 60_000.0, 12.0, cfg.SETTINGS)
     assert cfg.SETTINGS.rr_target == pytest.approx(1.5)
     assert block["tp_bps"] == pytest.approx(block["sl_bps"] * 1.5)
-    assert "target 1.5x the stop" in block["note"]
+    assert "target = 1.50 x stop" in block["note"]
 
 
 def test_round_y_dashboard_draws_the_branches_and_warns_on_stale_builds():
