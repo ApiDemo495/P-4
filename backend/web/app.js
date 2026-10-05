@@ -1356,7 +1356,17 @@ function renderSignal() {
 
   if ($("weights")) {
     const w = s.fusion?.weights_used || {};
-    const parts = Object.keys(w).map((k) => `${k} ${fmtPct(w[k])}`);
+    const lw = s.fusion?.lock_weights || {};
+    // Round AA: the share each voter actually got, with the ledger's
+    // reliability multiplier when it differs from 1 (x1.40 = a 70% source).
+    const parts = Object.keys(w).map((k) => {
+      const row = lw[k] || {};
+      const rel = Number(row.reliability);
+      const tag = Number.isFinite(rel) && Math.abs(rel - 1) >= 0.05 ? ` (x${rel.toFixed(2)} earned)` : "";
+      const avail = Number(row.availability);
+      const live = Number.isFinite(avail) && avail < 0.999 ? ` ${Math.round(avail * 100)}% live` : "";
+      return `${k} ${fmtPct(w[k])}${tag}${live}`;
+    });
     const crowdCut = Number(s.fusion?.crowd_adjustment ?? 1);
     const crowd = ` · crowd: confidence x${crowdCut.toFixed(2)} (a modifier of at most 12.5%, never a vote)`;
     $("weights").textContent = parts.length
