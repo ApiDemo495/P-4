@@ -1436,3 +1436,42 @@ CROWD (five meters) and the inverse-RL tiles with animated scale markers.
 
 **Checks.** 278 tests, `tools/dead_code.py` 0, payload check 69/69,
 `node --check`, pyflakes clean, `tools/dart_balance.py` OK.
+
+## AB
+
+**Trigger.** "Code the app so it automatically connects to the live internet
+as soon as I open it - only Arena is blocked, GitHub Codespaces are not.
+Each panel matters."
+
+**Root cause candidates, now handled in code.** (1) Codespaces run in US
+regions where Binance answers 451; (2) a socket whose handshake succeeds
+but that never delivers data used to count as *healthy*, resetting its
+failure counter on every reconnect, so neither CoinGecko nor the simulator
+was ever allowed in and the tape stayed `none` ("&b offline", hedge 0.00).
+
+**Connectivity probe (`backend/data/connectivity.py`).** At hub start-up
+(any mode but `simulator`) six endpoints are probed in parallel with a 4 s
+budget - Binance mirror, Binance, Kraken, CoinGecko, BBC world RSS,
+CryptoPanic. The report (`ok`, HTTP status, ms, error - 451 is labelled
+*geo-blocked*) is published as `tape.connectivity` on `/api/signal/status`
+and inside `/api/health.feeds`, and the header chip appends
+`internet: reachable: kraken, coingecko · blocked: binance (HTTP 451 geo-blocked)`.
+
+**Decisions from the probe.** If Binance is unreachable, Kraken REST starts
+immediately (first window already has real prices); if no socket host is
+reachable the 45 s grace is skipped and the HTTPS tape takes over at once.
+
+**Silent sockets.** `BinanceStatus` / `KrakenStatus` gained `data_messages`
+and `healthy()` (= connected ∧ data ∧ not stale). Failures are forgiven only
+when real data arrives; a session that closes with zero data raises
+"connected but no market data arrived" and counts as a failure. The hub's
+reconciliation uses `healthy()`.
+
+**Every panel.** Each card head carries a rail with the same three facts:
+`&b <source|simulated|offline>`, `¶gn <opening|early|mid|late|closing>`, and
+the age of the panel's last repaint - all repainted from the one frame
+loop, so every panel visibly moves together. Panel internals were restyled
+(hedge tiles, agent rows, news cards, history rows, physics table, brain
+wiring, explorer rows, locked-signal reasoning block). Assets `v=2.20.0`.
+
+**Checks.** 281 tests, dead code 0, payload check 69/69.
