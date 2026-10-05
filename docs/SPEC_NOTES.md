@@ -1353,3 +1353,86 @@ The countdown is client-side (absolute deadline), so it keeps running when the e
   rewrite of countdown / lock weighting / TP-SL as new modules, inverse-RL
   risk-aversion estimation, Flutter rendering of the geometry block.
 * Cache-bust `v=2.18.0`.
+
+## AA
+
+**Trigger.** From a fresh Codespace: "&b is offline all over everywhere, hedge
+status is always 0.00". `&b offline` (not "simulated") plus every hedge number
+at zero means the tape source stayed `none`: neither WebSocket feed connected
+and the hedge formulas never saw a PAXG tape. The sandbox cannot reproduce it
+(no exchange egress), so this round makes the *reason* visible and adds a
+feed that does not need WebSockets at all.
+
+**Feed diagnostics.** `BinanceStatus` / `KrakenStatus` carry `last_error` and
+`last_error_at`; `MarketDataHub.feeds_report()` lists every feed (enabled,
+connected, failures, messages, server, last_error, age) plus CoinGecko and the
+simulator. It is served as `/api/signal/status.tape.feeds` and
+`/api/health.feeds`; the header chip prints
+`NO MARKET FEED · binance: <error> (×n) · kraken: …` instead of a bare
+"offline". CoinGecko starts after **3** consecutive failures of both sockets
+(was 10 of Binance alone); the source stays an honest `none` for
+grace + 30 s before the simulator is allowed in.
+
+**Kraken REST (`backend/data/kraken_rest.py`).** Real trades
+(`/0/public/Trades`, incremental `since`) and a 25-level book
+(`/0/public/Depth`) over plain HTTPS GET every 2 s for XBTUSD and PAXGUSD.
+It is a `REAL_SOURCES` member (`krakenrest`), started by `_reconcile_source`
+as soon as both sockets have failed twice, and takes the tape ahead of
+CoinGecko and the simulator (order: Binance → Kraken WS → Kraken REST →
+CoinGecko → simulator). Mode `MARKET_DATA_MODE=krakenrest` forces it.
+
+**Risk engine (`backend/core/risk_engine.py`).** TP/SL rebuilt from scratch
+on excursions rather than closes: the stop is the q-quantile of the maximum
+adverse excursion of the window (`a_q = σ_T · Φ⁻¹(1 − (1−q)/2)`; q = 0.80
+BTC → 1.2816 σ_T, 0.78 PAXG), floored by 3× the quoted spread and the
+settings clamps; the target is `rr · stop` with
+`rr = rr_target + |edge|` clipped to [1.2, 2.5] - a call we barely believe
+reaches less far. `risk_levels` keeps its API (plus `edge`, `spread_bps`) and
+publishes the engine block (`risk.engine`: sl/tp/rr/sigma_window/mae_z/
+spread_floor/method). The note prints the method.
+
+**Lock weights (`backend/core/lock_weights.py`).** One table:
+`final(v) = base(v) × reliability(v) × availability(v)`; base from
+settings, reliability from the ledger's sources mapped to each fusion voter
+(`formulas` ← every `f:*`, `drosophila` ← `brain:CCSv2`, …) as a shrunk hit
+rate → multiplier in [0.4, 1.6], availability = physics liveness / news mass
+/ agent answered. `fuse()` builds the table (`ledger_sources=` from
+`CycleManager._ledger_sources_safe`) and publishes `fusion.lock_weights`;
+the "who decides" line shows `(x1.40 earned)` and `50% live` tags.
+
+**Window clock (`backend/core/window_clock.py`).** The countdown's single
+source: `grid_offsets`, `grid_marks`, `phase` (progress + label opening /
+early / mid / late / closing - the `¶gn` stamp) and `describe(...)` (the
+absolute clock block). `CycleManager.tick_grid` / `master_clock` delegate;
+`clock.phase` is new in every payload.
+
+**Inverse RL (`backend/core/utility_inversion.py`).** The crowd's utility
+recovered from its actions: **λ** loss aversion from
+`flow_t = β⁻·min(r_{t−1},0) + β⁺·max(r_{t−1},0)` on 1 s buckets (responses
+must be > 1.5 standard errors from zero or they are noise; λ = β⁻/β⁺, or a
+t-scaled value when only one side moves the crowd); **γ** risk aversion =
+`ln(participation_calm / participation_volatile)` over volatility terciles;
+**α** probability weighting from the share of depth beyond 2 σ_window versus
+an indifferent book's `(span − 2σ)/span` with `w(p) = p^α`. Published as
+`deep.utility` (`lambda`, `gamma`, `alpha`, `intensity`, `read`, `method`);
+six new evidence variables (`loss_averse`, `gain_chasing`, `risk_averse`,
+`risk_seeking`, `tail_fear`, `complacent`) enter the Bayesian emotion
+likelihoods (PANIC/CAPITULATION ← λ, FOMO/EUPHORIA ← 1/λ and −γ, FEAR ←
+α<1, COMPLACENCY/DENIAL ← α>1).
+
+**Premium UI.** `styles.css` gained a premium layer (Inter / JetBrains Mono,
+aurora backdrop, glass cards with hairline gradient borders, breathing
+status dot, SVG countdown ring with the `¶gn` marks drawn on the arc, number
+tick animation, pulse breath on every PULSE, value flashes via one
+MutationObserver, hover lifts, reduced-motion respected). Haptics: `[5]` at
+each pulse, `[6]` on the last three seconds, `[10]` when the next window is
+sealed, the reveal unchanged. New dashboard block "WHAT THE CROWD IS
+MAXIMISING" (λ / γ / α tiles with scales and the regression detail). Assets
+stamped `v=2.19.0`. Still exactly one `setInterval`.
+
+**Flutter.** `DeepReasoning` parses `geometry` (`CrowdGeometry`) and
+`utility` (`CrowdUtility`); `emotion_panel.dart` renders GEOMETRY OF THE
+CROWD (five meters) and the inverse-RL tiles with animated scale markers.
+
+**Checks.** 278 tests, `tools/dead_code.py` 0, payload check 69/69,
+`node --check`, pyflakes clean, `tools/dart_balance.py` OK.
