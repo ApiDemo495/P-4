@@ -190,7 +190,7 @@ class Settings:
     #: "is it configured" checks; calls always go through the ring.
     rings: dict = field(default_factory=lambda: {p: KeyRing.from_env(p) for p in tuple(_RING_ENV)})
     gemini_api_key: str = field(default_factory=lambda: _env("GEMINI_API_KEY"))
-    gemini_model: str = field(default_factory=lambda: _env("GEMINI_MODEL", "gemini-1.5-flash"))
+    gemini_model: str = field(default_factory=lambda: _env("GEMINI_MODEL", "auto"))
     gemini_timeout_seconds: float = 7.0
     github_models_token: str = field(default_factory=lambda: _env("GITHUB_MODELS_TOKEN"))
     github_models_model: str = field(

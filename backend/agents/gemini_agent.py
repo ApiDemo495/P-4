@@ -38,12 +38,56 @@ log = logging.getLogger("drosophila.agents.gemini")
 BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 NAME = "gemini"
 
+#: Round AF - Google retires model ids (``gemini-1.5-flash`` now answers 404,
+#: which the Settings page showed as a bare "HTTP error").  The agent asks the
+#: API which models THIS key can use (ListModels) and picks the first match in
+#: this order; ``GEMINI_MODEL`` still pins one explicitly.
+PREFERRED_MODELS: tuple[str, ...] = (
+    "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-2.0-flash",
+    "gemini-2.0-flash-lite", "gemini-2.5-pro", "gemini-pro-latest",
+)
+
+
+def choose_model(available: list[str], pinned: str = "") -> str:
+    """Pick a usable model id from a ListModels answer (names come back as
+    ``models/<id>``).  A pinned id wins when the key can use it."""
+    ids = [m.split("/", 1)[-1] for m in available]
+    if pinned and pinned != "auto" and pinned in ids:
+        return pinned
+    for want in PREFERRED_MODELS:
+        if want in ids:
+            return want
+    flash = [m for m in ids if "flash" in m and "image" not in m and "tts" not in m and "live" not in m]
+    if flash:
+        return sorted(flash, reverse=True)[0]
+    text = [m for m in ids if m.startswith("gemini") and "embedding" not in m and "image" not in m]
+    return text[0] if text else (pinned if pinned and pinned != "auto" else PREFERRED_MODELS[0])
+
+
+async def list_models(key: str, timeout: float = 8.0) -> list[str]:
+    """Model ids this key may call with generateContent (raises on HTTP errors)."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.get(f"{BASE_URL}?pageSize=200", headers={"x-goog-api-key": key})
+    if response.status_code in (400, 401, 403):
+        raise PermissionError(f"Gemini rejected the API key (HTTP {response.status_code})")
+    if response.status_code == 429:
+        raise RateLimited("Gemini rate limit (HTTP 429)", _retry_after(response))
+    if response.status_code >= 400:
+        raise RuntimeError(f"Gemini HTTP {response.status_code}: {response.text[:200]}")
+    out = []
+    for m in response.json().get("models") or []:
+        methods = m.get("supportedGenerationMethods") or []
+        if "generateContent" in methods:
+            out.append(str(m.get("name", "")))
+    return out
+
 
 class GeminiAgent:
     def __init__(self, settings=None) -> None:
         self.settings = settings or cfg.SETTINGS
         self.ring = self.settings.rings["gemini"]
         self.model = self.settings.gemini_model
+        self._model_resolved = False
         self.consecutive_failures = 0
         self.last_result: AgentResult | None = None
         self.last_error = ""
@@ -158,7 +202,20 @@ class GeminiAgent:
         self.last_result = result
         return result
 
+    async def _resolve_model(self, key: str, force: bool = False) -> str:
+        """Make sure ``self.model`` is an id this key can actually call."""
+        if self._model_resolved and not force:
+            return self.model
+        available = await list_models(key)
+        chosen = choose_model(available, self.settings.gemini_model)
+        if chosen != self.model:
+            log.info("Gemini model %s -> %s (what this key can use)", self.model, chosen)
+        self.model = chosen
+        self._model_resolved = True
+        return chosen
+
     async def _call(self, prompt: str, key: str) -> tuple[str | None, float | None, str, str]:
+        await self._resolve_model(key)
         url = f"{BASE_URL}/{self.model}:generateContent"
         payload = {
             "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
@@ -177,6 +234,13 @@ class GeminiAgent:
             raise PermissionError("Gemini rejected the API key")
         if response.status_code == 429:
             raise RateLimited("Gemini rate limit (HTTP 429)", _retry_after(response))
+        if response.status_code == 404:
+            # the model id was retired under us: re-discover once, retry once
+            self._model_resolved = False
+            await self._resolve_model(key, force=True)
+            url = f"{BASE_URL}/{self.model}:generateContent"
+            async with httpx.AsyncClient(timeout=self.settings.gemini_timeout_seconds) as client:
+                response = await client.post(url, json=payload, headers=headers)
         if response.status_code >= 400:
             raise RuntimeError(f"Gemini HTTP {response.status_code}: {response.text[:200]}")
 
@@ -195,25 +259,25 @@ class GeminiAgent:
         candidate = (key or self.api_key or "").strip()
         if not candidate:
             return {"valid": False, "error": "No key entered"}
-        url = f"{BASE_URL}/{self.model}:generateContent"
-        payload = {
-            "contents": [{"role": "user", "parts": [{"text": "Reply with the single word: ok"}]}],
-            "generationConfig": {"maxOutputTokens": 8, "temperature": 0.0},
-        }
+        # Any key format Google issues is accepted (AIza… and the newer AQ.Ab…
+        # keys alike): the API decides, not a prefix check.  Validation goes
+        # through ListModels, which no model retirement can break, and the
+        # answer names the model the engine will call with this key.
         try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                response = await client.post(
-                    url, json=payload, headers={"x-goog-api-key": candidate}
-                )
-            if response.status_code == 200:
-                return {"valid": True, "detail": f"{self.model} reachable"}
-            if response.status_code in (401, 403):
-                return {"valid": False, "error": "Invalid Gemini API key"}
-            if response.status_code == 429:
-                return {"valid": True, "detail": "Key accepted (rate limited right now)"}
-            return {"valid": False, "error": f"HTTP {response.status_code}"}
+            available = await list_models(candidate)
+        except PermissionError as exc:
+            return {"valid": False, "error": f"Google rejected this key - {exc}"}
+        except RateLimited:
+            return {"valid": True, "detail": "Key accepted (rate limited right now)"}
         except Exception as exc:  # noqa: BLE001
-            return {"valid": False, "error": str(exc)}
+            return {"valid": False, "error": f"could not reach generativelanguage.googleapis.com: {exc}"}
+        if not available:
+            return {"valid": False, "error": "key is valid but has no model with generateContent enabled"}
+        chosen = choose_model(available, self.settings.gemini_model)
+        if key is None or candidate == (self.api_key or "").strip():
+            self.model, self._model_resolved = chosen, True
+        return {"valid": True, "detail": f"key accepted - {len(available)} models available, using {chosen}",
+                "model": chosen, "models": [m.split("/", 1)[-1] for m in available][:40]}
 
     def health(self) -> AgentHealth:
         status = self.status()

@@ -77,7 +77,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _keyField('gemini',
-                  'Gemini API keys — primary + 2 stand-ins (all optional)', 'AIza…'),
+                  'Gemini API keys — primary + 2 stand-ins (all optional)', 'AQ.Ab… or AIza…'),
               _keyField('github', 'GitHub PATs (optional)', 'github_pat_…'),
               _keyField('cryptopanic', 'CryptoPanic keys (optional)', 'token'),
               _keyField('newsapi', 'NewsAPI keys (optional)', 'key'),

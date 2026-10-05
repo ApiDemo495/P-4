@@ -38,7 +38,7 @@ for you (if not: copy it). Open `.env` in the editor and fill in the value
 after the `=` — no quotes, no spaces:
 
 ```
-GEMINI_API_KEY=AIzaSyD...your...key
+GEMINI_API_KEY=AQ.Ab...your...key
 ```
 
 Then restart the engine so it re-reads the file:
@@ -118,21 +118,22 @@ request limits that are far above what this app uses (one call per agent per
    * If it asks for a *Google Cloud project*: choose **Create API key in new
      project** — you do not have to open the Cloud console or enable
      billing.
-5. A key beginning with `AIza…` appears. Click the copy icon. **This is the
-   only time it is shown in full**; if you lose it, make a new one.
+5. A key appears - newer keys begin with `AQ.Ab…`, older ones with `AIza…`;
+   both work, the engine never checks the prefix. Click the copy icon. **This
+   is the only time it is shown in full**; if you lose it, make a new one.
 6. Paste it into **Settings → Gemini API Key** and click **Test**. A green
-   line means the model answered. (Or `GEMINI_API_KEY=` in `.env`.)
+   line names the model that will be used. (Or `GEMINI_API_KEY=` in `.env`.)
 
-**Which model does it use?** `GEMINI_MODEL` in `.env`, default
-`gemini-1.5-flash`. Google retires model versions over time; if the Test
-button reports *model not found*, set
+**Which model does it use?** `GEMINI_MODEL=auto` (the default) asks Google
+which models *your* key can call and picks the first of `gemini-2.5-flash`,
+`gemini-2.5-flash-lite`, `gemini-flash-latest`, `gemini-2.0-flash`, … so a
+retired model id (the old default `gemini-1.5-flash` now answers 404) can never
+break the agent again; if a pinned id ever returns 404 mid-run the agent
+re-discovers and retries once. To pin one anyway:
 
 ```
-GEMINI_MODEL=gemini-2.0-flash
+GEMINI_MODEL=gemini-2.5-flash
 ```
-
-(or any name listed at https://ai.google.dev/gemini-api/docs/models) and
-restart. The Test button always tells you the exact reason a key fails.
 
 **Common errors**
 
@@ -357,7 +358,7 @@ If you are not approved yet, leave it empty: the row shows
 | Variable | Where from | Cost | Used for |
 |---|---|---|---|
 | `GEMINI_API_KEY` | aistudio.google.com/app/apikey | free | AI agent 1 |
-| `GEMINI_MODEL` | (name, not a key) | — | default `gemini-1.5-flash`; use `gemini-2.0-flash` if retired |
+| `GEMINI_MODEL` | (name, not a key) | — | default `auto` = the best model your key can call (discovered via ListModels) |
 | `GITHUB_MODELS_TOKEN` | github.com/settings/personal-access-tokens | free | AI agent 2 |
 | `GITHUB_MODELS_MODEL` | github.com/marketplace/models | — | default `gpt-4o-mini` |
 | `CRYPTOPANIC_API_KEY` | cryptopanic.com/developers/api | free | crypto news |
