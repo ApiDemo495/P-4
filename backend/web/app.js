@@ -1229,20 +1229,24 @@ function renderTape() {
   } else if (!t.source || t.source === "none") {
     // Round AA: say WHY - the last error of every real feed, so "offline"
     // never stands alone.
-    const f = t.feeds || {};
-    const why = ["binance", "kraken"].map((n) => {
+    const f = (t.feeds && t.feeds.feeds) || t.feeds || {};
+    const why = ["binance", "kraken", "krakenrest"].map((n) => {
       const r = f[n] || {};
       if (!r.enabled) return null;
-      if (r.connected) return `${n}: connected`;
-      return `${n}: ${r.last_error ? r.last_error : "connecting"}${r.failures ? ` (×${r.failures})` : ""}`;
+      if (r.connected) return `${n}: connected, waiting for data`;
+      return `${n}: ${r.last_error ? r.last_error : (r.polling ? "polling" : "connecting")}${r.failures ? ` (×${r.failures})` : ""}`;
     }).filter(Boolean).join(" · ");
-    chip.textContent = `NO MARKET FEED · ${why || "connecting…"}`;
+    const net = (t.feeds && t.feeds.connectivity) || t.connectivity || null;
+    const netLine = net && net.summary && net.summary !== "not probed" ? ` · internet: ${net.summary}` : "";
+    chip.textContent = `NO MARKET FEED · ${why || "connecting…"}${netLine}`;
     chip.classList.add("none");
   } else {
     chip.textContent = `live tape · ${t.source} · ${t.btc_ticks} ticks`;
     chip.classList.add("live");
   }
-  chip.title = `source for ${t.source_age_seconds}s; writes rejected from other feeds: ${JSON.stringify(t.rejected_writes || {})}`;
+  const net = (t.feeds && t.feeds.connectivity) || null;
+  chip.title = `source for ${t.source_age_seconds}s; writes rejected from other feeds: ${JSON.stringify(t.rejected_writes || {})}`
+    + (net && net.summary ? `\ninternet probe at start-up: ${net.summary}` : "");
 }
 
 /* The port answers before the engine is ready; say so instead of looking dead. */

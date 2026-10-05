@@ -1566,6 +1566,7 @@ class CycleManager:
                 "rejected_writes": dict(self.market.rejected),
                 "source_age_seconds": round(time.time() - self.market.source_changed_at, 1),
                 "feeds": self.market.feeds_report().get("feeds", {}),
+                "connectivity": self.market.feeds_report().get("connectivity", {}),
             },
             "infrastructure": {
                 "redis": self.store.backend,
