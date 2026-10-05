@@ -31,6 +31,7 @@ import numpy as np
 
 from backend.agents.base import AgentResult
 from backend.core import config as cfg
+from backend.core import lock_weights
 from backend.core.direction import (
     BUY,
     SELL,
@@ -53,6 +54,7 @@ class FusionResult:
     forced_reason: str = ""
     hsi_adjustment: float = 1.0
     weights_used: dict = field(default_factory=dict)
+    lock_weights: dict = field(default_factory=dict)
     direction: DirectionDecision | None = None
     formula_consensus: float | None = None
     confirmation: float = 1.0
@@ -91,6 +93,7 @@ class FusionResult:
             "forced_reason": self.forced_reason,
             "hsi_adjustment": round(self.hsi_adjustment, 4),
             "weights_used": {k: round(v, 4) for k, v in self.weights_used.items()},
+            "lock_weights": self.lock_weights,
             "formula_consensus": None
             if self.formula_consensus is None
             else round(float(self.formula_consensus), 4),
@@ -132,6 +135,7 @@ def fuse(
     physics: dict | None = None,
     news_impact: dict | None = None,
     asset: str = "BTC",
+    ledger_sources: list | None = None,
 ) -> FusionResult:
     """Combine the Drosophila brain with the available AI agents.
 
@@ -151,27 +155,24 @@ def fuse(
     # ------------------------------------------------------------------
     # Weighted score
     # ------------------------------------------------------------------
-    default_weights = {
-        "drosophila": settings.weight_drosophila,
-        "gemini": settings.weight_gemini,
-        "local": settings.weight_local,
-        "github": settings.weight_github,
-    }
+    # Round AA - ONE lock-weight table (backend/core/lock_weights.py): base
+    # prior x ledger reliability x availability for every voter.
+    table = lock_weights.build(settings, ledger_sources)
 
     contributions: dict[str, dict] = {}
     active: dict[str, float] = {}
 
     # The Drosophila brain is always available: it is computed synchronously.
-    active["drosophila"] = default_weights["drosophila"]
+    active["drosophila"] = table.mark("drosophila")
     contributions["drosophila"] = {
         "decision": BUY if ccs_value >= 0 else SELL,
         "confidence": round(ccs_confidence, 4),
         "value": round(ccs_value, 4),
-        "weight": default_weights["drosophila"],
+        "weight": round(active["drosophila"], 4),
         "status": "LIVE",
         # Where the brain's vote lands in the final number - the UI shows this
         # so "the fly is 40 % of the decision" is verifiable, not a claim.
-        "weighted_value": round(default_weights["drosophila"] * max(-1.0, min(1.0, ccs_value)), 4),
+        "weighted_value": round(active["drosophila"] * max(-1.0, min(1.0, ccs_value)), 4),
         "source": "80-node mushroom body, 3-layer graph convolution",
     }
 
@@ -183,6 +184,7 @@ def fuse(
     formulas_weight = float(getattr(settings, "weight_formulas", 0.0) or 0.0)
     if formula_consensus is not None and consensus_voters >= 3 and formulas_weight > 0:
         f_value = max(-1.0, min(1.0, float(formula_consensus)))
+        formulas_weight = table.mark("formulas")
         active["formulas"] = formulas_weight
         contributions["formulas"] = {
             "decision": BUY if f_value >= 0 else SELL,
@@ -197,12 +199,12 @@ def fuse(
     for name in ("gemini", "local", "github"):
         result = agents.get(name)
         if result is not None and result.available:
-            active[name] = default_weights[name]
+            active[name] = table.mark(name)
             contributions[name] = {
                 "decision": result.decision,
                 "confidence": round(result.confidence or 0.0, 4),
                 "value": round(_direction_value(result.decision) * (result.confidence or 0.0), 4),
-                "weight": default_weights[name],
+                "weight": round(active[name], 4),
                 "status": result.status.value,
                 "latency_ms": round(result.latency_ms, 1),
                 "model": result.model,
@@ -217,7 +219,7 @@ def fuse(
         # A layer running on modelled telemetry alone counts half; every live
         # source (hashrate, gold spot, pools, venues) earns part of the rest.
         liveness = min(1.0, int(physics.get("live_inputs") or 0) / 3.0)
-        physics_weight = physics_weight * (0.5 + 0.5 * liveness)
+        physics_weight = table.mark("physics", 0.5 + 0.5 * liveness)
         active["physics"] = physics_weight
         contributions["physics"] = {
             "decision": BUY if p_value >= 0 else SELL,
@@ -238,7 +240,7 @@ def fuse(
     n_value = float(news_impact.get(asset.upper()) or 0.0)
     n_mass = float(news_impact.get("weight") or 0.0)
     if news_weight > 0 and n_mass > 0 and abs(n_value) > 1e-6:
-        news_weight = news_weight * min(1.0, n_mass / 1.5)
+        news_weight = table.mark("news", min(1.0, n_mass / 1.5))
         active["news"] = news_weight
         top = (news_impact.get("drivers") or {}).get(asset.upper()) or []
         contributions["news"] = {
@@ -465,6 +467,7 @@ def fuse(
                                                        "min_samples": learned.get("min_samples")},
         spec_score=spec_score,
         physics=physics,
+        lock_weights=table.as_dict(),
     )
 
 

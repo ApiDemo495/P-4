@@ -105,10 +105,11 @@ COINGECKO_IDS: dict[str, str] = {"BTC": "bitcoin", "PAXG": "pax-gold"}
 #: multiples of the realised 1-minute volatility, so the levels breathe with
 #: the market instead of being fixed pip targets.
 RISK_PARAMS: dict[str, dict[str, float]] = {
-    # The stop is sigma_mult x the realised volatility (`volatility_bps`);
-    # the target is rr_target x the stop (Round Y, 1.5:1).
-    "BTC": {"sigma_mult": 1.5},
-    "PAXG": {"sigma_mult": 1.4},
+    # Round AA: the stop is the `mae_quantile` of the window's maximum adverse
+    # excursion (backend/core/risk_engine.py); the target is rr x the stop
+    # where rr grows with the edge of the call from rr_target (1.5:1).
+    "BTC": {"mae_quantile": 0.80},
+    "PAXG": {"mae_quantile": 0.78},
 }
 
 

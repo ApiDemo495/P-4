@@ -59,7 +59,6 @@ def _norm_ppf(p: float) -> float:
            (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1)
 
 
-MAE_Z = _norm_ppf(1.0 - (1.0 - MAE_QUANTILE) / 2.0)   # 1.2816 for q = 0.80
 
 
 @dataclass(frozen=True)
@@ -100,6 +99,8 @@ def size_levels(
     matters when the caller sizes for a different window than it measured.
     """
     settings = settings or cfg.SETTINGS
+    quantile = float(cfg.risk_params(asset).get("mae_quantile", MAE_QUANTILE))
+    mae_z = _norm_ppf(1.0 - (1.0 - quantile) / 2.0)
     sigma = float(volatility_bps)
     if not math.isfinite(sigma) or sigma <= 0:
         sigma = float(settings.default_volatility_bps)
@@ -108,16 +109,16 @@ def size_levels(
     sigma_t = sigma * math.sqrt(horizon / base_horizon)
 
     spread_floor = SPREAD_MULT * max(float(spread_bps or 0.0), 0.0)
-    raw_stop = max(MAE_Z * sigma_t, spread_floor)
+    raw_stop = max(mae_z * sigma_t, spread_floor)
     sl = min(max(raw_stop, float(settings.min_sl_bps)), float(settings.max_sl_bps))
 
     rr_target = float(getattr(settings, "rr_target", 1.5) or 1.5)
     rr = min(max(rr_target + RR_EDGE_GAIN * abs(float(edge or 0.0)), RR_FLOOR), RR_CEIL)
     tp = min(max(sl * rr, float(settings.min_tp_bps)), float(settings.max_tp_bps))
     method = (
-        f"stop = {MAE_QUANTILE:.0%} quantile of max adverse excursion "
-        f"({MAE_Z:.2f} x {sigma_t:.0f} bps window sigma"
+        f"stop = {quantile:.0%} quantile of max adverse excursion "
+        f"({mae_z:.2f} x {sigma_t:.0f} bps window sigma"
         + (f", spread floor {spread_floor:.0f} bps" if spread_floor > 0 else "")
         + f"); target = {rr:.2f} x stop (edge {abs(float(edge or 0.0)):.2f})"
     )
-    return RiskLevels(sl, tp, tp / sl if sl > 0 else 0.0, sigma_t, MAE_Z, spread_floor, method)
+    return RiskLevels(sl, tp, tp / sl if sl > 0 else 0.0, sigma_t, mae_z, spread_floor, method)

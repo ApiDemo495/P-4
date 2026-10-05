@@ -1632,6 +1632,7 @@ class CycleManager:
             physics=physics_report,
             news_impact=self._news_impact_safe(),
             asset=self.asset,
+            ledger_sources=self._ledger_sources_safe(),
         )
         crowd = common["crowd"]
         spec = fusion_module.fuse(**common)
@@ -1666,6 +1667,13 @@ class CycleManager:
                             "voters": learned.get("voters", 0), "watching": len(votes)}
             return spec
         return fusion_module.fuse(**common, learned=learned)
+
+    def _ledger_sources_safe(self) -> list:
+        """Ledger source rows for the lock-weight table (never raises)."""
+        try:
+            return list((self.ledger.report(self.asset).get("assets") or {}).get(self.asset, {}).get("sources") or [])
+        except Exception:  # noqa: BLE001
+            return []
 
     @staticmethod
     def _directional_map() -> dict[str, str]:

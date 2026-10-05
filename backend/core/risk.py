@@ -5,7 +5,7 @@ directional signal carries a take-profit and a stop-loss **derived from the
 market's own volatility** rather than from fixed pip targets:
 
     sigma    = realised volatility of the window, in basis points
-    sl_bps   = clip(sigma_mult * sigma, min_sl_bps, max_sl_bps)   # the bounded loss
+    sl_bps   = clip(mae_z(q) * sigma, spread floor, min_sl_bps, max_sl_bps)   # the bounded loss (Round AA)
     tp_bps   = clip(sl_bps * rr_target, min_tp_bps, max_tp_bps)   # rr_target = 1.5
 
     BUY :  tp = entry * (1 + tp_bps/1e4)    sl = entry * (1 - sl_bps/1e4)
