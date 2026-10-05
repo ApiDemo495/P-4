@@ -192,7 +192,20 @@ curl -s -X POST localhost:8000/api/update/apply
 bash tools/codespace_autostart.sh --update
 ```
 
-### The Flutter client builds itself — watch it, or restart it, in the browser
+### The Flutter client is pre-built on GitHub — `/flutter` works the moment the engine is up
+
+Every push to this branch that touches `frontend/` runs the **flutter-web**
+GitHub Action (`.github/workflows/flutter-web.yml`): it builds the web client on
+GitHub's runners and commits the result to **`frontend/build/web` on this same
+branch** (commit message `Flutter web bundle (built by GitHub Actions) [skip ci]`).
+A new Codespace therefore already contains the bundle, the engine serves it at
+`/flutter` with **no SDK download at all**, and the self-updater brings every
+newer bundle in. The bundle has no server address baked in (the client uses
+the page's own origin), so it works on any Codespace URL or on localhost. The
+in-Codespace download below is now only the fallback for a checkout without a
+bundle.
+
+### Fallback — the Flutter client builds itself, watch it or restart it in the browser
 
 In a Codespace the engine starts the SDK download and the web build on its
 own. Open `/flutter` on the same port: until the build lands it is a status

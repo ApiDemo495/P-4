@@ -1475,3 +1475,28 @@ loop, so every panel visibly moves together. Panel internals were restyled
 wiring, explorer rows, locked-signal reasoning block). Assets `v=2.20.0`.
 
 **Checks.** 281 tests, dead code 0, payload check 69/69.
+
+## AC — auto-start survives hook teardown; Flutter is pre-built on GitHub
+
+**Auto-start.** The engine supervisor started by `run.sh --bg` is now launched
+with `setsid nohup … 9>&-` (own session, lock fd closed), so it survives the
+devcontainer lifecycle hook ending; a `.vscode/tasks.json` `folderOpen` task
+re-runs `tools/codespace_autostart.sh --attach` whenever the folder opens.
+
+**Flutter root cause.** `frontend/web/` (Flutter's web scaffold: `index.html`,
+`manifest.json`, icons) had never been committed, so `flutter build web`
+refused on every machine with *"This project is not configured for the web"*
+— the SDK download was never the real blocker. The scaffold is now tracked and
+both build routes regenerate it (`flutter create . --platforms web`) if lost.
+
+**Pre-built bundle.** `.github/workflows/flutter-web.yml` builds the web client
+on GitHub (stable channel) on every push to `arena/**` touching `frontend/**`
+and commits `frontend/build/web` back to the same branch (`[skip ci]`, rebase
+onto the moved branch, never main; failures are posted as a comment on the
+branch's PR because the Actions log is unreadable from the sandbox). `.gitignore`
+now ignores `frontend/build/*` except `web/`. `tools/self_update.sh` replaces a
+locally built, untracked bundle with the incoming tracked one before the
+fast-forward. The engine's `/flutter` route already checks `built()` per
+request, so the bundle is served the instant it is on disk.
+
+**Checks.** 281 tests; first GitHub build `586bbee` (42 MB, Flutter 3.47.6).

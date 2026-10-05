@@ -110,6 +110,14 @@ while IFS= read -r path; do
     git restore --worktree --source=HEAD -- "$path" 2>/dev/null || true
   fi
 done < <(git diff --name-only)
+# A bundle built locally by an older checkout (frontend/build/web used to be
+# ignored) would block the incoming, GitHub-built bundle.  It is a generated
+# artefact, so the incoming copy simply replaces it.
+if [ -d frontend/build/web ] && ! git ls-files --error-unmatch frontend/build/web >/dev/null 2>&1 \
+   && git cat-file -e "origin/${BRANCH}:frontend/build/web/index.html" 2>/dev/null; then
+  echo "    replacing the locally built Flutter bundle with the one built on GitHub"
+  rm -rf frontend/build/web
+fi
 if ! git merge --ff-only -q "origin/${BRANCH}"; then
   echo "    fast-forward refused (a local edit overlaps an incoming change) - nothing changed"
   git status --porcelain --untracked-files=no | head -20
