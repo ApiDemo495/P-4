@@ -56,6 +56,7 @@
       ],
       "settings": {
         "python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python",
+        "task.allowAutomaticTasks": "on",
         "python.testing.pytestEnabled": true,
         "python.testing.pytestArgs": ["backend/tests"],
         "files.exclude": { "**/__pycache__": true }

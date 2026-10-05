@@ -676,7 +676,16 @@ if [ "$BG" = 1 ]; then
     pkill -f "[b]ackend.api.main" 2>/dev/null || true
     sleep 1
   fi
-  nohup bash "$SUPERVISOR" --supervise >>"$LOG" 2>&1 &
+  # A new *session* (setsid) and no inherited stdin: when a Codespace
+  # lifecycle hook (postCreate / postStart / postAttach) finishes, its process
+  # group can be torn down - a plain nohup'd supervisor died with it and the
+  # app read as "not auto starting".  9>&- drops the autostart lock fd too.
+  if command -v setsid >/dev/null 2>&1; then
+    setsid nohup bash "$SUPERVISOR" --supervise </dev/null >>"$LOG" 2>&1 9>&- &
+  else
+    nohup bash "$SUPERVISOR" --supervise </dev/null >>"$LOG" 2>&1 9>&- &
+  fi
+  disown 2>/dev/null || true
   printf '   starting'
   READY=0
   for _ in $(seq 1 60); do
