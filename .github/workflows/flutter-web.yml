@@ -1,0 +1,70 @@
+# =============================================================================
+# Build the Flutter web client on GitHub's runners and commit the bundle to
+# THIS branch (frontend/build/web).  A Codespace then never has to download
+# the 700 MB SDK: the engine serves the committed bundle at /flutter the
+# moment the branch is checked out, and the in-Codespace download becomes a
+# fallback instead of the only route.
+#
+# The bundle has no API_BASE baked in: on the web the Dart client uses
+# Uri.base.origin, so the same build works on any Codespace URL / localhost.
+# =============================================================================
+name: flutter-web
+
+on:
+  push:
+    branches: ["arena/**"]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/flutter-web.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: flutter-web-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # the commit this workflow makes carries [skip ci]; this guard is the belt
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build the web bundle (served by the engine at /flutter)
+        working-directory: frontend
+        env:
+          FLUTTER_SUPPRESS_ANALYTICS: "true"
+          CI: "true"
+        run: |
+          flutter --version
+          flutter config --enable-web
+          flutter pub get
+          flutter build web --release --base-href /flutter/
+          test -f build/web/index.html
+
+      - name: Commit the bundle to this branch (fast-forward only, never main)
+        run: |
+          git config user.name "flutter-web bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -f frontend/build/web
+          if git diff --cached --quiet; then
+            echo "bundle unchanged - nothing to commit"
+            exit 0
+          fi
+          git commit -m "Flutter web bundle (built by GitHub Actions) [skip ci]"
+          # the branch may have moved while we built: rebase our one commit on it
+          git fetch origin "${GITHUB_REF_NAME}"
+          git rebase "origin/${GITHUB_REF_NAME}" || { git rebase --abort; exit 1; }
+          git push origin "HEAD:${GITHUB_REF_NAME}"
