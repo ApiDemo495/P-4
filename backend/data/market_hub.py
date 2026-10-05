@@ -486,6 +486,8 @@ class MarketDataHub:
                 "polls": int(self.kraken_rest.polls),
                 "last_error": str(self.kraken_rest.last_error or ""),
             }
+        else:
+            out["feeds"]["krakenrest"] = {"enabled": False}
         if self.coingecko is not None:
             out["feeds"]["coingecko"] = {
                 "enabled": True,
