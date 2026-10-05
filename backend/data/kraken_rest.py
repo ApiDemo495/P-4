@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 
 import httpx
 import numpy as np

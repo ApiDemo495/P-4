@@ -233,3 +233,15 @@ def test_geometry_is_part_of_the_deep_emotion_evidence():
     for name in ("tearing", "chaotic", "csd", "cooling", "heating", "polarised"):
         assert name in deep_micro.EVIDENCE_LABEL
         assert any(name in table for table in deep_micro.LIKELIHOOD.values())
+
+
+def test_kraken_rest_is_a_real_source_with_a_book(monkeypatch):
+    monkeypatch.setenv("MARKET_DATA_MODE", "auto")
+    from backend.formulas.engine import REAL_SOURCES
+    assert "krakenrest" in REAL_SOURCES
+    hub = MarketDataHub(cfg.Settings())
+    hub.active_source = "krakenrest"
+    assert not hub.tape_is_simulated and "HTTPS" in hub.status().detail
+    report = hub.feeds_report()
+    assert set(report["feeds"]) >= {"binance", "kraken", "krakenrest", "coingecko", "simulator"}
+    assert "last_error" in report["feeds"]["binance"]
