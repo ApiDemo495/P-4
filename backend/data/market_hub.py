@@ -272,7 +272,9 @@ class MarketDataHub:
 
         # 2) Binance unhealthy -> CoinGecko?
         if mode in ("auto", "coingecko") and self.coingecko is not None:
-            if mode == "coingecko" or self.binance is None or self.binance.status.consecutive_failures >= 10:
+            real_down = (self.binance is None or self.binance.status.consecutive_failures >= 3) and (
+                self.kraken is None or self.kraken.status.consecutive_failures >= 3)
+            if mode == "coingecko" or real_down:
                 if self.coingecko.connected:
                     self._stop_simulator_task()
                     self._set_source("coingecko")
@@ -280,9 +282,14 @@ class MarketDataHub:
                 if mode == "coingecko":
                     self._set_source("coingecko")
                     return
-                if self.binance.status.consecutive_failures >= 10:
+                if real_down:
                     self._ensure_coingecko_task()
-                    return
+                    if time.time() - self._started_at < float(
+                            getattr(self.settings, "real_feed_grace_seconds", 45.0)) + 30.0:
+                        # CoinGecko is polling but has no price yet: stay
+                        # honest (none) a little longer rather than simulate.
+                        self._set_source("none")
+                        return
 
         # 3) Simulator fallback
         if self.settings.market_allow_simulator:
@@ -392,8 +399,10 @@ class MarketDataHub:
             warnings.append("Insufficient PAXG data for reliable signal.")
         elif paxg_ticks < 30:
             warnings.append("PAXG tick count low: interpolating for VSD/VSS.")
-        if self.active_source not in ("binance", "coingecko"):
+        if self.active_source == "simulator":
             warnings.append("Live exchange feed unavailable - simulated tape in use.")
+        elif self.active_source == "none":
+            warnings.append("No market feed connected yet - waiting for Binance / Kraken / CoinGecko.")
         if payload["btc_tick_count"] < 15:
             warnings.append("Insufficient BTC data for reliable signal.")
 
@@ -422,6 +431,45 @@ class MarketDataHub:
         if self.active_source == "none":
             return DegradationLevel.MINIMAL
         return DegradationLevel.FULL
+
+    def feeds_report(self) -> dict:
+        """Round AA: every feed's own story - connected, failures, last error.
+        This is what the header chip and /api/health show so an 'offline' tape
+        comes with the reason (451, DNS, timeout, refused…)."""
+        out: dict = {"active": self.active_source, "simulated": self.tape_is_simulated,
+                     "grace_seconds": float(getattr(self.settings, "real_feed_grace_seconds", 45.0)),
+                     "uptime_seconds": round(time.time() - self._started_at, 1), "feeds": {}}
+        for name, client in (("binance", self.binance), ("kraken", self.kraken)):
+            if client is None:
+                out["feeds"][name] = {"enabled": False}
+                continue
+            st = client.status
+            out["feeds"][name] = {
+                "enabled": True,
+                "connected": bool(st.connected),
+                "stale": bool(st.stale()),
+                "failures": int(st.consecutive_failures),
+                "messages": int(getattr(st, "messages", 0)),
+                "server": str(getattr(st, "server", "")),
+                "last_error": str(getattr(st, "last_error", "") or ""),
+                "last_error_age_s": (round(time.time() - st.last_error_at, 1)
+                                     if getattr(st, "last_error_at", 0.0) else None),
+            }
+        if self.coingecko is not None:
+            out["feeds"]["coingecko"] = {
+                "enabled": True,
+                "polling": any(t.get_name() == "coingecko" for t in self._tasks),
+                "connected": bool(self.coingecko.connected),
+                "last_error": str(getattr(self.coingecko, "last_error", "") or ""),
+            }
+        else:
+            out["feeds"]["coingecko"] = {"enabled": False}
+        out["feeds"]["simulator"] = {
+            "enabled": self.simulator is not None,
+            "running": any(t.get_name() == "simulator" for t in self._tasks),
+        }
+        out["rejected_writes"] = dict(self.rejected)
+        return out
 
     def status(self) -> ComponentStatus:
         src = self.active_source

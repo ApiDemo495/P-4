@@ -1570,6 +1570,7 @@ class CycleManager:
                 "btc_ticks": self.market.tick_count("BTC"),
                 "rejected_writes": dict(self.market.rejected),
                 "source_age_seconds": round(time.time() - self.market.source_changed_at, 1),
+                "feeds": self.market.feeds_report().get("feeds", {}),
             },
             "infrastructure": {
                 "redis": self.store.backend,
@@ -2272,6 +2273,7 @@ class CycleManager:
             "start_error": self.start_error,
             "cycle_manager": "STALLED" if stalled else ("RUNNING" if self._running else ("WARMING_UP" if self.warming else "IDLE")),
             "stalled": stalled,
+            "feeds": self.market.feeds_report(),
             "seconds_since_window": round(since_window, 1),
             "last_error": self.last_error,
             "healthy": overall,

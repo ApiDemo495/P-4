@@ -48,6 +48,7 @@ class KrakenStatus:
     messages: int = 0
     server: str = WS_URL
     last_error: str = ""
+    last_error_at: float = 0.0
 
     def stale(self) -> bool:
         if not self.connected:
@@ -125,7 +126,8 @@ class KrakenWebSocket:
             except Exception as exc:  # noqa: BLE001
                 self.status.connected = False
                 self.status.consecutive_failures += 1
-                self.status.last_error = str(exc)[:160]
+                self.status.last_error = f"{type(exc).__name__}: {str(exc)[:140]}".strip(": ")
+                self.status.last_error_at = time.time()
                 log.warning("Kraken WS error (%s). Failure %d, retry in %.0fs",
                             exc, self.status.consecutive_failures, backoff)
                 await asyncio.sleep(backoff + random.uniform(0, 0.4))

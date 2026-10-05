@@ -42,6 +42,8 @@ class BinanceStatus:
     last_message_ts: float = 0.0
     messages: int = 0
     server: str = ""
+    last_error: str = ""
+    last_error_at: float = 0.0
 
     def stale(self) -> bool:
         if not self.connected:
@@ -103,6 +105,8 @@ class BinanceWebSocket:
             except Exception as exc:  # noqa: BLE001
                 self.status.connected = False
                 self.status.consecutive_failures += 1
+                self.status.last_error = f"{type(exc).__name__}: {str(exc)[:140]}".strip(": ")
+                self.status.last_error_at = time.time()
                 log.warning(
                     "Binance WS error (%s). Failure %d, retry in %.0fs",
                     exc,
@@ -123,8 +127,10 @@ class BinanceWebSocket:
             close_timeout=5,
             max_queue=512,
         ) as ws:
+            previous_error = self.status.last_error
             self.status = BinanceStatus(
-                connected=True, consecutive_failures=0, last_message_ts=time.time(), server=self.url
+                connected=True, consecutive_failures=0, last_message_ts=time.time(), server=self.url,
+                last_error=previous_error,
             )
             log.info("Binance WS connected (aggTrade + kline_1m + depth20@100ms)")
             watchdog = asyncio.create_task(self._watchdog(ws))
