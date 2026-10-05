@@ -96,20 +96,43 @@ def loss_aversion(rets: np.ndarray, flow: np.ndarray) -> dict:
     X = np.column_stack([neg, pos])
     beta, *_ = np.linalg.lstsq(X, f_now, rcond=None)
     b_neg, b_pos = float(beta[0]), float(beta[1])
-    # the response to a loss is selling after a down move: b_neg > 0 means
-    # flow goes negative when r is negative (flow = b_neg * r, r < 0)
-    resp_loss = max(b_neg, 0.0)
-    resp_gain = max(b_pos, 0.0)
-    if resp_gain < 1e-9 and resp_loss < 1e-9:
+    # standard errors: a response that is not at least 1.5 standard errors
+    # from zero is noise, and noise must not become a 6x loss aversion
+    resid = f_now - X @ beta
+    dof = max(1, f_now.size - 2)
+    s2 = float(resid @ resid) / dof
+    try:
+        cov = s2 * np.linalg.inv(X.T @ X)
+        se_neg, se_pos = math.sqrt(max(cov[0, 0], 1e-18)), math.sqrt(max(cov[1, 1], 1e-18))
+    except np.linalg.LinAlgError:
+        se_neg = se_pos = float("inf")
+    t_neg = b_neg / se_neg if se_neg > 0 else 0.0
+    t_pos = b_pos / se_pos if se_pos > 0 else 0.0
+    # the response to a loss is selling after a down move (flow = b_neg * r,
+    # r < 0 -> b_neg > 0); the response to a gain is buying after an up move
+    resp_loss = b_neg if t_neg > 1.5 else 0.0
+    resp_gain = b_pos if t_pos > 1.5 else 0.0
+    if resp_loss <= 0 and resp_gain <= 0:
         lam = 1.0
+        note = "no measurable asymmetry"
+    elif resp_gain <= 0:
+        lam = 1.0 + 3.0 * min(1.0, (t_neg - 1.5) / 3.0)     # only losses move the crowd
+        note = "losses move the crowd, gains do not"
+    elif resp_loss <= 0:
+        lam = 1.0 / (1.0 + 3.0 * min(1.0, (t_pos - 1.5) / 3.0))
+        note = "gains move the crowd, losses do not"
     else:
-        lam = (resp_loss + 1e-3) / (resp_gain + 1e-3)
+        lam = resp_loss / resp_gain
+        note = "both responses significant"
     lam = float(min(6.0, max(0.15, lam)))
     return {
         "available": True,
         "lambda": round(lam, 3),
         "beta_loss": round(b_neg, 4),
         "beta_gain": round(b_pos, 4),
+        "t_loss": round(t_neg, 2),
+        "t_gain": round(t_pos, 2),
+        "significance": note,
         "buckets": int(rets.size),
         "loss_averse": round(_ramp(lam, 1.5, 3.5), 4),
         "gain_chasing": round(_ramp(1.0 / lam, 1.5, 3.5), 4),

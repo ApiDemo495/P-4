@@ -997,7 +997,7 @@ function renderUtility(util) {
     `<div class="geo-head">WHAT THE CROWD IS MAXIMISING <span class="muted">inverse RL · ${util.live_measurements}/3 live</span></div>` +
     `<div class="util-grid">` +
     (lam.available ? tile("loss aversion λ", g(lam.lambda), lam.lambda > 2.5 ? "sells losses far harder than it buys gains" : lam.lambda < 0.5 ? "chases gains, ignores losses" : "symmetric (KT population ≈ 2.25)", pos(Math.log(lam.lambda || 1), -1.5, 1.5),
-      `flow_t = β⁻·min(r,0) + β⁺·max(r,0) over ${lam.buckets} one-second buckets; λ = β⁻/β⁺ = ${g(lam.beta_loss, 3)} / ${g(lam.beta_gain, 3)}`) : `<div><span>loss aversion λ</span><b>—</b><i>needs 24 s of tape</i></div>`) +
+      `flow_t = β⁻·min(r,0) + β⁺·max(r,0) over ${lam.buckets} one-second buckets; β⁻ ${g(lam.beta_loss, 3)} (t ${g(lam.t_loss, 1)}), β⁺ ${g(lam.beta_gain, 3)} (t ${g(lam.t_gain, 1)}) — ${lam.significance || ""}`) : `<div><span>loss aversion λ</span><b>—</b><i>needs 24 s of tape</i></div>`) +
     (gam.available ? tile("risk aversion γ", g(gam.gamma), gam.gamma > 0.3 ? "steps back when the tape gets wild" : gam.gamma < -0.3 ? "chases volatility" : "indifferent to volatility", pos(gam.gamma, -2, 2),
       `γ = ln(participation in calm seconds / participation in volatile seconds) = ln(${g(gam.participation_calm, 0)} / ${g(gam.participation_volatile, 0)})`) : `<div><span>risk aversion γ</span><b>—</b><i>needs 24 s of tape</i></div>`) +
     (alp.available ? tile("probability weighting α", g(alp.alpha), alp.alpha < 0.85 ? "book braced for a jump (tails overweighted)" : alp.alpha > 1.25 ? "book complacent (tails neglected)" : "tails priced about right", pos(alp.alpha, 0.2, 2.0),
