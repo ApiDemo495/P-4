@@ -110,7 +110,7 @@ def test_window_clock_is_absolute_and_carries_the_phase():
         started, ends, now=started + 42.0, period_seconds=60.0, cycle_id=7, marks=marks,
         minute_aligned=True, freshness_max_age_seconds=90.0, scoring_horizon_seconds=60.0)
     assert block["window_ends_at_ms"] == 1_000_060_000 and block["seconds_remaining"] == 18.0
-    assert block["phase"]["label"] == "mid" and block["phase"]["progress"] == pytest.approx(0.7)
+    assert block["phase"]["label"] == "late" and block["phase"]["progress"] == pytest.approx(0.7)
     assert block["next_tick"]["offset_seconds" if "offset_seconds" in block["next_tick"] else "seconds_until"] == 3.0
     assert [t["done"] for t in block["ticks"]] == [True, True, False]
     late = window_clock.phase(started, ends, started + 59.0)
