@@ -6,7 +6,7 @@
 <title>Drosophila Trader v2.0</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" />
-<link rel="stylesheet" href="/static/styles.css?v=2.19.0" />
+<link rel="stylesheet" href="/static/styles.css?v=2.20.0" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪰</text></svg>" />
 </head>
 <body>
@@ -112,7 +112,7 @@
   <!-- ============ WIDGET PANEL (fixed layout, rows 1 and 2) ============ -->
   <!-- Row 1: prediction | countdown 1-60 | signal + conviction box       -->
   <!-- Row 2: take profit / stop loss | prediction accuracy                  -->
-  <section class="card widget-panel">
+  <section class="card widget-panel" data-panel="window">
     <div class="widget-row row-top">
 
       <div class="widget-cell cell-prediction">
@@ -235,7 +235,7 @@
   </section>
 
   <!-- ===================== SIGNAL DETAIL (locked) ===================== -->
-  <section class="card signal-card">
+  <section class="card signal-card" data-panel="signal">
     <div class="card-head">
       <h2>🔒 Locked signal detail</h2>
       <span class="muted" id="signal-frozen">—</span>
@@ -269,7 +269,7 @@
        manipulated the minute looks, and what the crowd was feeling when the
        locked signal was computed.  Streamed twice a second (EMOTION message),
        on the backend's schedule - the client has no timer of its own. -->
-  <section class="card emotion-card" id="emotion-card">
+  <section class="card emotion-card" id="emotion-card" data-panel="emotions">
     <div class="card-head">
       <h2>🎭 Crowd Emotion <span class="muted">live · µs → minutes · a confidence modifier, never a vote</span></h2>
       <span class="muted" id="emotion-meta">waiting for the first sample…</span>
@@ -327,7 +327,7 @@
   </section>
 
   <!-- ============================ NEWS ============================ -->
-  <section class="card news-card">
+  <section class="card news-card" data-panel="news">
     <div class="card-head">
       <h2>📰 Latest News Sentiment</h2>
       <span class="muted" id="news-age">—</span>
@@ -346,11 +346,11 @@
 
   <!-- ======================= AGENTS + HEDGE ======================= -->
   <section class="grid-2">
-    <div class="card">
+    <div class="card" data-panel="agents">
       <div class="card-head"><h2>Agent Dashboard</h2><span class="muted">fusion weights</span></div>
       <ul class="agent-list" id="agent-list"></ul>
       <div class="divider"></div>
-      <div class="card-head"><h2>📊 Hedge Status</h2><span class="muted" id="hedge-stress">—</span></div>
+      <div class="card-head" data-panel="hedge"><h2>📊 Hedge Status</h2><span class="muted" id="hedge-stress">—</span></div>
       <div class="hedge-grid">
         <div class="hedge-item"><span>HSI</span><b id="h-hsi">—</b><div class="bar tiny"><div class="bar-fill" id="h-hsi-bar"></div></div></div>
         <div class="hedge-item"><span>HRDD</span><b id="h-hrdd">—</b><div class="bar tiny"><div class="bar-fill" id="h-hrdd-bar"></div></div></div>
@@ -367,7 +367,7 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" data-panel="history">
       <div class="card-head"><h2>Signal History</h2><span class="muted">most recent first</span></div>
       <ul class="history" id="history"></ul>
       <div class="card-head" style="margin-top:14px"><h2>Recent Outcomes</h2><span class="muted">for the DRG learner</span></div>
@@ -376,7 +376,7 @@
   </section>
 
   <!-- ============== WHERE THE FLY BRAIN IS USED (item 6) ============== -->
-  <section class="card brain-card">
+  <section class="card brain-card" data-panel="brain">
     <div class="card-head">
       <h2>🪰 Where the fly brain is used</h2>
       <span class="muted">80-neuron mushroom body · 40% of the fusion</span>
@@ -404,7 +404,7 @@
   </section>
 
   <!-- ======================= THERMODYNAMIC LAYER ======================= -->
-  <section class="card physics-card" id="physics-card">
+  <section class="card physics-card" id="physics-card" data-panel="physics">
     <div class="card-head">
       <h2>⚛ Thermodynamic capital layer <span class="muted">BTC = consumed work · PAXG = inert rest mass</span></h2>
       <span class="muted" id="ph-head">—</span>
@@ -436,7 +436,7 @@
   </section>
 
   <!-- ======================= FORMULA EXPLORER ======================= -->
-  <section class="card">
+  <section class="card" data-panel="formulas">
     <div class="card-head">
       <h2>▼ Formula Explorer <span class="muted">(22 formulas + DRG)</span></h2>
       <div class="explorer-tools">
@@ -529,6 +529,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=2.19.0"></script>
+<script src="/static/app.js?v=2.20.0"></script>
 </body>
 </html>

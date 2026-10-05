@@ -1053,3 +1053,78 @@ body.pulse .widget-panel, body.pulse .card { animation: pulse-breath .6s var(--e
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001s !important; transition-duration: .001s !important; }
 }
+
+/* ==========================================================================
+   ROUND AB - EVERY PANEL
+   The same two factors on every card head (&b feed, ¶gn phase, repaint age)
+   and a premium pass over each panel's own rows: hedge tiles, agent rows,
+   news cards, history rows, brain status, physics table, explorer rows.
+   ========================================================================== */
+.card-head { align-items: center; }
+.panel-rail { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; font-family: var(--mono); font-size: 10px; letter-spacing: .03em; }
+.panel-rail > span { padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,.1); color: var(--muted); background: rgba(255,255,255,.03); white-space: nowrap; }
+.panel-rail .rail-feed.live { color: var(--green); border-color: rgba(52,211,153,.45); box-shadow: 0 0 10px -4px var(--green); }
+.panel-rail .rail-feed.simulated { color: var(--red); border-color: rgba(251,113,133,.6); }
+.panel-rail .rail-feed.offline { color: var(--amber); border-color: rgba(251,191,36,.5); }
+.panel-rail .rail-phase { color: #c4b5fd; border-color: rgba(167,139,250,.4); }
+.panel-rail .rail-age.old { color: var(--red); }
+@media (max-width: 700px) { .panel-rail { width: 100%; margin-left: 0; flex-wrap: wrap; } }
+
+/* asset strip: the price is the hero number of the page */
+.asset-card { padding: 12px 18px; }
+.asset-meta { gap: 16px; }
+#price { font-size: 22px; font-weight: 700; letter-spacing: -.02em; background: linear-gradient(90deg, #fff, #c7d2fe); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.badge#degradation { font-weight: 600; }
+
+/* hedge: four tiles */
+.hedge-grid { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.hedge-item { padding: 10px 10px 8px; border-radius: 12px; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.07); transition: border-color .3s var(--ease), transform .3s var(--ease); }
+.hedge-item:hover { border-color: rgba(167,139,250,.4); transform: translateY(-1px); }
+.hedge-item span { font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; margin-bottom: 4px; }
+.hedge-item b { font-size: 17px; font-weight: 700; letter-spacing: -.02em; }
+.hedge-item .bar.tiny { margin-top: 8px; }
+@media (max-width: 760px) { .hedge-grid { grid-template-columns: 1fr 1fr; } }
+.brain-status { padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,.025); border: 1px solid rgba(255,255,255,.05); margin-top: 8px; }
+
+/* agents */
+.agent-list li { padding: 9px 10px; margin-bottom: 6px; border: 1px solid rgba(255,255,255,.06); border-radius: 10px; background: rgba(255,255,255,.025); border-bottom: 1px solid rgba(255,255,255,.06); transition: border-color .3s var(--ease); }
+.agent-list li:hover { border-color: rgba(125,211,252,.35); }
+.agent-list li:last-child { border-bottom: 1px solid rgba(255,255,255,.06); }
+.agent-name { font-weight: 500; }
+.agent-state { padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; opacity: .9; }
+
+/* news */
+.news-headline { font-size: 17px; font-weight: 600; letter-spacing: -.01em; line-height: 1.35; }
+.news-item { padding: 8px 10px; border: 1px solid rgba(255,255,255,.06); border-top: 1px solid rgba(255,255,255,.06); border-radius: 10px; background: rgba(255,255,255,.02); align-items: baseline; transition: border-color .3s var(--ease), background .3s var(--ease); }
+.news-item:hover { border-color: rgba(167,139,250,.35); background: rgba(255,255,255,.035); }
+.news-item .tier { color: #c4b5fd; }
+.news-impact { padding: 8px 10px; border-radius: 10px; background: rgba(125,211,252,.05); border: 1px solid rgba(125,211,252,.18); }
+
+/* history + outcomes */
+.history li { padding: 6px 8px; border-radius: 8px; border-bottom: 0; margin-bottom: 3px; background: rgba(255,255,255,.02); border: 1px solid rgba(255,255,255,.04); }
+.history li:hover { background: rgba(255,255,255,.045); }
+.history .sig-BUY, .history .sig-SELL { font-weight: 700; padding: 0 7px; border-radius: 999px; border: 1px solid currentColor; }
+
+/* widget cells: label rails */
+.cell-label { padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,.05); }
+.kv-item { padding: 6px 8px; border-radius: 10px; background: rgba(255,255,255,.02); border: 1px solid rgba(255,255,255,.04); }
+.kv-item b { font-size: 16px; }
+
+/* locked signal detail */
+.signal-meta .badge { font-weight: 600; }
+.reasoning { font-size: 13.5px; line-height: 1.55; color: #cbd5f5; padding: 10px 12px; border-left: 2px solid var(--violet); background: rgba(167,139,250,.05); border-radius: 0 10px 10px 0; }
+.weights { padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,.025); border: 1px solid rgba(255,255,255,.05); line-height: 1.6; }
+
+/* physics */
+.physics-table th { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.physics-table tr:hover td { background: rgba(255,255,255,.03); }
+.physics-bar-track { height: 12px; border-radius: 8px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
+
+/* brain */
+.wiring-row { border-radius: 8px; background: rgba(255,255,255,.025); border: 1px solid rgba(255,255,255,.05); }
+.matrix-wrap { background: rgba(0,0,0,.25); border-color: rgba(255,255,255,.08); }
+
+/* explorer rows */
+.formula-row { padding: 5px 0; border-radius: 8px; transition: background .25s var(--ease); }
+.formula-row:hover { background: rgba(255,255,255,.03); }
+.category-head { letter-spacing: .12em; }

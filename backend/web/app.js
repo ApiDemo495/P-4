@@ -310,6 +310,50 @@ function applyClock(payload, opts = {}) {
   return !sameWindow;
 }
 
+/* Round AB - every panel wears the same two factors: &b (where its data
+   comes from right now) and ¶gn (where in the window we are), plus the age
+   of its last repaint.  Renderers call markPanel(name); the frame loop
+   repaints the rails once a second, so all of them move together. */
+const PANEL_SEEN = {};
+function markPanel(name) { PANEL_SEEN[name] = Date.now(); }
+function panelFeedClass() {
+  const src = state.tape?.source;
+  if (!src || src === "none") return "offline";
+  return src === "simulator" ? "simulated" : "live";
+}
+function renderPanelRails() {
+  const feed = panelFeedClass();
+  const src = state.tape?.source || "none";
+  const phase = state.clock ? (() => {
+    const p = 1 - windowRemaining() / (state.cyclePeriod || 60);
+    return p < 0.1 ? "opening" : p < 0.4 ? "early" : p < 0.7 ? "mid" : p < 0.9 ? "late" : "closing";
+  })() : "—";
+  document.querySelectorAll("[data-panel]").forEach((panel) => {
+    const name = panel.dataset.panel;
+    const head = panel.classList.contains("card-head") ? panel : panel.querySelector(".card-head");
+    if (!head) return;
+    let rail = head.querySelector(".panel-rail");
+    if (!rail) {
+      rail = document.createElement("div");
+      rail.className = "panel-rail";
+      rail.innerHTML = `<span class="rail-feed" title="&b - the internet source behind this panel right now"></span>` +
+        `<span class="rail-phase" title="¶gn - where in the 60 s window we are"></span>` +
+        `<span class="rail-age" title="seconds since this panel last repainted"></span>`;
+      head.appendChild(rail);
+    }
+    const f = rail.querySelector(".rail-feed");
+    f.className = `rail-feed ${feed}`;
+    f.textContent = `&b ${feed === "live" ? src : feed}`;
+    rail.querySelector(".rail-phase").textContent = `¶gn ${phase}`;
+    const seen = PANEL_SEEN[name];
+    const age = seen ? Math.max(0, Math.round((Date.now() - seen) / 1000)) : null;
+    const a = rail.querySelector(".rail-age");
+    a.textContent = age === null ? "waiting" : age === 0 ? "just now" : `${age}s ago`;
+    a.className = "rail-age";
+    if (age !== null && age > 90) a.classList.add("old");
+  });
+}
+
 /* Round AA - the ¶gn mark: one soft breath over the whole surface and a
    whisper of haptic, so the user feels the panels refresh together. */
 function pulseBreath() {
@@ -390,6 +434,7 @@ function frame() {
     renderHorizon(state.prediction);
     renderPipelineProgress();
     renderWindowStrip();
+    renderPanelRails();
     if (state.emergencyUntil > Date.now()) renderConvictionBox();
   }
   state.raf = requestAnimationFrame(frame);
@@ -781,6 +826,7 @@ function emotionTimescaleLabel(key) {
 }
 
 function renderEmotions() {
+  markPanel("emotions");
   const e = state.emotions;
   const dominantEl = $("emotion-dominant");
   if (!dominantEl) return;
@@ -1311,6 +1357,7 @@ function renderAssetToggle() {
 }
 
 function renderSignal() {
+  markPanel("signal");
   const s = state.signal;
   const pending = !s || s.signal === null || s.signal === undefined;
 
@@ -1552,6 +1599,7 @@ const synesthesia = {
    Row 3: probability branches (Round Y)
    ======================================================================== */
 function renderWidgetPanel() {
+  markPanel("window");
   const s = state.signal;
   const has = s && s.signal;
   const prediction = has ? s.signal : "·  ·  ·";
@@ -1782,6 +1830,7 @@ function renderConvictionBox() {
 }
 
 function renderHedge(s) {
+  markPanel("hedge");
   const h = s.hedge || {};
   const set = (id, value) => { $(id).textContent = value === undefined ? "—" : fmtSigned(value, 3); };
   set("h-hsi", h.hsi); set("h-hrdd", h.hrdd); set("h-shrp", h.shrp); set("h-gcdv", h.gcdv);
@@ -1799,6 +1848,7 @@ function renderHedge(s) {
 }
 
 function renderNews(s) {
+  markPanel("news");
   const n = s.news || {};
   $("news-headline").textContent = n.latest_headline || "No headlines available";
   $("news-source").textContent = n.source ? `${n.source} · Tier ${n.tier}` : "";
@@ -1853,6 +1903,7 @@ async function refreshNewsList() {
 }
 
 function renderAgents(data) {
+  markPanel("agents");
   if (!data || data.error) return;
   const weights = data.weights || {};
   const rows = [
@@ -1952,6 +2003,7 @@ function renderWiringTable() {
 }
 
 function renderBrainExplain(data) {
+  markPanel("brain");
   if (!data || data.error) return;
   state.explain = data;
   if (!data.available) {
@@ -1981,6 +2033,7 @@ function renderBrainExplain(data) {
    window on screen.  It travels inside the fusion, so it cannot change
    mid-window either. */
 function renderPhysics(payload) {
+  markPanel("physics");
   const r = payload && payload.report;
   const card = $("physics-card");
   if (!card) return;
@@ -2045,6 +2098,7 @@ async function refreshBrain() {
 }
 
 function renderHistory(data) {
+  markPanel("history");
   if (!data || data.error) return;
   const list = $("history");
   list.innerHTML = "";
@@ -2180,6 +2234,7 @@ async function refreshLiveFormulas() {
 }
 
 function renderFormulas() {
+  markPanel("formulas");
   const container = $("formula-explorer");
   const live = Object.keys(state.liveFormulas).length > 0;
   const values = live ? state.liveFormulas : state.formulas;
