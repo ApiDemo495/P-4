@@ -23,6 +23,7 @@ from backend.core.errors import ComponentStatus, DegradationLevel
 from backend.data import cross_asset_sync as sync
 from backend.data.binance_ws import BinanceWebSocket
 from backend.data.coingecko_fallback import CoinGeckoFeed
+from backend.data.kraken_rest import KrakenRest
 from backend.data.kraken_ws import KrakenWebSocket
 from backend.data.ring_buffer import CandleBuffer, L2Buffer, TickBuffer
 from backend.data.simulator import MarketSimulator, run_simulator
@@ -52,6 +53,7 @@ class MarketDataHub:
         self.binance: BinanceWebSocket | None = None
         self.coingecko: CoinGeckoFeed | None = None
         self.kraken: KrakenWebSocket | None = None
+        self.kraken_rest: KrakenRest | None = None
         self.simulator: MarketSimulator | None = None
         self.active_source = "none"
         self.warnings: list[str] = []
@@ -87,6 +89,13 @@ class MarketDataHub:
             self._tasks.append(asyncio.create_task(self.kraken.run(), name="kraken-ws"))
             if mode == "kraken":
                 self.active_source = "kraken"
+        if mode in ("auto", "krakenrest"):
+            # Round AA: real trades + book over plain HTTPS GET, for networks
+            # where WebSockets cannot get out.  Started on demand.
+            self.kraken_rest = KrakenRest(functools.partial(self.ingest, "krakenrest"), self.settings)
+            if mode == "krakenrest":
+                self._tasks.append(asyncio.create_task(self.kraken_rest.run(), name="krakenrest"))
+                self.active_source = "krakenrest"
         if mode in ("auto", "coingecko"):
             self.coingecko = CoinGeckoFeed(functools.partial(self.ingest, "coingecko"), self.settings)
             if mode == "coingecko":
@@ -106,7 +115,7 @@ class MarketDataHub:
 
     async def stop(self) -> None:
         self._stop.set()
-        for client in (self.binance, self.kraken, self.coingecko):
+        for client in (self.binance, self.kraken, self.kraken_rest, self.coingecko):
             if client is not None:
                 client.stop()
         for task in self._tasks:
@@ -270,6 +279,20 @@ class MarketDataHub:
             self._set_source("none")
             return
 
+        # 1c) Both sockets failing -> Kraken over HTTPS (real tape + book).
+        sockets_down = (self.binance is None or self.binance.status.consecutive_failures >= 2) and (
+            self.kraken is None or self.kraken.status.consecutive_failures >= 2)
+        if self.kraken_rest is not None and mode in ("auto", "krakenrest") and (sockets_down or mode == "krakenrest"):
+            if not any(t.get_name() == "krakenrest" for t in self._tasks):
+                log.warning("WebSocket feeds unreachable - polling Kraken REST for a real tape")
+                self._tasks.append(asyncio.create_task(self.kraken_rest.run(), name="krakenrest"))
+            if self.kraken_rest.connected and self.buffers["BTC"].ticks.size > 0 or (
+                    self.kraken_rest.connected and self.active_source != "krakenrest"):
+                self._stop_simulator_task()
+                self._set_source("krakenrest")
+                return
+            if self.active_source == "krakenrest":
+                return
         # 2) Binance unhealthy -> CoinGecko?
         if mode in ("auto", "coingecko") and self.coingecko is not None:
             real_down = (self.binance is None or self.binance.status.consecutive_failures >= 3) and (
@@ -455,6 +478,14 @@ class MarketDataHub:
                 "last_error_age_s": (round(time.time() - st.last_error_at, 1)
                                      if getattr(st, "last_error_at", 0.0) else None),
             }
+        if self.kraken_rest is not None:
+            out["feeds"]["krakenrest"] = {
+                "enabled": True,
+                "polling": any(t.get_name() == "krakenrest" for t in self._tasks),
+                "connected": bool(self.kraken_rest.connected),
+                "polls": int(self.kraken_rest.polls),
+                "last_error": str(self.kraken_rest.last_error or ""),
+            }
         if self.coingecko is not None:
             out["feeds"]["coingecko"] = {
                 "enabled": True,
@@ -476,6 +507,7 @@ class MarketDataHub:
         details = {
             "binance": "aggTrade + depth20@100ms",
             "kraken": "trade + book depth 25 (Kraken v2, USD pairs)",
+            "krakenrest": "Kraken REST polling - real trades + book over HTTPS (2 s)",
             "none": "connecting to a live feed - no tape yet",
             "coingecko": "REST polling (no order book)",
             "simulator": "built-in simulator - simulated tape, not live market data",

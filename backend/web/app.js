@@ -1152,7 +1152,16 @@ function renderTape() {
     chip.textContent = `SIMULATED TAPE · not live market data`;
     chip.classList.add("sim");
   } else if (!t.source || t.source === "none") {
-    chip.textContent = `connecting to the market…`;
+    // Round AA: say WHY - the last error of every real feed, so "offline"
+    // never stands alone.
+    const f = t.feeds || {};
+    const why = ["binance", "kraken"].map((n) => {
+      const r = f[n] || {};
+      if (!r.enabled) return null;
+      if (r.connected) return `${n}: connected`;
+      return `${n}: ${r.last_error ? r.last_error : "connecting"}${r.failures ? ` (×${r.failures})` : ""}`;
+    }).filter(Boolean).join(" · ");
+    chip.textContent = `NO MARKET FEED · ${why || "connecting…"}`;
     chip.classList.add("none");
   } else {
     chip.textContent = `live tape · ${t.source} · ${t.btc_ticks} ticks`;

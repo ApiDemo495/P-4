@@ -107,7 +107,7 @@ CATEGORY_FEEDS: dict[str, tuple[str, ...]] = {
     "H": ("formulas", "tape", "book", "news"),
 }
 
-REAL_SOURCES = ("binance", "kraken", "coingecko")
+REAL_SOURCES = ("binance", "kraken", "krakenrest", "coingecko")
 
 
 def provenance(snapshot, asset: str) -> dict:
