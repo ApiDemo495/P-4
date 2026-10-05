@@ -58,7 +58,7 @@ from typing import Any
 
 import numpy as np
 
-from backend.core import geometry
+from backend.core import geometry, utility_inversion
 from backend.core.timebase import format_us, now_us
 
 EMOTION_NAMES = (
@@ -86,39 +86,47 @@ LIKELIHOOD: dict[str, dict[str, float]] = {
         # Round Z geometry: cavities opening in the book and critical slowing
         # down are fear *before* the market orders arrive.
         "tearing": 1.2, "csd": 1.0, "cooling": 0.8,
+        # Round AA inverse RL: a crowd braced for the tail is afraid
+        "tail_fear": 1.0, "risk_averse": 0.6,
     },
     "PANIC": {
         "formula_down": 1.2,
         "down_fast": 2.5, "cascade": 2.0, "stress": 1.5, "toxicity": 1.2,
         "blowout": 1.2, "momentum": 0.3, "calm": -2.0,
         "tearing": 1.0, "chaotic": 1.2, "polarised": 0.8,
+        "loss_averse": 1.5,
     },
     "CAPITULATION": {
         "formula_down": 1.0,
         "drawdown": 2.5, "down_slow": 1.5, "toxicity": 1.0, "momentum": -0.5,
         "herd_memory": 0.8, "persistence": 0.6, "calm": -1.5,
         "cooling": 1.2, "csd": 0.6,
+        "loss_averse": 1.2, "risk_averse": 0.8,
     },
     "DENIAL": {
         "formula_down": 1.2, "formula_up": -0.8,
         "drawdown": 2.0, "down_slow": 0.8, "up_fast": 1.0, "momentum": -1.0,
         "disorder": 0.4, "book_pressure": 0.6, "news": -0.5, "stress": 0.5, "calm": -1.0,
+        "complacent": 0.8, "loss_averse": -0.5,
     },
     "HOPE": {
         "formula_up": 1.5, "formula_down": -1.0,
         "up_mid": 1.5, "up_slow": 1.0, "calm": 0.5, "book_pressure": 0.8,
         "news": 0.8, "stress": -0.8, "momentum": 0.5,
+        "gain_chasing": 0.6,
     },
     "EUPHORIA": {
         "formula_up": 1.5, "formula_down": -0.8,
         "up_slow": 2.0, "up_mid": 1.0, "runup": 2.0, "persistence": 1.0, "herd_memory": 1.0,
         "calm": -0.5, "news": 0.8, "momentum": 0.8,
+        "risk_seeking": 1.2, "complacent": 0.8, "gain_chasing": 0.8,
     },
     "FOMO": {
         "formula_up": 1.2,
         "up_fast": 2.5, "cascade": 2.0, "toxicity": 1.0, "momentum": 1.0,
         "herd_memory": 1.2, "calm": -1.5,
         "heating": 1.0, "chaotic": 0.8, "polarised": 0.8,
+        "gain_chasing": 1.5, "risk_seeking": 1.0,
     },
     "COMPLACENCY": {
         "formula_conviction": -1.5,
@@ -126,6 +134,7 @@ LIKELIHOOD: dict[str, dict[str, float]] = {
         "up_fast": -1.5, "down_mid": -1.5, "up_mid": -1.5, "cascade": -1.0,
         "toxicity": -0.8,
         "tearing": -1.0, "csd": -0.8, "chaotic": -0.8, "polarised": -0.6,
+        "complacent": 1.5, "tail_fear": -1.0, "loss_averse": -0.6,
     },
 }
 
@@ -145,6 +154,9 @@ EVIDENCE_LABEL = {
     "tearing": "book manifold tearing (TDA persistence)", "chaotic": "attractor divergence (Lyapunov)",
     "csd": "critical slowing down (a1 ↑, variance ↑)", "cooling": "heat BTC→PAXG (entropy production)",
     "heating": "heat PAXG→BTC (entropy production)", "polarised": "non-classical decision interference",
+    "loss_averse": "loss aversion λ (inverse RL)", "gain_chasing": "gain chasing 1/λ (inverse RL)",
+    "risk_averse": "risk aversion γ (inverse RL)", "risk_seeking": "risk seeking −γ (inverse RL)",
+    "tail_fear": "tail overweighting, Prelec α<1 (inverse RL)", "complacent": "tail neglect, Prelec α>1 (inverse RL)",
 }
 
 
@@ -578,6 +590,7 @@ def _evidence(
     """
     z1 = _safe(f.get("z_1s")); z5 = _safe(f.get("z_5s")); z60 = _safe(f.get("z_60s"))
     geo = deep.get("geometry") or {}
+    util = ((deep.get("utility") or {}).get("intensity") or {})
     bands = deep["bands"]
     reg = deep["regime"]
     c = _clip(_safe(formula_consensus), -1.0, 1.0) if formula_voters >= 3 else 0.0
@@ -616,6 +629,13 @@ def _evidence(
         "heating": (_safe((geo.get("thermo") or {}).get("entropy_production"))
                     if _safe((geo.get("thermo") or {}).get("flux_J")) > 0 else 0.0),
         "polarised": _safe((geo.get("quantum") or {}).get("polarisation")),
+        # Round AA: the inverse-RL utility layer (backend/core/utility_inversion.py)
+        "loss_averse": _safe(util.get("loss_averse")),
+        "gain_chasing": _safe(util.get("gain_chasing")),
+        "risk_averse": _safe(util.get("risk_averse")),
+        "risk_seeking": _safe(util.get("risk_seeking")),
+        "tail_fear": _safe(util.get("tail_fear")),
+        "complacent": _safe(util.get("complacent")),
     }
 
 
@@ -913,6 +933,10 @@ def analyze(
         deep["geometry"] = geometry.analyze(tape, asset, one_s)
     except Exception as exc:  # noqa: BLE001
         deep["geometry"] = {"available": False, "reason": str(exc)[:120]}
+    try:
+        deep["utility"] = utility_inversion.analyze(tape, asset)
+    except Exception as exc:  # noqa: BLE001
+        deep["utility"] = {"available": False, "reason": str(exc)[:120]}
     evidence = _evidence(f, deep, formula_consensus, formula_voters)
     deep["formula_consensus"] = round(_safe(formula_consensus), 4)
     deep["formula_voters"] = int(formula_voters)
@@ -952,6 +976,14 @@ def compact(deep: dict) -> dict:
             "thermo": {k: (deep.get("geometry") or {}).get("thermo", {}).get(k) for k in ("entropy_production", "heat_direction", "flux_J", "affinity_X")},
             "quantum": {k: (deep.get("geometry") or {}).get("quantum", {}).get(k) for k in ("interference", "polarisation")},
         } if (deep.get("geometry") or {}).get("available") else {"available": False},
+        "utility": {
+            k: v for k, v in (deep.get("utility") or {}).items()
+            if k in ("available", "live_measurements", "read", "intensity", "method")
+        } | {
+            "lambda": {k: (deep.get("utility") or {}).get("lambda", {}).get(k) for k in ("lambda", "beta_loss", "beta_gain", "buckets", "available")},
+            "gamma": {k: (deep.get("utility") or {}).get("gamma", {}).get(k) for k in ("gamma", "participation_calm", "participation_volatile", "available")},
+            "alpha": {k: (deep.get("utility") or {}).get("alpha", {}).get(k) for k in ("alpha", "tail_share", "uniform_tail", "tail_bps", "available")},
+        } if (deep.get("utility") or {}).get("available") else {"available": False, "reason": (deep.get("utility") or {}).get("reason")},
         "spectrum": [{"scale_label": s["scale_label"], "share": s["share"]} for s in deep["spectrum"]],
         "posterior": {
             k: post[k] for k in ("posterior", "argmax", "argmax_probability", "runner_up",
