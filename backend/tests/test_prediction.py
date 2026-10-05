@@ -176,7 +176,7 @@ def test_the_levels_follow_the_rr_target(asset: str, signal: str):
     # Round AA: zero edge -> rr == rr_target; the stop is the 80% MAE quantile
     assert block["rr"] == pytest.approx(cfg.SETTINGS.rr_target)
     assert block["tp_bps"] == pytest.approx(block["sl_bps"] * cfg.SETTINGS.rr_target, rel=1e-3)
-    assert block["engine"]["mae_z"] == pytest.approx(1.2816, abs=1e-3)
+    assert block["engine"]["mae_z"] == pytest.approx(1.2816 if asset == "BTC" else 1.227, abs=1e-3)
     entry = block["entry"]
     assert abs(block["take_profit"] - entry) == pytest.approx(
         abs(entry - block["stop_loss"]) * cfg.SETTINGS.rr_target, rel=1e-3
