@@ -244,4 +244,7 @@ def test_kraken_rest_is_a_real_source_with_a_book(monkeypatch):
     assert not hub.tape_is_simulated and "HTTPS" in hub.status().detail
     report = hub.feeds_report()
     assert set(report["feeds"]) >= {"binance", "kraken", "krakenrest", "coingecko", "simulator"}
-    assert "last_error" in report["feeds"]["binance"]
+    from backend.data.binance_ws import BinanceWebSocket
+    hub.binance = BinanceWebSocket(lambda *a: None, None, cfg.Settings())
+    hub.binance.status.last_error = "InvalidStatus: HTTP 451"
+    assert hub.feeds_report()["feeds"]["binance"]["last_error"] == "InvalidStatus: HTTP 451"
