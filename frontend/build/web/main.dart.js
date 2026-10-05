@@ -44226,7 +44226,7 @@ s=9
 return A.H(q.a.c.nc(),$async$tv)
 case 9:return A.N(null,r)}})
 return A.O($async$tv,r)},
-I(a){var s,r,q,p,o,n,m=this,l=null,k="\u2014",j="matrix",i="checksum",h=m.a.c,g=h.go,f=h.fy.h(0,"local"),e=t.p,d=A.bc(A.b([m.xk("gemini","Gemini API keys \u2014 primary + 2 stand-ins (all optional)","AIza\u2026"),m.xk("github","GitHub PATs (optional)","github_pat_\u2026"),m.xk("cryptopanic","CryptoPanic keys (optional)","token"),m.xk("newsapi","NewsAPI keys (optional)","key"),B.Xm,A.bs(A.b([new A.xy(m.e,new A.at8(m),l),B.Gg],e),B.w,B.l,B.k),new A.eC(B.eR,l,l,new A.KN(m.gahn(),l,l,l,l,B.o,l,!1,l,!0,l,B.Xa,l),l)],e),B.x,B.l,B.k)
+I(a){var s,r,q,p,o,n,m=this,l=null,k="\u2014",j="matrix",i="checksum",h=m.a.c,g=h.go,f=h.fy.h(0,"local"),e=t.p,d=A.bc(A.b([m.xk("gemini","Gemini API keys \u2014 primary + 2 stand-ins (all optional)","AQ.Ab\u2026 or AIza\u2026"),m.xk("github","GitHub PATs (optional)","github_pat_\u2026"),m.xk("cryptopanic","CryptoPanic keys (optional)","token"),m.xk("newsapi","NewsAPI keys (optional)","key"),B.Xm,A.bs(A.b([new A.xy(m.e,new A.at8(m),l),B.Gg],e),B.w,B.l,B.k),new A.eC(B.eR,l,l,new A.KN(m.gahn(),l,l,l,l,B.o,l,!1,l,!0,l,B.Xa,l),l)],e),B.x,B.l,B.k)
 if(f==null)s="No model loaded"
 else{s=J.bn(f)
 r=A.j(s.h(f,"status"))
