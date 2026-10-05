@@ -48,6 +48,7 @@ from backend.core.calibration import EvidenceLedger
 from backend.core.frozen_snapshot import FrozenMarketSnapshot
 from backend.core.redis_bus import Store
 from backend.core.timebase import now_us
+from backend.core import window_clock
 from backend.core.risk import realized_volatility_bps, risk_levels, quoted_spread_bps
 from backend.core.signal_lock import FrozenSignal, LockState, SignalLockController
 from backend.data.market_hub import MarketDataHub
@@ -59,19 +60,7 @@ from backend.news.news_engine import NewsEngine
 log = logging.getLogger("drosophila.cycle")
 
 
-def _grid_offsets(every: float, period: float) -> list[float]:
-    """Marks at every, every*2, ... inside ``period`` (never at the boundary)."""
-    if every <= 0 or period <= 0:
-        return []
-    offsets: list[float] = []
-    step = every
-    # Guard against a pathological cadence producing thousands of marks.
-    for index in range(1, 65):
-        offset = step * index
-        if offset >= period - 0.05:
-            break
-        offsets.append(offset)
-    return offsets
+_grid_offsets = window_clock.grid_offsets   # kept as a name for the tests
 
 
 def _iso(timestamp: float) -> str:
@@ -2079,33 +2068,11 @@ class CycleManager:
         The marks are derived from the window start, never from "now", so two
         clients - and the backend - always agree on when the next one is.
         """
-        period = max(0.05, ends - started)
-        offsets: list[tuple[float, str]] = []
-        formula_every = self.settings.scaled(self.settings.formula_refresh_seconds)
-        news_every = self.settings.scaled(self.settings.news_poll_seconds)
-        # A window shorter than the nominal cadence still gets marks: the grid
-        # is capped so the panel is never static for a whole window.
-        formula_every = min(formula_every, period / 2.0)
-        news_every = min(news_every, period)
-        for offset in _grid_offsets(formula_every, period):
-            offsets.append((offset, "formulas"))
-        for offset in _grid_offsets(news_every, period):
-            offsets.append((offset, "news"))
-        marks: list[dict] = []
-        for offset in sorted({round(o, 3) for o, _ in offsets}):
-            if offset <= 0.05 or offset >= period - 0.05:
-                continue
-            kinds = sorted({kind for o, kind in offsets if abs(o - offset) < 1e-6})
-            marks.append(
-                {
-                    "kind": "tick",
-                    "parts": kinds,
-                    "offset_seconds": round(offset, 3),
-                    "at": _iso(started + offset),
-                    "at_wall": started + offset,
-                }
-            )
-        return marks
+        return window_clock.grid_marks(
+            started, ends,
+            self.settings.scaled(self.settings.formula_refresh_seconds),
+            self.settings.scaled(self.settings.news_poll_seconds),
+        )
 
     def master_clock(self, now: float | None = None) -> dict:
         """The one clock every countdown in both frontends is rendered from.
@@ -2120,56 +2087,18 @@ class CycleManager:
         period = self.settings.cycle_period_seconds
         started = self.window_valid_from or moment
         ends = self.window_valid_until or (started + period)
-        marks = self.tick_grid(started, ends)
-        remaining = max(0.0, ends - moment)
-        return {
-            "period_seconds": round(period, 3),
-            "window_seconds": round(max(0.0, ends - started), 3),
-            "window_started_at_ms": int(round(started * 1000)),
-            "window_ends_at_ms": int(round(ends * 1000)),
-            "server_time_ms": int(round(moment * 1000)),
-            # Microsecond truth for the same instants: a 60-second window with a
-            # 0.9 ms publication latency is not the same thing as one that
-            # started late, and only the µs fields can tell the difference.
-            "window_started_at_us": int(round(started * 1e6)),
-            "window_ends_at_us": int(round(ends * 1e6)),
-            "server_time_us": int(round(moment * 1e6)),
-            "remaining_us": int(round(remaining * 1e6)),
-            "elapsed_us": int(round(max(0.0, moment - started) * 1e6)),
-            "publish_latency_us": int(self.publish_latency_us),
-            "engine_compute_us": int(self.published_compute_us),
-            "snapshot_us": int(self.snapshot_us),
-            "seconds_remaining": round(remaining, 3),
-            "seconds_elapsed": round(max(0.0, moment - started), 3),
-            "cycle_id": self.stats.cycle_number,
-            "minute_aligned": bool(self.settings.use_world_clock),
-            "aligned_to": _iso(started),
-            "next_boundary_at": _iso(ends),
-            "ticks": [
-                {
-                    "parts": mark["parts"],
-                    "offset_seconds": mark["offset_seconds"],
-                    "at": mark["at"],
-                    "seconds_until": round(mark["at_wall"] - moment, 3),
-                    "done": mark["at_wall"] <= moment,
-                }
-                for mark in marks
-            ],
-            "next_tick": next(
-                (
-                    {
-                        "parts": mark["parts"],
-                        "at": mark["at"],
-                        "seconds_until": round(mark["at_wall"] - moment, 3),
-                    }
-                    for mark in marks
-                    if mark["at_wall"] > moment
-                ),
-                None,
-            ),
-            "freshness_max_age_seconds": round(self.settings.prediction_expired, 1),
-            "scoring_horizon_seconds": round(self.settings.outcome_horizon, 1),
-        }
+        return window_clock.describe(
+            started, ends, now=moment,
+            period_seconds=period,
+            cycle_id=self.stats.cycle_number,
+            marks=self.tick_grid(started, ends),
+            minute_aligned=bool(self.settings.use_world_clock),
+            freshness_max_age_seconds=self.settings.prediction_expired,
+            scoring_horizon_seconds=self.settings.outcome_horizon,
+            publish_latency_us=int(self.publish_latency_us),
+            engine_compute_us=int(self.published_compute_us),
+            snapshot_us=int(self.snapshot_us),
+        )
 
     def window_status(self) -> dict:
         """The countdown the UI renders, plus what the engine is doing in it.

@@ -98,3 +98,20 @@ def test_deep_model_carries_the_utility_evidence():
     assert deep_micro.LIKELIHOOD["PANIC"]["loss_averse"] > 0
     assert deep_micro.LIKELIHOOD["COMPLACENCY"]["complacent"] > 0
     assert deep_micro.LIKELIHOOD["FOMO"]["gain_chasing"] > 0
+
+
+def test_window_clock_is_absolute_and_carries_the_phase():
+    from backend.core import window_clock
+    started, ends = 1_000_000.0, 1_000_060.0
+    marks = window_clock.grid_marks(started, ends, 15.0, 30.0)
+    assert [m["offset_seconds"] for m in marks] == [15.0, 30.0, 45.0]
+    assert marks[1]["parts"] == ["formulas", "news"]
+    block = window_clock.describe(
+        started, ends, now=started + 42.0, period_seconds=60.0, cycle_id=7, marks=marks,
+        minute_aligned=True, freshness_max_age_seconds=90.0, scoring_horizon_seconds=60.0)
+    assert block["window_ends_at_ms"] == 1_000_060_000 and block["seconds_remaining"] == 18.0
+    assert block["phase"]["label"] == "mid" and block["phase"]["progress"] == pytest.approx(0.7)
+    assert block["next_tick"]["offset_seconds" if "offset_seconds" in block["next_tick"] else "seconds_until"] == 3.0
+    assert [t["done"] for t in block["ticks"]] == [True, True, False]
+    late = window_clock.phase(started, ends, started + 59.0)
+    assert late["label"] == "closing" and late["remaining_seconds"] == 1.0

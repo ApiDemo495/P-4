@@ -135,7 +135,7 @@ def test_the_grid_is_derived_from_the_window_not_from_now():
     assert _grid_offsets(0.75, 3.0) == [0.75, 1.5, 2.25]
     # The capping rule lives in tick_grid: a window shorter than the nominal
     # cadence still gets at least one mark, so no panel is static for a window.
-    source = CYCLE_PY.read_text()
+    source = (CYCLE_PY.parent / "window_clock.py").read_text()   # Round AA: the grid lives in window_clock
     assert "formula_every = min(formula_every, period / 2.0)" in source
     assert "news_every = min(news_every, period)" in source
 
