@@ -989,6 +989,8 @@ class DeepReasoning {
   const DeepReasoning({
     this.available = false,
     this.reason = '',
+    this.geometry = const CrowdGeometry(),
+    this.utility = const CrowdUtility(),
     this.ticks = 0,
     this.computeUs = 0,
     this.branchingRatio = 0.0,
@@ -1055,6 +1057,12 @@ class DeepReasoning {
   /// (label, log-odds) - the strongest evidence for the believed emotion.
   final List<MapEntry<String, double>> evidence;
   final List<DeepStep> chain;
+
+  /// Round Z geometry (TDA / Takens / CSD / entropy / interference) and the
+  /// Round AA inverse-RL utility read (λ, γ, α) - both straight from
+  /// `deep.geometry` / `deep.utility` of /api/emotions.
+  final CrowdGeometry geometry;
+  final CrowdUtility utility;
 
   static const DeepReasoning none = DeepReasoning();
 
@@ -1127,6 +1135,10 @@ class DeepReasoning {
           .whereType<Map>()
           .map((row) => DeepStep.fromJson(Map<String, dynamic>.from(row)))
           .toList(),
+      geometry: CrowdGeometry.fromJson(
+          Map<String, dynamic>.from((json['geometry'] as Map?) ?? const {})),
+      utility: CrowdUtility.fromJson(
+          Map<String, dynamic>.from((json['utility'] as Map?) ?? const {})),
     );
   }
 }
@@ -1714,6 +1726,169 @@ class SystemConfig {
       minConfidence: _d(json['min_fusion_confidence'], 0.55),
       lockDeadlineSeconds: _d(json['lock_deadline_seconds'], 8),
       weights: rawWeights.map((k, v) => MapEntry(k.toString(), _d(v))),
+    );
+  }
+}
+
+
+/// One measurement of the geometric layer: a 0..1 intensity, its headline
+/// number and a short detail line, exactly what the dashboard tile shows.
+class GeometryMeasure {
+  const GeometryMeasure({
+    this.available = false,
+    this.intensity = 0.0,
+    this.value = 0.0,
+    this.detail = '',
+  });
+
+  final bool available;
+  final double intensity;
+  final double value;
+  final String detail;
+}
+
+/// `deep.geometry` - the five 2050 emotion layers (Round Z).
+class CrowdGeometry {
+  const CrowdGeometry({
+    this.available = false,
+    this.liveMeasurements = 0,
+    this.stress = 0.0,
+    this.read = '',
+    this.tda = const GeometryMeasure(),
+    this.takens = const GeometryMeasure(),
+    this.csd = const GeometryMeasure(),
+    this.thermo = const GeometryMeasure(),
+    this.quantum = const GeometryMeasure(),
+  });
+
+  final bool available;
+  final int liveMeasurements;
+  final double stress;
+  final String read;
+  final GeometryMeasure tda;
+  final GeometryMeasure takens;
+  final GeometryMeasure csd;
+  final GeometryMeasure thermo;
+  final GeometryMeasure quantum;
+
+  factory CrowdGeometry.fromJson(Map<String, dynamic> json) {
+    if (json['available'] != true) return const CrowdGeometry();
+    Map<String, dynamic> part(String key) =>
+        Map<String, dynamic>.from((json[key] as Map?) ?? const {});
+    final tda = part('tda');
+    final tak = part('takens');
+    final csd = part('csd');
+    final th = part('thermo');
+    final qi = part('quantum');
+    final betti = ((tda['betti0'] as List?) ?? const []).join('/');
+    return CrowdGeometry(
+      available: true,
+      liveMeasurements: _i(json['live_measurements']),
+      stress: _d(json['stress']),
+      read: _s(json['read']),
+      tda: GeometryMeasure(
+          available: tda.isNotEmpty,
+          intensity: _d(tda['tearing']),
+          value: _d(tda['tearing']),
+          detail: '${_i(tda['cavities'])} cavities · β₀ $betti'),
+      takens: GeometryMeasure(
+          available: tak.isNotEmpty,
+          intensity: _d(tak['chaotic']),
+          value: _d(tak['lyapunov']),
+          detail: _d(tak['lyapunov']) > 0.2 ? 'spiralling' : 'stable'),
+      csd: GeometryMeasure(
+          available: csd.isNotEmpty,
+          intensity: _d(csd['csd']),
+          value: _d(csd['csd']),
+          detail: 'a₁ ${_d(csd['a1_now']).toStringAsFixed(2)} · var×'
+              '${_d(csd['variance_ratio']).toStringAsFixed(2)}'),
+      thermo: GeometryMeasure(
+          available: th.isNotEmpty,
+          intensity: _d(th['entropy_production']),
+          value: _d(th['entropy_production']),
+          detail: _s(th['heat_direction'], '—')),
+      quantum: GeometryMeasure(
+          available: qi.isNotEmpty,
+          intensity: _d(qi['polarisation']),
+          value: _d(qi['interference']),
+          detail:
+              _d(qi['polarisation']) > 0.3 ? 'non-classical' : 'classical'),
+    );
+  }
+}
+
+/// `deep.utility` - the inverse-RL read of what the crowd is maximising
+/// (Round AA): loss aversion λ, risk aversion γ, probability weighting α.
+class CrowdUtility {
+  const CrowdUtility({
+    this.available = false,
+    this.liveMeasurements = 0,
+    this.read = '',
+    this.lambda = 0.0,
+    this.lambdaAvailable = false,
+    this.lambdaBuckets = 0,
+    this.gamma = 0.0,
+    this.gammaAvailable = false,
+    this.alpha = 0.0,
+    this.alphaAvailable = false,
+    this.tailShare = 0.0,
+    this.intensity = const {},
+  });
+
+  final bool available;
+  final int liveMeasurements;
+  final String read;
+  final double lambda;
+  final bool lambdaAvailable;
+  final int lambdaBuckets;
+  final double gamma;
+  final bool gammaAvailable;
+  final double alpha;
+  final bool alphaAvailable;
+  final double tailShare;
+
+  /// loss_averse / gain_chasing / risk_averse / risk_seeking / tail_fear /
+  /// complacent - the 0..1 evidence the emotion filter is fed.
+  final Map<String, double> intensity;
+
+  String get lambdaRead => lambda > 2.5
+      ? 'sells losses far harder than it buys gains'
+      : lambda < 0.5
+          ? 'chases gains, ignores losses'
+          : 'symmetric (population ≈ 2.25)';
+  String get gammaRead => gamma > 0.3
+      ? 'steps back when the tape gets wild'
+      : gamma < -0.3
+          ? 'chases volatility'
+          : 'indifferent to volatility';
+  String get alphaRead => alpha < 0.85
+      ? 'book braced for a jump'
+      : alpha > 1.25
+          ? 'book complacent'
+          : 'tails priced about right';
+
+  factory CrowdUtility.fromJson(Map<String, dynamic> json) {
+    if (json['available'] != true) return const CrowdUtility();
+    final lam = (json['lambda'] as Map?) ?? const {};
+    final gam = (json['gamma'] as Map?) ?? const {};
+    final alp = (json['alpha'] as Map?) ?? const {};
+    final intensity = <String, double>{};
+    ((json['intensity'] as Map?) ?? const {}).forEach((key, value) {
+      intensity[_s(key)] = _d(value);
+    });
+    return CrowdUtility(
+      available: true,
+      liveMeasurements: _i(json['live_measurements']),
+      read: _s(json['read']),
+      lambda: _d(lam['lambda'], 1.0),
+      lambdaAvailable: lam['available'] == true,
+      lambdaBuckets: _i(lam['buckets']),
+      gamma: _d(gam['gamma']),
+      gammaAvailable: gam['available'] == true,
+      alpha: _d(alp['alpha'], 1.0),
+      alphaAvailable: alp['available'] == true,
+      tailShare: _d(alp['tail_share']),
+      intensity: intensity,
     );
   }
 }

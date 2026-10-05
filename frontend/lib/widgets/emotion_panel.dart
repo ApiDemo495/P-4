@@ -1,4 +1,6 @@
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../models/signal.dart';
@@ -673,6 +675,15 @@ class _DeepBlock extends StatelessWidget {
               ],
             ),
           ),
+        // ---- Round Z geometry + Round AA inverse RL ---------------------
+        if (deep.geometry.available) ...[
+          const SizedBox(height: 10),
+          _GeometryBlock(geometry: deep.geometry),
+        ],
+        if (deep.utility.available) ...[
+          const SizedBox(height: 10),
+          _UtilityBlock(utility: deep.utility),
+        ],
         if (deep.spectrum.isNotEmpty) ...[
           const SizedBox(height: 8),
           Wrap(
@@ -1064,6 +1075,259 @@ class _AgreementBlock extends StatelessWidget {
                 fontFeatures: [FontFeature.tabularFigures()]),
           ),
         ),
+      ],
+    );
+  }
+}
+
+
+/// GEOMETRY OF THE CROWD - the five measurements of `deep.geometry`
+/// (book topology, Takens attractor, critical slowing down, entropy
+/// production, decision interference), each as an intensity meter with its
+/// headline number, mirroring the dashboard tiles.
+class _GeometryBlock extends StatelessWidget {
+  const _GeometryBlock({required this.geometry});
+
+  final CrowdGeometry geometry;
+
+  static String _n(double v, [int d = 2]) => v.toStringAsFixed(d);
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <MapEntry<String, GeometryMeasure>>[
+      MapEntry('TDA · book manifold', geometry.tda),
+      MapEntry('Takens · attractor λ', geometry.takens),
+      MapEntry('critical slowing', geometry.csd),
+      MapEntry('entropy production', geometry.thermo),
+      MapEntry('quantum interference', geometry.quantum),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Text('GEOMETRY OF THE CROWD',
+                style: TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 10,
+                    letterSpacing: 1.4,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(width: 8),
+            Text(
+                '${geometry.liveMeasurements}/5 live · stress '
+                '${_n(geometry.stress)}',
+                style:
+                    const TextStyle(color: AppTheme.textMuted, fontSize: 10.5)),
+          ],
+        ),
+        const SizedBox(height: 6),
+        for (final row in rows)
+          if (row.value.available)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 136,
+                    child: Text(row.key,
+                        style: const TextStyle(
+                            color: AppTheme.textMuted, fontSize: 11)),
+                  ),
+                  Expanded(
+                    child: _Meter(
+                      value: row.value.intensity.clamp(0.0, 1.0),
+                      color: row.value.intensity >= 0.6
+                          ? AppTheme.sell
+                          : row.value.intensity >= 0.3
+                              ? AppTheme.warning
+                              : AppTheme.accent,
+                    ),
+                  ),
+                  SizedBox(
+                    width: 52,
+                    child: Text(_n(row.value.value, 3),
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                            fontSize: 11,
+                            fontFeatures: [FontFeature.tabularFigures()])),
+                  ),
+                  const SizedBox(width: 6),
+                  SizedBox(
+                    width: 110,
+                    child: Text(row.value.detail,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: AppTheme.textMuted, fontSize: 10)),
+                  ),
+                ],
+              ),
+            ),
+        if (geometry.read.isNotEmpty)
+          Text(geometry.read,
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+      ],
+    );
+  }
+}
+
+/// WHAT THE CROWD IS MAXIMISING - the inverse-RL parameters of
+/// `deep.utility`: loss aversion λ, risk aversion γ and the probability
+/// weighting α, each with its one-line reading and a position on its scale.
+class _UtilityBlock extends StatelessWidget {
+  const _UtilityBlock({required this.utility});
+
+  final CrowdUtility utility;
+
+  static String _n(double v, [int d = 2]) => v.toStringAsFixed(d);
+
+  static double _pos(double v, double lo, double hi) =>
+      ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
+
+  Widget _tile(String label, String value, String sub, double pos,
+      {bool available = true, Color? color}) {
+    return Container(
+      width: 170,
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+      decoration: BoxDecoration(
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label,
+              style: const TextStyle(
+                  color: AppTheme.textMuted, fontSize: 9.5, letterSpacing: 1)),
+          Text(available ? value : '—',
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: color ?? AppTheme.textPrimary,
+                  fontFeatures: const [FontFeature.tabularFigures()])),
+          Text(available ? sub : 'needs more tape',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 10)),
+          const SizedBox(height: 5),
+          LayoutBuilder(builder: (context, constraints) {
+            final width = constraints.maxWidth;
+            return SizedBox(
+              height: 10,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 3,
+                    child: Container(
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppTheme.border,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  if (available)
+                    AnimatedPositioned(
+                      duration: const Duration(milliseconds: 600),
+                      curve: Curves.easeOutCubic,
+                      left: (width * pos - 5).clamp(0.0, width - 10),
+                      top: 0,
+                      child: Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: color ?? AppTheme.accent,
+                          boxShadow: [
+                            BoxShadow(
+                                color: (color ?? AppTheme.accent).withAlpha(140),
+                                blurRadius: 8),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final u = utility;
+    final lamColor = u.lambda > 2.5
+        ? AppTheme.sell
+        : u.lambda < 0.5
+            ? AppTheme.buy
+            : null;
+    final gamColor = u.gamma > 0.3
+        ? AppTheme.warning
+        : u.gamma < -0.3
+            ? AppTheme.buy
+            : null;
+    final alpColor = u.alpha < 0.85
+        ? AppTheme.sell
+        : u.alpha > 1.25
+            ? AppTheme.warning
+            : null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Text('WHAT THE CROWD IS MAXIMISING',
+                style: TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 10,
+                    letterSpacing: 1.4,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(width: 8),
+            Text('inverse RL · ${u.liveMeasurements}/3 live',
+                style:
+                    const TextStyle(color: AppTheme.textMuted, fontSize: 10.5)),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _tile(
+              'LOSS AVERSION λ',
+              _n(u.lambda),
+              '${u.lambdaRead} · ${u.lambdaBuckets} s',
+              _pos(u.lambda > 0 ? math.log(u.lambda) : 0.0, -1.5, 1.5),
+              available: u.lambdaAvailable,
+              color: lamColor,
+            ),
+            _tile(
+              'RISK AVERSION γ',
+              _n(u.gamma),
+              u.gammaRead,
+              _pos(u.gamma, -2.0, 2.0),
+              available: u.gammaAvailable,
+              color: gamColor,
+            ),
+            _tile(
+              'PROBABILITY WEIGHTING α',
+              _n(u.alpha),
+              '${u.alphaRead} · tail ${(u.tailShare * 100).toStringAsFixed(1)}%',
+              _pos(u.alpha, 0.2, 2.0),
+              available: u.alphaAvailable,
+              color: alpColor,
+            ),
+          ],
+        ),
+        if (u.read.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(u.read,
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+        ],
       ],
     );
   }
