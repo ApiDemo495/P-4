@@ -55,6 +55,7 @@ jobs:
           {
             flutter --version
             flutter config --enable-web
+            test -f web/index.html || flutter create . --platforms web --project-name drosophila_trader
             flutter pub get
             flutter build web --release --base-href /flutter/
             test -f build/web/index.html

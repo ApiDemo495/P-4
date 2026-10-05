@@ -261,6 +261,14 @@ done
 
 step "2/4  Preparing the project"
 "$FLUTTER" config --enable-web >/dev/null 2>&1 || warn "could not set --enable-web (continuing)"
+if [ ! -f web/index.html ]; then
+  # the web scaffold (web/index.html, manifest, icons) is tracked in git; if a
+  # checkout lost it, regenerate it so "flutter build web" never refuses with
+  # "This project is not configured for the web".
+  warn "web/ scaffold missing - regenerating it"
+  "$FLUTTER" create . --platforms web --project-name drosophila_trader >/dev/null 2>&1 \
+    || bad "could not regenerate the web scaffold"
+fi
 "$FLUTTER" --version 2>/dev/null | head -1 | sed "s/^/${DIM}    /;s/$/${R}/"
 if ! "$FLUTTER" pub get >/tmp/flutter_pub_get.log 2>&1; then
   bad "flutter pub get failed:"
