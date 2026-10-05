@@ -77,16 +77,7 @@ jobs:
           if [ -n "$PR" ]; then gh pr comment "$PR" --body-file /tmp/comment.md || true; fi
 
       - name: Commit the bundle to this branch (fast-forward only, never main)
-        run: |
-          git config user.name "flutter-web bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add -f frontend/build/web
-          if git diff --cached --quiet; then
-            echo "bundle unchanged - nothing to commit"
-            exit 0
-          fi
-          git commit -m "Flutter web bundle (built by GitHub Actions) [skip ci]"
-          # the branch may have moved while we built: rebase our one commit on it
-          git fetch origin "${GITHUB_REF_NAME}"
-          git rebase "origin/${GITHUB_REF_NAME}" || { git rebase --abort; exit 1; }
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+        run: bash .github/scripts/commit_flutter_bundle.sh
