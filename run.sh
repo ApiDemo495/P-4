@@ -108,6 +108,11 @@ resolve_python() {
   if [ -x "$VENV/bin/python" ] && py_ok "$VENV/bin/python"; then
     echo "$VENV/bin/python"; return 0
   fi
+  # pre-provisioned dev-container image: adopt /opt/venv as .venv (no pip)
+  if [ ! -e "$VENV" ] && [ -x /opt/venv/bin/python ] && has_deps /opt/venv/bin/python; then
+    ln -s /opt/venv "$VENV" 2>/dev/null || true
+    echo "/opt/venv/bin/python"; return 0
+  fi
   local candidate
   for candidate in python3.12 python3.11 python3.10 python3 python; do
     if command -v "$candidate" >/dev/null 2>&1 && py_ok "$candidate" && has_deps "$candidate"; then

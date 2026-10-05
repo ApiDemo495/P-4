@@ -65,6 +65,13 @@ fi
 # -----------------------------------------------------------------------------
 # 2. Python environment
 # -----------------------------------------------------------------------------
+# Pre-provisioned image (ghcr.io/apidemo495/p-4-dev): every requirement is
+# already installed in /opt/venv.  Adopt it as .venv - nothing to download.
+if { [ ! -d "$REPO_ROOT/.venv" ] || [ ! -x "$REPO_ROOT/.venv/bin/python" ]; } \
+   && [ -x /opt/venv/bin/python ]; then
+  rm -rf "$REPO_ROOT/.venv" 2>/dev/null || true
+  ln -s /opt/venv "$REPO_ROOT/.venv" && ok "using the pre-installed environment /opt/venv as .venv"
+fi
 if [ ! -d "$REPO_ROOT/.venv" ] || [ ! -x "$REPO_ROOT/.venv/bin/python" ]; then
   log "creating virtualenv at .venv"
   rm -rf "$REPO_ROOT/.venv" 2>/dev/null || true
@@ -79,6 +86,26 @@ PY="$REPO_ROOT/.venv/bin/python"
 [ -x "$PY" ] || PY="$(command -v python3)"
 
 PIP_LOG=/tmp/pip-install.log
+# Skip pip entirely when every required module already imports (pre-built
+# image, or a second run): this is what makes a new Codespace start in seconds.
+REQUIRED_MODULES="fastapi uvicorn numpy scipy httpx feedparser websockets pydantic dotenv redis ntplib msgpack multipart pytest markdown"
+deps_ok() {
+  "$PY" - "$REQUIRED_MODULES" <<'PYEOF' 2>/dev/null
+import importlib, sys
+for name in sys.argv[1].split():
+    try:
+        importlib.import_module(name)
+    except Exception:
+        sys.exit(1)
+PYEOF
+}
+if deps_ok; then
+  ok "every module in requirements.txt is already importable - skipping pip"
+  SKIP_PIP=1
+else
+  SKIP_PIP=0
+fi
+if [ "$SKIP_PIP" = 0 ]; then
 log "upgrading pip"
 "$PY" -m pip install --quiet --retries 5 --timeout 60 --upgrade pip wheel setuptools >"$PIP_LOG" 2>&1 \
   || warn "pip self-upgrade had errors (continuing)"
@@ -104,6 +131,7 @@ else
     warn "fix:  sudo apt-get update && sudo apt-get install -y python3-venv python3-pip && rm -rf .venv && bash run.sh"
   fi
 fi
+fi  # SKIP_PIP
 
 if [ "$INSTALL_LLAMA_CPP" = "1" ]; then
   log "building llama-cpp-python (this takes several minutes)"

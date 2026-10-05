@@ -62,9 +62,14 @@ the rest by itself:
 
 | When | What happens automatically |
 | --- | --- |
-| container created | `bash tools/codespace_autostart.sh --provision`: apt packages, `.venv`, `requirements.txt`, `.env`, redis (optional), and the Flutter SDK download + web build started **in the background** (`flutter-setup.log`) |
+| container created | the Codespace starts from the **pre-provisioned image** `ghcr.io/apidemo495/p-4-dev` (built by the `devcontainer-image` Action from `.devcontainer/Dockerfile`: Python 3.11 + every line of `requirements.txt` already installed in `/opt/venv`, redis, gh). `--provision` adopts `/opt/venv` as `.venv` in about one second, writes `.env`, starts redis. Nothing is pip-installed and **no Flutter SDK is downloaded** - the web client is already committed in `frontend/build/web` |
 | every start / wake | `--start`: self-heals a missing `.venv` or a changed `requirements.txt`, then starts the engine under its supervisor |
 | every editor attach | `--attach`: the same, plus it waits until the first prediction is locked and prints the URL |
+
+If a Codespace ever fails to create with *"failed to pull image"*, the GHCR
+package is private: open the repository on GitHub → **Packages** → `p-4-dev` →
+**Package settings** → *Change visibility* → **Public** (one time). The scripts
+also still work on the stock image - they just install instead of adopting.
 
 The three hooks are serialised by a lock (they overlap in a Codespace, and two
 pip installs into one `.venv` is how "requirements did not download" used to

@@ -1500,3 +1500,16 @@ fast-forward. The engine's `/flutter` route already checks `built()` per
 request, so the bundle is served the instant it is on disk.
 
 **Checks.** 281 tests; first GitHub build `586bbee` (42 MB, Flutter 3.47.6).
+
+## AD — nothing left to download: pre-provisioned dev-container image
+
+`.devcontainer/Dockerfile` (built by `.github/workflows/devcontainer-image.yml`
+on every change to `requirements.txt`/the Dockerfile, pushed to
+`ghcr.io/apidemo495/p-4-dev:latest`) bakes Python 3.11 + all requirements into
+`/opt/venv` (`VIRTUAL_ENV`, on `PATH`), plus redis-server and gh.
+`devcontainer.json` now uses that image (the github-cli feature is gone - gh
+is in the image). `.devcontainer/setup.sh` and `run.sh` adopt `/opt/venv` as
+`.venv` (symlink) when `.venv` is missing, and setup.sh skips pip entirely when
+every required module already imports. Measured: provision 1.3 s, `run.sh
+--setup-only` 0.6 s. Combined with the committed Flutter bundle (§AC) a fresh
+Codespace downloads nothing: image pull → engine up → `/flutter` served.
