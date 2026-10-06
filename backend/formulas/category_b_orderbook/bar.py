@@ -17,7 +17,7 @@ import numpy as np
 
 from backend.core import config as cfg
 
-from backend.formulas._util import EPS, finite, tanh, trace
+from backend.formulas._util import EPS, SelfScale, finite, tanh, trace
 
 NAME = "BAR"
 CATEGORY = "B"
@@ -35,20 +35,24 @@ MIN_FRACTION = 0.005
 
 
 class State:
-    __slots__ = ("last_a_bid", "last_a_ask")
+    __slots__ = ("last_a_bid", "last_a_ask", "asym_scale")
 
     def __init__(self) -> None:
         self.last_a_bid = 0.0
         self.last_a_ask = 0.0
+        # Typical |asymmetry| of this book: a venue whose snapshots routinely
+        # churn 40 % of the depth must not read every churn as a full vote.
+        self.asym_scale = SelfScale(decay=0.97, floor=FULL_VOTE_FRACTION)
 
     def to_dict(self) -> dict:
-        return {"last_a_bid": self.last_a_bid, "last_a_ask": self.last_a_ask}
+        return {"last_a_bid": self.last_a_bid, "last_a_ask": self.last_a_ask, "asym_scale": self.asym_scale.to_dict()}
 
     @classmethod
     def from_dict(cls, payload: dict) -> "State":
         obj = cls()
         obj.last_a_bid = float(payload.get("last_a_bid", 0.0))
         obj.last_a_ask = float(payload.get("last_a_ask", 0.0))
+        obj.asym_scale = SelfScale.from_dict(payload.get("asym_scale", {})) if payload.get("asym_scale") else obj.asym_scale
         return obj
 
 
@@ -85,19 +89,25 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     if max(f_bid, f_ask) < MIN_FRACTION:
         return 0.0
 
-    raw = (f_ask - f_bid) / FULL_VOTE_FRACTION
-    trace(ctx, "absorption asymmetry", raw, f"(ask − bid fraction) / {FULL_VOTE_FRACTION}")
+    asym = f_ask - f_bid
+    # Divisor = the larger of 5 % and this book's own typical |asymmetry|
+    # (EMA): a full vote means "more one-sided than this venue usually is".
+    scale = state.asym_scale.denominator(2.0)
+    state.asym_scale.update(abs(asym))
+    raw = asym / scale
+    trace(ctx, "absorption asymmetry", asym, "ask fraction − bid fraction")
+    trace(ctx, "asymmetry scale", scale, f"max({FULL_VOTE_FRACTION}, 2 × typical |asymmetry|)")
     return finite(tanh(raw))
 
 
-DOUBLE_CHECK = "value = tanh((ask fraction absorbed − bid fraction absorbed) / 0.05); 0 when both < 0.5 %"
+DOUBLE_CHECK = "value = tanh(asymmetry / scale), scale = max(0.05, 2 x typical |asymmetry|); 0 when both fractions < 0.5 %"
 
 
 def double_check(t: dict, asset: str) -> float:
     """Independent re-derivation of the output from the traced intermediates."""
-    if "bid fraction absorbed" not in t:
+    if "absorption asymmetry" not in t or "asymmetry scale" not in t:
         return 0.0
-    f_bid, f_ask = float(t["bid fraction absorbed"]), float(t["ask fraction absorbed"])
+    f_bid, f_ask = float(t.get("bid fraction absorbed", 0.0)), float(t.get("ask fraction absorbed", 0.0))
     if max(f_bid, f_ask) < MIN_FRACTION:
         return 0.0
-    return tanh((f_ask - f_bid) / FULL_VOTE_FRACTION)
+    return tanh(float(t["absorption asymmetry"]) / (float(t["asymmetry scale"]) + EPS))
