@@ -2,7 +2,7 @@
 
 This module answers, in plain language and in one payload, the question
 *"where exactly is the fly brain used?"*  It is the data source behind the
-"Brain" panel in the dashboard, the `Brain` card in the Flutter client and the
+"Brain" panel in the dashboard and the
 `/api/brain/explain` endpoint.
 
 The chain, once per window:

@@ -12,8 +12,6 @@ allowlist rather than a one-off sweep:
 * **JavaScript** - functions in ``backend/web/*.js`` that are declared but never
   called, and element ids the script looks up that no page renders.
 * **CSS** - classes in ``styles.css`` that no page or script uses.
-* **Dart** - private classes and top-level functions in ``frontend/lib`` with no
-  reference anywhere.
 
 Run it directly for a report::
 
@@ -63,7 +61,6 @@ ALLOW: dict[str, str] = {
     "scan_python": "this tool",
     "scan_js": "this tool",
     "scan_css": "this tool",
-    "scan_dart": "this tool",
 }
 
 PY_PATTERN = re.compile(
@@ -72,7 +69,6 @@ PY_PATTERN = re.compile(
 )
 JS_FUNC = re.compile(r"^(?:async )?function ([a-zA-Z_][a-zA-Z0-9_]*)", re.M)
 JS_CONST = re.compile(r"^(?:const|let|var) ([A-Za-z_][a-zA-Z0-9_]*) = (?:\(|function|async)", re.M)
-DART_PRIVATE = re.compile(r"^(?:class|mixin|enum) (_[A-Za-z0-9_]+)|^[A-Za-z<>, ?]+ (_[a-zA-Z0-9_]+)\(", re.M)
 
 
 def _python_files() -> list[Path]:
@@ -100,7 +96,7 @@ def _count(name: str, files: list[Path]) -> int:
 def scan_python() -> list[tuple[str, str]]:
     """(name, location) for every definition nothing references."""
     files = _python_files()
-    extra = [ROOT / "run.sh", ROOT / "frontend"] + sorted((ROOT / "docs").glob("*.md"))
+    extra = [ROOT / "run.sh"] + sorted((ROOT / "docs").glob("*.md"))
     findings: list[tuple[str, str]] = []
     for path in files:
         text = path.read_text(errors="ignore")
@@ -198,28 +194,11 @@ def scan_css() -> list[str]:
     return sorted(c for c in defined if c not in consumers and c not in ALLOW)
 
 
-def scan_dart() -> list[str]:
-    """Private Dart members with no other reference in the client."""
-    files = sorted((ROOT / "frontend" / "lib").rglob("*.dart"))
-    joined = "\n".join(p.read_text(errors="ignore") for p in files)
-    findings: list[str] = []
-    for path in files:
-        text = path.read_text(errors="ignore")
-        for match in DART_PRIVATE.finditer(text):
-            name = match.group(1) or match.group(2)
-            if name in ALLOW:
-                continue
-            if len(re.findall(r"\b" + re.escape(name) + r"\b", joined)) <= 1:
-                findings.append(f"{path.relative_to(ROOT)} {name}")
-    return findings
-
-
 def report() -> dict[str, list[str]]:
     return {
         "python": [f"{name}  ({where})" for name, where in scan_python()],
         "javascript": scan_js(),
         "css": scan_css(),
-        "dart": scan_dart(),
     }
 
 

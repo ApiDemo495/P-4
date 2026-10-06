@@ -12,7 +12,6 @@ message, the routes and the served pages.
 from __future__ import annotations
 
 import math
-import re
 from pathlib import Path
 
 import numpy as np
@@ -326,11 +325,6 @@ def test_the_dashboard_renders_the_deep_layer() -> None:
     assert "function deepLockedHtml(" in js and "deepLockedHtml(crowd.deep)" in js
     css = (ROOT / "backend" / "web" / "styles.css").read_text()
     assert ".deep-chain li::before" in css
-    dart = (ROOT / "frontend" / "lib" / "widgets" / "emotion_panel.dart").read_text()
-    assert "class _DeepBlock" in dart and "_DeepBlock(deep: live.deep" in dart
-    model = (ROOT / "frontend" / "lib" / "models" / "signal.dart").read_text()
-    assert "class DeepReasoning" in model and "class DeepStep" in model
-    assert re.search(r"deep:\s*json\['deep'\] is Map", model)
 
 
 def test_the_prediction_reasoning_carries_the_deep_read() -> None:

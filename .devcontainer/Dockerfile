@@ -12,7 +12,7 @@ FROM mcr.microsoft.com/devcontainers/python:3.11-bookworm
 ARG DEBIAN_FRONTEND=noninteractive
 
 # system tools the scripts may call (redis is optional for the engine; gh is
-# used to publish the port; unzip/xz only matter for the Flutter fallback)
+# used to publish the port)
 RUN apt-get update -qq \
  && apt-get install -y -qq --no-install-recommends \
         redis-server curl git unzip xz-utils ca-certificates gnupg \

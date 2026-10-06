@@ -16,7 +16,6 @@ RUN_DIR = cfg.REPO_ROOT / ".run"
 LOG_DIR = RUN_DIR / "logs"
 JOURNAL = LOG_DIR / "autostart.journal"
 STAMP = RUN_DIR / ".provisioned"
-FLUTTER_LOG = cfg.REPO_ROOT / "flutter-setup.log"
 PIP_LOG = Path("/tmp/pip-install.log")
 SERVER_LOG = cfg.REPO_ROOT / "server.log"
 
@@ -84,7 +83,6 @@ def status(lines: int = 60) -> dict:
         "logs": {
             "setup_passes": [_file(p, lines) for p in setup_logs],
             "pip": _file(PIP_LOG, lines),
-            "flutter": _file(FLUTTER_LOG, min(lines, 30)),
             "server": _file(SERVER_LOG, min(lines, 30)),
         },
         "retry": {

@@ -56,7 +56,7 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
 <div class="bar"><i></i></div>
 <h3>autostart journal</h3><pre>{journal}</pre>
 <h3>provisioning log</h3><pre>{setup}</pre>
-<p class="dim">First start downloads ~150 MB of Python packages (once). The Flutter client is built in the background afterwards and appears at /flutter.</p>
+<p class="dim">First start downloads ~150 MB of Python packages (once).</p>
 </body></html>"""
 
 

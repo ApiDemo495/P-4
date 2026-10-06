@@ -41,21 +41,6 @@ backend/models/
 logs/
 backend/data_state/
 
-# ---- Flutter / Dart ----
-frontend/.dart_tool/
-frontend/.packages
-frontend/.flutter-plugins
-frontend/.flutter-plugins-dependencies
-frontend/build/*
-!frontend/build/web/
-frontend/ios/Pods/
-frontend/android/.gradle/
-frontend/android/local.properties
-frontend/**/GeneratedPluginRegistrant.*
-.pub-cache/
-.pub/
-flutter_export_environment.sh
-
 # ---- Editors / OS ----
 .idea/
 .vscode/*
@@ -71,11 +56,5 @@ Thumbs.db
 server.log
 
 # automatic-startup runtime state (never committed)
-flutter-setup.log
-frontend/build/*
-!frontend/build/web/
-frontend/.dart_tool/
-frontend/.flutter-plugins*
-frontend/.packages
 .run/
 node_modules/

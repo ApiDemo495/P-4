@@ -11,9 +11,7 @@ stops being forwarded - so it is tested here:
 2.  the autostart script is valid bash and executable;
 3.  it self-heals: it re-provisions when the virtualenv is missing or
     ``requirements.txt`` changed (this is what makes a rebuilt container work);
-4.  nothing in the path blocks on the optional Flutter download - it has to run
-    in the background, or a user with a slow connection would wait minutes
-    before the dashboard came up;
+4.  nothing in the path blocks on anything optional;
 5.  the path is idempotent: every step is guarded, so running it twice is safe.
 """
 
@@ -78,7 +76,6 @@ def test_the_one_port_story_survives(config: dict) -> None:
 def test_the_environment_switches_are_declared(config: dict) -> None:
     env = config.get("remoteEnv", {})
     assert env.get("PYTHONPATH") == "${containerWorkspaceFolder}"
-    assert env.get("AUTO_FLUTTER") == "1", "the Flutter download is part of 'download everything'"
 
 
 def test_the_autostart_script_is_valid_bash() -> None:
@@ -101,30 +98,6 @@ def test_it_self_heals_a_missing_or_changed_environment() -> None:
     assert ".venv/bin/python" in text or 'VENV/bin/python' in text
 
 
-def test_the_flutter_download_never_blocks_the_dashboard() -> None:
-    """The ~700 MB download runs in the background and is logged, not awaited."""
-    text = AUTOSTART.read_text()
-    flutter_block = text.split("start_flutter()", 1)[1].split("\n}", 1)[0]
-    assert "nohup" in flutter_block, "the Flutter setup must be detached"
-    assert "&" in flutter_block, "the Flutter setup must not be awaited"
-    assert "flutter-setup.log" in text, "the download needs a log the user can read"
-    # ... and the engine must start before/independently of it.
-    attach = text.split('attach)', 1)[1]
-    assert attach.index("start_engine") < attach.index("start_flutter")
-    # postCreateCommand must not wait on it either: a bare `wait` with no
-    # arguments would block container creation for the whole download.  Comments
-    # are stripped first, so the note explaining this rule does not trip it.
-    provision_block = text.split("  provision)", 1)[1].split(";;", 1)[0]
-    commands = [
-        line.strip()
-        for line in provision_block.splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    ]
-    assert "wait" not in commands, (
-        "the provision step must never wait for the Flutter download"
-    )
-
-
 def test_the_engine_start_is_idempotent_and_supervised() -> None:
     text = AUTOSTART.read_text()
     assert "run.sh" in text and "--bg" in text, "the engine must be started through run.sh --bg"
@@ -145,7 +118,6 @@ def test_the_restart_path_is_documented_for_the_user() -> None:
     """README: create the codespace, run nothing, and how to stop/restart."""
     readme = (ROOT / "README.md").read_text()
     assert "codespace_autostart" in readme or "zero commands" in readme.lower()
-    assert "AUTO_FLUTTER" in readme, "the Flutter opt-out must be documented"
 
 
 # ---------------------------------------------------------------------------
@@ -186,11 +158,3 @@ def test_nothing_in_the_automatic_path_can_wait_for_a_keyboard() -> None:
     setup = (ROOT / ".devcontainer" / "setup.sh").read_text()
     assert "DEBIAN_FRONTEND=noninteractive" in setup
     assert "sudo -n" in setup and "\n  $sudo_opt apt-get" not in setup.replace("sudo -n", "")
-    web = (ROOT / "frontend" / "run_web.sh").read_text()
-    # the prompt is skipped outright when INSTALL_FLUTTER=1, and even an
-    # interactive prompt times out instead of blocking for ever
-    assert '[ "${INSTALL_FLUTTER:-0}" != "1" ] && [ -t 0 ]' in web
-    assert "read -r -t 60 answer" in web
-    assert "FLUTTER_SUPPRESS_ANALYTICS=true" in web and "precache --web" in web
-    auto = AUTOSTART.read_text()
-    assert "run_web.sh\" </dev/null" in auto

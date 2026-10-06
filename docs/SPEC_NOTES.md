@@ -1562,3 +1562,16 @@ why. "offline" now means *no real data at all*.
 **Also.** `tools/self_update.sh --check` emitted an all-digit short SHA bare
 (`"local":0971472`) → invalid JSON; SHAs are always strings now. Assets
 `v=2.21.0`. Tests: `test_round_af.py` (288 total), payload check 69/69.
+
+## AG — one frontend
+
+The user chose to merge the two frontends into one: the Flutter client is gone.
+Removed: `frontend/` (Dart sources, web scaffold, the committed bundle), the
+`flutter-web` GitHub Action and its commit script, `backend/api/flutter_build.py`,
+the `/flutter*` and `/api/flutter/*` routes, `start_flutter` in the autostart,
+`AUTO_FLUTTER` / `INSTALL_FLUTTER`, the Dart VS Code extensions and task,
+`tools/dart_balance.py`, the Dart scanner in `tools/dead_code.py`, the Flutter
+assertions in the tests, and every README / spec reference. Everything the app
+offers is the web dashboard on port 8000 - which already carried every feature
+(the Flutter client rendered the same payloads). `.gitignore` no longer tracks
+a build directory. Tests 270, dead code 0, payload check 69/69.

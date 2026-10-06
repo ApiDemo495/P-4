@@ -1,6 +1,6 @@
 """The prediction block: side, levels, freshness and the reasoning behind it.
 
-Every payload the dashboard and the Flutter client render carries a
+Every payload the dashboard renders carries a
 ``prediction`` object.  It exists because a number on its own ("SELL") is not
 actionable: the user asked for three things and this module is all three:
 

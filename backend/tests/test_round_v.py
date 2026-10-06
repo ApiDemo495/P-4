@@ -168,10 +168,6 @@ def test_stall_defences_exist_on_every_layer():
     assert '"stalled":[[:space:]]*true' in run and "engine unresponsive" in run
     js = (root / "backend/web/app.js").read_text()
     assert "silentMs > 15000" in js and "state.lastMessageAt = Date.now()" in js
-    dart = (root / "frontend/lib/services/signal_socket.dart").read_text()
-    assert "SOCKET_SILENT" in dart and "silenceLimit" in dart
-    auto = (root / "tools/codespace_autostart.sh").read_text()
-    assert "nice -n 19" in auto
 
 
 # ---------------------------------------------------------------------------

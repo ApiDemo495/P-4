@@ -110,19 +110,3 @@ def test_autostart_journals_every_line_for_the_app():
     assert set(payload) >= {"verdict", "healthy", "provisioned", "failures", "journal", "logs", "retry"}
 
 
-def test_flutter_installer_prefers_the_archive_and_never_hits_already_exists():
-    script = (ROOT / "frontend/run_web.sh").read_text()
-    archive = script.index("route A (preferred): the official release archive")
-    clone = script.index("route B: shallow git clone")
-    assert archive < clone                                        # archive first, git fallback
-    assert "git clone" in script[clone:]
-    assert 'git clone --depth 1 --single-branch -b stable \\\n           https://github.com/flutter/flutter.git "$staging"' in script  # fresh dir, then mv
-    assert "removing an incomplete Flutter SDK" in script and "flutter-sdk" in script
-    assert "-C -" in script                                       # resumable download
-    assert "flutter_home" in script
-    setup = (ROOT / ".devcontainer/setup.sh").read_text()
-    assert "skipping apt (fast path)" in setup and "--prefer-binary" in setup
-    assert '"waitFor": "postCreateCommand"' in (ROOT / ".devcontainer/devcontainer.json").read_text()
-    auto = (ROOT / "tools/codespace_autostart.sh").read_text()
-    assert "start_placeholder" in auto and "stop_placeholder" in auto
-    assert "still waiting" in auto                              # the lock wait talks

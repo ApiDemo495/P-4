@@ -11,13 +11,12 @@
 #   bash run.sh --urls          print every feature URL (all on ONE port)
 #   bash run.sh --status        is it running, and does the port really answer?
 #   bash run.sh --stop          stop the engine (and its supervisor)
-#   bash run.sh --clean         stop the engine AND any stray Flutter dev
-#                               servers, then report what still holds the ports
+#   bash run.sh --clean         stop the engine AND any stray dev servers,
+#                               then report what still holds the ports
 #
 # EVERYTHING the app offers - dashboard, API, WebSocket stream, matrix viewer,
-# settings page and the Flutter build - is served from ONE port (8000).  There
-# is no second port to forward, and any other listening port is somebody else's
-# process (usually a `flutter run` dev server started by hand).
+# settings page - is served from ONE port (8000).  There is no second port to
+# forward, and any other listening port is somebody else's process.
 #
 # ``--bg`` is idempotent (running it twice does not start a second server) and
 # the engine runs under a supervisor that restarts it if it ever dies.  The
@@ -220,9 +219,8 @@ print_urls() {
   say "   /            dashboard (widget panel, brain, history, news)"
   say "   /matrix      the 80x80 connectome heat-map"
   say "   /settings    keys, local model, brain reconnect, news poll"
-  say "   /flutter     the Flutter client - $([ -d "$REPO_ROOT/frontend/build/web" ] && echo 'built and served' || echo 'not built yet: bash frontend/run_web.sh')"
   say "   /docs        the OpenAPI explorer"
-  say "   /ws/signals  the WebSocket stream (used by both clients)"
+  say "   /ws/signals  the WebSocket stream"
   say ""
   if [ -n "${CODESPACE_NAME:-}" ]; then
     say "   Codespaces: PORTS tab -> port ${PORT} -> globe icon (or: bash run.sh --public)"
@@ -271,7 +269,7 @@ stop_stray_dev_servers() {
       found=1
     fi
   done
-  [ "$found" = 1 ] && ok "stopped stray Flutter/Dart dev servers (they open random ports)" || true
+  [ "$found" = 1 ] && ok "stopped stray dev servers (they open random ports)" || true
 }
 
 report_open_ports() {
@@ -440,10 +438,8 @@ if [ "$MODE" = "check" ]; then
     else
       printf '%s\n' "$local_rows" | sed 's/^/                     /'
     fi
-    say "                     ${DIM}(8000 is ours; other ports belong to flutter run or other tools)${R}"
+    say "                     ${DIM}(8000 is ours; other ports belong to other tools)${R}"
   fi
-  say "flutter          : $(command -v flutter >/dev/null && flutter --version 2>/dev/null | head -1 || echo 'not on PATH - bash frontend/run_web.sh installs it')"
-  say "flutter web build: $([ -d "$REPO_ROOT/frontend/build/web" ] && echo 'frontend/build/web exists -> served at /flutter' || echo 'not built -> bash frontend/run_web.sh')"
   say ""
   say ""
   say "Start the app with:  bash run.sh"
@@ -622,11 +618,6 @@ print_banner() {
   say "   /            dashboard   ${DIM}(widget panel, brain, news, history)${R}"
   say "   /settings    ${DIM}keys, local model, brain reconnect${R}"
   say "   /matrix      ${DIM}80x80 connectome${R}"
-  if [ -d "$REPO_ROOT/frontend/build/web" ]; then
-    say "   /flutter     Flutter client"
-  else
-    say "   /flutter     ${DIM}not built - bash frontend/run_web.sh${R}"
-  fi
   say "   /docs        ${DIM}API explorer${R}"
   say ""
   say "   ${DIM}The URL answers once 'Uvicorn running on http://0.0.0.0:${PORT}' appears below -${R}"

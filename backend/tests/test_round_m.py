@@ -7,8 +7,6 @@
     cell may depend on wall-clock time or on the live formula pass any more.
 2.  Brain verification must not print an absent optional token, or an empty
     first-run cache, as a failure - and the cache step passes on the next run.
-3.  The Flutter client is supervised by the engine: a status endpoint, a
-    (re)start endpoint and a status page instead of a bare 404.
 """
 
 from __future__ import annotations
@@ -25,8 +23,6 @@ from backend.core.redis_bus import Store
 
 ROOT = Path(__file__).resolve().parents[2]
 APP_JS = (ROOT / "backend" / "web" / "app.js").read_text(encoding="utf-8")
-PANEL_DART = (ROOT / "frontend" / "lib" / "widgets" / "signal_widget_panel.dart").read_text(encoding="utf-8")
-APP_STATE_DART = (ROOT / "frontend" / "lib" / "state" / "app_state.dart").read_text(encoding="utf-8")
 
 
 def _js_function(name: str) -> str:
@@ -62,14 +58,6 @@ def test_the_micro_line_reads_the_lock_not_the_live_tape() -> None:
     assert "prediction?.detail?.micro" in body
     live = _js_function("renderLiveFormulas")
     assert "renderMicro(" not in live, "the live pass must not repaint the prediction cell"
-
-
-def test_the_flutter_prediction_cell_is_static_too() -> None:
-    assert "updated ${(state.prediction.ageSeconds" not in PANEL_DART
-    assert "s left · " not in PANEL_DART
-    assert "'locked ${prediction.horizon.releaseClock" in PANEL_DART
-    assert "MicroReading get micro => prediction.detail.micro.hasData" in APP_STATE_DART
-    assert "lastMicro.hasData ? lastMicro : (prediction" not in APP_STATE_DART
 
 
 def test_the_lock_watch_tool_exists() -> None:
@@ -154,43 +142,11 @@ def test_the_settings_page_has_fields_for_both_brain_tokens() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. the engine supervises the Flutter build
+# 3. the engine supervisor runs in its own session (survives hook teardown)
 # ---------------------------------------------------------------------------
-def test_flutter_status_reports_without_a_build(monkeypatch) -> None:
-    from backend.api import flutter_build as fb
-
-    monkeypatch.delenv("CODESPACE_NAME", raising=False)
-    monkeypatch.setenv("AUTO_FLUTTER", "0")
-    status = fb.status()
-    for key in ("built", "running", "wanted", "stage", "log_tail", "retry", "manual"):
-        assert key in status
-    assert status["wanted"] is False
-    assert fb.ensure_started() is None, "AUTO_FLUTTER=0 must never start a download"
-    page = fb.status_page(8000)
-    assert "/api/flutter/build" in page and "flutter-setup.log" in page
-
-
-def test_flutter_is_wanted_in_a_codespace(monkeypatch) -> None:
-    from backend.api import flutter_build as fb
-
-    monkeypatch.delenv("AUTO_FLUTTER", raising=False)
-    monkeypatch.setenv("CODESPACE_NAME", "demo")
-    assert fb.wanted() is True
-    monkeypatch.setenv("AUTO_FLUTTER", "0")
-    assert fb.wanted() is False
-
-
-def test_the_flutter_routes_are_registered() -> None:
-    from backend.api.main import app
-
-    paths = {getattr(route, "path", "") for route in app.routes}
-    assert "/api/flutter/status" in paths and "/api/flutter/build" in paths
-
-
-def test_the_autostart_hook_uses_its_own_session() -> None:
-    text = (ROOT / "tools" / "codespace_autostart.sh").read_text(encoding="utf-8")
-    block = text.split("start_flutter()", 1)[1].split("\n}", 1)[0]
-    assert "setsid" in block
+def test_the_engine_supervisor_uses_its_own_session() -> None:
+    text = (ROOT / "run.sh").read_text(encoding="utf-8")
+    assert "setsid nohup" in text
 
 
 # ---------------------------------------------------------------------------

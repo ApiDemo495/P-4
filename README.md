@@ -49,7 +49,7 @@ the detectors into the manipulation score, and the whole chain is frozen with
 the signal at lock time.
 
 **The whole app runs on ONE port.** Dashboard, API, WebSocket, matrix viewer,
-settings page and the Flutter build are all served from port **8000**, so there
+settings page are all served from port **8000**, so there
 is exactly one URL to forward and no second window to keep open.
 
 ---
@@ -62,7 +62,7 @@ the rest by itself:
 
 | When | What happens automatically |
 | --- | --- |
-| container created | the Codespace starts from the **pre-provisioned image** `ghcr.io/apidemo495/p-4-dev` (built by the `devcontainer-image` Action from `.devcontainer/Dockerfile`: Python 3.11 + every line of `requirements.txt` already installed in `/opt/venv`, redis, gh). `--provision` adopts `/opt/venv` as `.venv` in about one second, writes `.env`, starts redis. Nothing is pip-installed and **no Flutter SDK is downloaded** - the web client is already committed in `frontend/build/web` |
+| container created | the Codespace starts from the **pre-provisioned image** `ghcr.io/apidemo495/p-4-dev` (built by the `devcontainer-image` Action from `.devcontainer/Dockerfile`: Python 3.11 + every line of `requirements.txt` already installed in `/opt/venv`, redis, gh). `--provision` adopts `/opt/venv` as `.venv` in about one second, writes `.env`, starts redis. Nothing is pip-installed and nothing else is downloaded |
 | every start / wake | `--start`: self-heals a missing `.venv` or a changed `requirements.txt`, then starts the engine under its supervisor |
 | every editor attach | `--attach`: the same, plus it waits until the first prediction is locked and prints the URL |
 
@@ -77,14 +77,12 @@ happen), the editor is only handed over after `postCreateCommand` finishes,
 provisioning makes up to three passes (a clean `.venv` on the second) and
 checks that **every** module in `requirements.txt` imports before it calls the
 environment ready. Nothing in the automatic path can wait for a keyboard: apt
-is non-interactive, `sudo` never asks for a password, and the Flutter download
-runs detached with no prompt. Logs: `.run/logs/setup-*.log`,
-`/tmp/pip-install.log`, `flutter-setup.log`.
+is non-interactive and `sudo` never asks for a password. Logs:
+`.run/logs/setup-*.log`, `/tmp/pip-install.log`.
 
 Port **8000** is forwarded, made **public** and opened in your browser for you,
 so the dashboard appears on its own. Everything else is on that one URL:
-`/` dashboard · `/settings` API keys · `/matrix` connectome · `/docs` API ·
-`/flutter` the Flutter client (once its background build finishes).
+`/` dashboard · `/settings` API keys · `/matrix` connectome · `/docs` API.
 
 **If it ever looks stuck**, open the Ports tab and click the globe next to
 `8000`, or open the URL it prints. The engine restarts itself if it stops.
@@ -93,7 +91,6 @@ so the dashboard appears on its own. Everything else is on that one URL:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `AUTO_FLUTTER` | `1` | download the Flutter SDK (~700 MB) and build the web client. Set `0` to skip |
 | `PORT` | `8000` | the single port everything is served on |
 | `AUTO_OPEN` | `1` | try to make the forwarded port public |
 
@@ -197,54 +194,6 @@ curl -s -X POST localhost:8000/api/update/apply
 bash tools/codespace_autostart.sh --update
 ```
 
-### The Flutter client is pre-built on GitHub — `/flutter` works the moment the engine is up
-
-Every push to this branch that touches `frontend/` runs the **flutter-web**
-GitHub Action (`.github/workflows/flutter-web.yml`): it builds the web client on
-GitHub's runners and commits the result to **`frontend/build/web` on this same
-branch** (commit message `Flutter web bundle (built by GitHub Actions) [skip ci]`).
-A new Codespace therefore already contains the bundle, the engine serves it at
-`/flutter` with **no SDK download at all**, and the self-updater brings every
-newer bundle in. The bundle has no server address baked in (the client uses
-the page's own origin), so it works on any Codespace URL or on localhost. The
-in-Codespace download below is now only the fallback for a checkout without a
-bundle.
-
-### Fallback — the Flutter client builds itself, watch it or restart it in the browser
-
-In a Codespace the engine starts the SDK download and the web build on its
-own. Open `/flutter` on the same port: until the build lands it is a status
-page (stage, the tail of `flutter-setup.log`, a **Start / Restart** button) and
-it turns into the app by itself. The same information as JSON:
-
-```bash
-curl -s localhost:8000/api/flutter/status | python3 -m json.tool
-```
-
-Restart the download without a terminal (the button does exactly this):
-
-```bash
-curl -s -X POST localhost:8000/api/flutter/build
-```
-
-Or run it by hand (≈700 MB, once):
-
-```bash
-INSTALL_FLUTTER=1 bash frontend/run_web.sh
-```
-
-Watch it:
-
-```bash
-tail -f flutter-setup.log
-```
-
-### Optional — hot reload while editing the Flutter UI
-
-```bash
-bash frontend/run_web.sh --dev
-```
-
 ---
 
 ## 2. What each command does
@@ -256,7 +205,7 @@ bash frontend/run_web.sh --dev
 | `bash run.sh --status` | is the supervisor running, is the port listening, does it answer HTTP, plus the current URL list |
 | `bash run.sh --urls` | prints every feature URL (all on the one port) |
 | `bash run.sh --check` | full environment diagnosis; starts nothing |
-| `bash run.sh --clean` | stops the engine and any stray Flutter/Dart dev servers, then lists what still listens |
+| `bash run.sh --clean` | stops the engine and any stray dev servers, then lists what still listens |
 | `bash run.sh --stop` | stops the engine and its supervisor |
 | `bash run.sh --setup-only` | installs everything, starts nothing |
 | `bash run.sh --port 8020` | uses a different port (then forward that one instead) |
@@ -267,9 +216,6 @@ bash frontend/run_web.sh --dev
 | `OUTCOME_HORIZON_SECONDS=0` | `0` = score each prediction one window later (60 s) |
 | `bash run.sh --public` | flips the Codespaces port to public |
 | `bash .devcontainer/setup.sh` | the Codespaces `postCreateCommand`: system packages, venv, requirements, redis, `.env` |
-| `bash frontend/run_web.sh` | downloads the Flutter SDK if needed and builds the web client into `frontend/build/web` |
-| `bash frontend/run_web.sh --check` | reports whether the SDK is installed and whether a build exists — downloads nothing |
-| `bash frontend/run_web.sh --dev` | optional hot-reload dev server, fixed at port 8081 |
 
 ---
 
@@ -282,16 +228,14 @@ Open the URL `bash run.sh --urls` prints. Everything lives under it:
 | `/` | dashboard — widget panel, brain wiring, hedge, agents, news, history, formulas |
 | `/settings` | keys, local model, brain reconnect, news poll |
 | `/matrix` | the 80×80 connectome with the last activation trace |
-| `/flutter` | the Flutter client, once `bash frontend/run_web.sh` has built it |
 | `/docs` | the OpenAPI explorer |
-| `/ws/signals` | the WebSocket stream both clients use (`EMOTION` messages twice a second) |
+| `/ws/signals` | the WebSocket stream the dashboard uses (`EMOTION` messages twice a second) |
 | `/api/emotions` | the crowd's emotions: live reading, lock-time reading, dampening |
 | `/api/emotions/deep` | the deep layer: fourteen microstructure formulas, Bayesian posterior, reasoning chain, the likelihood table |
 
-`bash frontend/run_web.sh --dev` is the only command that opens a second port,
-and it is pinned to **8081**. Anything else in your PORTS tab belongs to another
-tool you started; `bash run.sh --clean` stops what it can and tells you what is
-left.
+Nothing in this project opens a second port. Anything else in your PORTS tab
+belongs to another tool you started; `bash run.sh --clean` stops what it can
+and tells you what is left.
 
 ---
 
@@ -383,34 +327,16 @@ Codespace tab and let the attach command run, then reload the URL.
 | 502 right after opening the Codespace | the container was asleep; the attach command has not finished | wait a few seconds, reload; `bash run.sh --bg` if needed |
 | "Warming up…" banner in the dashboard | the port answers but the brain/market warm-up has not finished | wait ~5 s, the banner clears by itself |
 | A notice covering the whole screen | it cannot happen any more: notices are inline chips and a red HOLD box, never a full-screen layer | nothing to fix — if you ever see one, it is a browser cache: reload with `Ctrl+Shift+R` |
-| Several ports, each one "not working" | dead processes of other tools (`flutter run` picks a random port) | `bash run.sh --clean`, then forward **only 8000** |
+| Several ports, each one "not working" | dead processes of other tools | `bash run.sh --clean`, then forward **only 8000** |
 | `pip install` fails or "downloading requirements" stalls | `python3-venv` missing, PEP 668, or a proxy | see the block below |
-| `fatal: destination path 'flutter' already exists` | a half-finished earlier download left a folder behind | fixed: the installer now moves any non-working folder aside and downloads the **release archive** (one resumable file) before ever trying git; just click Restart on `/flutter` |
-| Flutter SDK download fails on every route | github.com and storage.googleapis.com both blocked | manual install, see the box below |
 | `bash: .venv/bin/python: No such file` | the venv was never created | `bash run.sh` creates it |
 | `ModuleNotFoundError: No module named 'backend'` | started without the repo root on `PYTHONPATH` | use `bash run.sh` |
-| `/flutter` returns `{"detail": "The Flutter web build has not been created yet."}` | the client was never built | `bash frontend/run_web.sh` |
 | `L4 Fallback brain matrix` + a STUB agent chip | neuPrint unreachable, local stub enabled — both are supported modes | add a neuPrint token in the UI, load a real `.gguf` in Settings |
 | VS Code says `command 'markdown.showPreview' not found` | the Markdown extension is not available in that Codespace - it is an editor problem, not an app problem | read the guide in the app instead: open `/readme` (nav → 📖 Guide); every doc is there with copy buttons |
-| "Problem in self starting / self downloading" | a hook step failed or the pip download was interrupted | open `/settings` → **Codespace self-start** (or `GET /api/system/autostart`): the journal and the pip/setup/Flutter logs are shown; it retries on the next start/attach |
+| "Problem in self starting / self downloading" | a hook step failed or the pip download was interrupted | open `/settings` → **Codespace self-start** (or `GET /api/system/autostart`): the journal and the pip/setup logs are shown; it retries on the next start/attach |
 | Brain says `Offline connectome` with a neuPrint token pasted | the token was rejected or neuPrint is unreachable from your network | `/settings` → Brain → **Force Reconnect**; the step detail says exactly which (no package install is needed - the client is built in) |
 | `market_data → simulator` in the log | Binance and CoinGecko are unreachable from your network | `MARKET_DATA_MODE=coingecko`, or keep the simulator (always labelled) |
 
-### Installing the Flutter SDK by hand (no git)
-
-```
-curl -fL -o /tmp/flutter.tar.xz https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.35.5-stable.tar.xz
-```
-
-```
-rm -rf ~/flutter && tar -xJf /tmp/flutter.tar.xz -C ~
-```
-
-```
-bash frontend/run_web.sh
-```
-
-Any `flutter_linux_<version>-stable.tar.xz` from https://docs.flutter.dev/install/archive works; the script finds `~/flutter/bin/flutter` and only builds. If `~/flutter` cannot be removed, the installer uses `~/flutter-sdk` by itself and remembers it in `.run/flutter_home`.
 
 ### When the requirements download fails
 
@@ -437,13 +363,6 @@ provisioning pass without recreating the container:
 
 ```bash
 rm -f .run/.provisioned && bash tools/codespace_autostart.sh --attach
-```
-
-If the Flutter build did not appear at `/flutter`, its log is `flutter-setup.log`;
-restart the download with:
-
-```bash
-rm -f .run/flutter.pid && bash tools/codespace_autostart.sh --attach
 ```
 
 ---
@@ -489,7 +408,7 @@ BASE=http://127.0.0.1:8000 node tools/dashboard_payload_check.js
 ```
 
 Nothing in the tree may be unused. The sweep covers Python, the browser bundle,
-the stylesheet and the Dart client, and `backend/tests/test_dead_code.py` fails
+the stylesheet, and `backend/tests/test_dead_code.py` fails
 the build if it finds anything.
 
 ```bash
@@ -514,7 +433,6 @@ tail -f server.log
 | `backend/agents` | Gemini, local GGUF/ONNX, GitHub Models, fusion, orchestrator |
 | `backend/web` | zero-build dashboard (`/`, `/matrix`, `/settings`) |
 | `backend/tests` | `smoke.py` + `test_e2e.py` (Appendix E) |
-| `frontend` | Flutter client (same protocol, same fixed widget layout, **Brain** tab) |
 | `docs` | [`SPECIFICATION_v2.md`](docs/SPECIFICATION_v2.md), [`SPEC_NOTES.md`](docs/SPEC_NOTES.md) |
 
 ---
@@ -583,8 +501,7 @@ tail -f server.log
   summary plus bullets: the brain read-out and its fusion weight, the formula
   consensus (how many of the directional formulas agree), the strongest
   supporters *and* the dissenters by name and value, the hedge state, the news
-  headline, the level geometry and the measured hit rate. The web panel and the
-  Flutter panel render the same list.
+  headline, the level geometry and the measured hit rate.
 * **1:1 take-profit / stop-loss.** One volatility-derived distance is clamped
   once and applied to both sides, so `tp_bps == sl_bps` and the ratio is exactly
   `1.00:1` (`RR_TARGET` changes it, the default is 1.0). Levels are re-stamped
@@ -605,9 +522,9 @@ tail -f server.log
   countdown · side & conviction. Row 2: take-profit & stop-loss (1:1) ·
   prediction accuracy (win rate, per-side hit rates, freshness, scoring
   horizon). An emergency override is a small inline chip under the prediction —
-  never a full-screen overlay. The Flutter client adds haptics (`mediumImpact`
-  on a direction change, `heavyImpact` + `vibrate` on an override,
-  `selectionClick` on the first lock).
+  never a full-screen overlay. The dashboard adds haptics (`navigator.vibrate`
+  on a direction change, a longer pattern on an override, a tap on the first
+  lock).
 * **Six times the data.** `DATA_MULTIPLIER = 6` scales every buffer: 3 600
   ticks, 120 book levels per side, 360 candles, 120 headlines, 120 scored
   outcomes, 5 400 spread observations, a 360-window formula history, and 72

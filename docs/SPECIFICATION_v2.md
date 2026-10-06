@@ -586,12 +586,10 @@ second row.
 
 ## 11. User interface
 
-Two presentation layers share one API:
-
-1. **Web dashboard** (`backend/web/`), served by FastAPI with no build step —
-   this is the reference implementation and the live demo.
-2. **Flutter app** (`frontend/`), the mobile client; identical information
-   architecture, same WebSocket protocol.
+One presentation layer: the **web dashboard** (`backend/web/`), served by
+FastAPI with no build step, responsive down to phone widths. (A separate
+Flutter client existed until Round AG; it was merged away so every feature
+lives in one place - see `docs/SPEC_NOTES.md` §AG.)
 
 ### 11.1 Dashboard panels
 
@@ -669,27 +667,12 @@ Credentials are managed from the browser; the command line is never required.
 * No credential is ever logged, echoed back to the client, or written anywhere
   except process memory and (opt-in) `.env`.
 
-### 11.6 Flutter client
+### 11.6 Haptics
 
-`frontend/lib` mirrors this: `SignalWidgetPanel` (the same fixed two-row widget
-layout, with a `GlitterBox`, an animated `AnimatedSwitcher` prediction and a
-countdown ring), `SignalPanel`, `NewsCard`, `HedgeDashboard`,
-`FormulaExplorer`, `AgentList` widgets over a `SignalSocket` service, plus a
-dedicated **Brain** tab that renders `/api/brain/wiring` and
-`/api/brain/explain`, and a `CycleTimer` driven from the same `status` payload.
-
-Haptics are part of the protocol on mobile: a direction change fires
-`HapticFeedback.mediumImpact()`, an emergency override fires `heavyImpact()` +
-`vibrate()` (then a second pulse), and the first lock of a session fires
-`selectionClick()` — the user feels a new window without staring at the screen.
-The web dashboard applies the same rule through `navigator.vibrate` where the
-browser supports it.
-
-The client is built for the web with `bash frontend/run_web.sh` and served by the
-engine itself at **`/flutter`** (`frontend/build/web` is mounted on demand), so
-the mobile client and the API share one origin and one forwarded port. When no
-`--dart-define=API_BASE` is supplied the client talks to the origin it was served
-from (`Uri.base.origin`); native builds default to `http://localhost:8000`.
+A direction change fires a short `navigator.vibrate` pulse, an emergency
+override a longer pattern, the first lock of a session a tap, and every `¶gn`
+mark a whisper - where the browser supports it (Android Chrome); elsewhere the
+animations carry the same cue.
 
 ---
 
@@ -797,7 +780,6 @@ backend/
   agents/     base, gemini, local model, github, fusion, orchestrator
   web/        dashboard (index.html, app.js, styles.css, matrix, settings)
   tests/      smoke.py + test_e2e.py (Appendix E)
-frontend/     Flutter client (lib/models, services, screens, widgets)
 docs/         SPECIFICATION_v2.md, SPEC_NOTES.md
 .devcontainer/ devcontainer.json, setup.sh
 ```

@@ -4,14 +4,10 @@
   // from .devcontainer/Dockerfile: Python 3.11 + every requirement already in
   // /opt/venv, redis, gh.  A new Codespace pulls one cached image - no apt, no
   // pip, no SDK download - and the engine is up seconds after the editor opens.
-  // (The Flutter client is pre-built on GitHub too: frontend/build/web is
-  // committed on this branch, so /flutter needs nothing downloaded either.)
   "image": "ghcr.io/apidemo495/p-4-dev:latest",
   // Codespaces: everything lives on ONE port - 8000 serves the dashboard, the
-  // API, the WebSocket stream, /matrix, /settings, /docs and the Flutter build
-  // at /flutter.  Nothing else needs forwarding, and ports you start by hand
-  // (a Flutter dev server, a scratch tool) stay silent instead of popping a
-  // broken preview.
+  // API, the WebSocket stream, /matrix, /settings and /docs.  Nothing else
+  // needs forwarding; ports you start by hand stay silent.
   "hostRequirements": {
     "cpus": 2,
     "memory": "4gb",
@@ -24,9 +20,7 @@
   // locked, publish the port and print the URL.  See tools/codespace_autostart.sh.
   //
   //   postCreateCommand  once per codespace - adopts /opt/venv as .venv (or
-  //                      installs if the image is not pre-built), .env, redis;
-  //                      the Flutter bundle is already committed, so nothing
-  //                      is downloaded
+  //                      installs if the image is not pre-built), .env, redis
   //   postStartCommand   every start / wake - self-heals a missing .venv or a
   //                      changed requirements.txt, then (re)starts the engine
   //   postAttachCommand  every editor attach - the same, plus the URL banner
@@ -42,21 +36,19 @@
   "forwardPorts": [8000],
   "portsAttributes": {
     "8000": {
-      "label": "Drosophila Trader - everything (dashboard, API, WS, /flutter)",
+      "label": "Drosophila Trader - everything (dashboard, API, WS)",
       "onAutoForward": "openBrowser",
       "visibility": "public"
     }
   },
-  // Any other port you start by hand (flutter run, a scratch tool) is left
+  // Any other port you start by hand (a scratch tool) is left
   // alone instead of auto-opening a preview that cannot work.
   "otherPortsAttributes": { "onAutoForward": "silent" },
   "customizations": {
     "vscode": {
       "extensions": [
         "ms-python.python",
-        "ms-python.vscode-pylance",
-        "Dart-Code.dart-code",
-        "Dart-Code.flutter"
+        "ms-python.vscode-pylance"
       ],
       "settings": {
         "python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python",
@@ -69,9 +61,6 @@
   },
   "remoteEnv": {
     "PYTHONPATH": "${containerWorkspaceFolder}",
-    "PYTHONUNBUFFERED": "1",
-    // 1 = download the Flutter SDK and build the web client automatically.
-    // Set it to 0 (or export AUTO_FLUTTER=0) to skip the ~700 MB download.
-    "AUTO_FLUTTER": "1"
+    "PYTHONUNBUFFERED": "1"
   }
 }

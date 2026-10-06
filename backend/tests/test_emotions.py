@@ -17,7 +17,6 @@ shape the prediction.  Each requirement has a test here:
 6.  **It is live**: the manager samples the tape on its own cadence, streams an
     ``EMOTION`` message, and every payload carries the block the UI draws.
 7.  **The UI draws it**: the dashboard has the panel and the stream handler, and
-    the Flutter client has the model.
 """
 
 from __future__ import annotations
@@ -41,9 +40,6 @@ APP_JS = ROOT / "backend" / "web" / "app.js"
 INDEX = ROOT / "backend" / "web" / "index.html"
 STYLES = ROOT / "backend" / "web" / "styles.css"
 CYCLE_PY = ROOT / "backend" / "core" / "cycle_manager.py"
-DART_MODEL = ROOT / "frontend" / "lib" / "models" / "signal.dart"
-DART_STATE = ROOT / "frontend" / "lib" / "state" / "app_state.dart"
-DART_PANEL = ROOT / "frontend" / "lib" / "widgets" / "emotion_panel.dart"
 
 SETTINGS = cfg.Settings(time_scale=1.0)
 
@@ -445,17 +441,6 @@ def test_the_dashboard_has_the_emotion_panel_and_the_stream_handler() -> None:
     css = STYLES.read_text()
     for cls in (".emotion-card", ".emotion-row", ".tone-gauge", ".timescale-cell", ".crowd-dot"):
         assert cls in css, cls
-
-
-def test_the_flutter_client_has_the_model_and_the_panel() -> None:
-    model = DART_MODEL.read_text()
-    assert "class EmotionReading" in model and "class EmotionScore" in model
-    assert "class CrowdEmotions" in model
-    state = DART_STATE.read_text()
-    assert "'EMOTION'" in state and "emotions" in state
-    panel = DART_PANEL.read_text()
-    assert "class EmotionPanel" in panel
-    assert "dominant" in panel and "manipulation" in panel
 
 
 # ---------------------------------------------------------------------------

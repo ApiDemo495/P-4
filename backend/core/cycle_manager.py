@@ -1464,7 +1464,7 @@ class CycleManager:
         return payload
 
     def signal_payload(self, signal: FrozenSignal | None = None) -> dict:
-        """The message the dashboard and the Flutter client both render.
+        """The message the dashboard renders.
 
         Every payload carries the window block, so a client can always answer
         "which second of which window am I looking at, and is the next signal
@@ -2120,7 +2120,7 @@ class CycleManager:
             "seconds_remaining": round(max(0.0, ends - now), 1),
             "window_seconds": period,
             # The authoritative clock block: every countdown in the dashboard and
-            # in the Flutter client is rendered from this, and from nothing else.
+            # is rendered from this, and from nothing else.
             "clock": self.master_clock(now),
             "computed_at": getattr(signal, "computed_at", "") if signal else "",
             "computed_seconds_ago": (

@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.api import (
@@ -33,7 +33,7 @@ from backend.api import (
     routes_signals,
     state,
 )
-from backend.api import flutter_build, self_update
+from backend.api import self_update
 from backend.core import config as cfg
 from backend.core.cycle_manager import CycleManager
 
@@ -114,10 +114,6 @@ async def lifespan(app: FastAPI):
     manager.mark_started()
 
     warm_task = asyncio.create_task(_warm_up(manager), name="warm-up")
-    # The Flutter client builds itself (Codespaces, or AUTO_FLUTTER=1): the
-    # engine supervises the download so it no longer depends on a devcontainer
-    # hook staying alive.  /flutter shows its progress until it lands.
-    flutter_build.ensure_started()
     # Self-update: in a Codespace the checkout fast-forwards its own branch on
     # its own (never a checkout, never main); AUTO_UPDATE=0 turns it off.
     update_task = asyncio.create_task(self_update.auto_loop(), name="auto-update") \
@@ -264,9 +260,7 @@ async def system_config() -> dict:
         # the numbers honestly instead of claiming a live tape in CI.
         "market_source": state.get_manager().market.active_source,
         "simulated": state.get_manager().market.active_source == "simulator",
-        # Lets the dashboard show/hide the "Flutter app" link and the first-run
-        # key banner without guessing.
-        "flutter_web": (cfg.REPO_ROOT / "frontend" / "build" / "web").exists(),
+        # Lets the dashboard show the first-run key banner without guessing.
         "env_file": (cfg.REPO_ROOT / ".env").exists(),
     }
 
@@ -313,15 +307,6 @@ else:  # pragma: no cover - only if the web assets were stripped
         return {"detail": "Dashboard assets not found", "api": "/docs"}
 
 
-# ---------------------------------------------------------------------------
-# Flutter client (served from the same origin as the API, so there is one port,
-# one forwarded URL and no CORS).  Resolved per request, which means
-# ``bash frontend/run_web.sh`` takes effect without restarting the server.
-# ---------------------------------------------------------------------------
-
-FLUTTER_BUILD_DIR = cfg.REPO_ROOT / "frontend" / "build" / "web"
-
-
 @app.get("/api/update/status")
 async def update_status(force: int = 0):
     """Is this checkout behind its own branch on origin?"""
@@ -339,62 +324,12 @@ async def update_apply():
 @app.get("/api/system/autostart")
 async def autostart_status(lines: int = 60):
     """What the zero-command Codespace start did: provisioning passes, pip
-    download, Flutter setup, self-update - with the tail of every log, so a
+    download, self-update - with the tail of every log, so a
     failed self-start or self-download is visible in the app, not just in a
     terminal banner (Round S)."""
     from backend.api import autostart_status as mod
 
     return mod.status(lines=max(5, min(int(lines), 400)))
-
-
-@app.get("/api/flutter/status")
-async def flutter_status():
-    """Is the Flutter web client built, building, or stuck - and where."""
-    return flutter_build.status()
-
-
-@app.post("/api/flutter/build")
-async def flutter_start_build(redirect: int = 0, force: int = 0):
-    """(Re)start the SDK download + web build in the background."""
-    result = flutter_build.start(force=bool(force))
-    if redirect:
-        return RedirectResponse(url="/flutter", status_code=303)
-    return result
-
-
-@app.get("/flutter")
-@app.get("/flutter/")
-async def flutter_index():
-    if not flutter_build.built():
-        return HTMLResponse(flutter_build.status_page(cfg.SETTINGS.port), status_code=200)
-    return FileResponse(str(FLUTTER_BUILD_DIR / "index.html"))
-
-
-@app.get("/flutter/{path:path}")
-async def flutter_asset(path: str):
-    if not flutter_build.built():
-        return _flutter_missing()
-    candidate = (FLUTTER_BUILD_DIR / path).resolve()
-    root = FLUTTER_BUILD_DIR.resolve()
-    if not str(candidate).startswith(str(root)) or not candidate.is_file():
-        # Flutter's asset manifest and canvaskit paths are absolute under the
-        # /flutter/ base href, so anything unknown falls back to index.html.
-        return FileResponse(str(root / "index.html"))
-    return FileResponse(str(candidate))
-
-
-def _flutter_missing() -> JSONResponse:
-    return JSONResponse(
-        status_code=404,
-        content={
-            "detail": "The Flutter web build has not been created yet.",
-            "build": "bash frontend/run_web.sh",
-            "web_dashboard": "/",
-            "install_flutter": "INSTALL_FLUTTER=1 bash frontend/run_web.sh",
-            "status": "/api/flutter/status",
-            "start": "POST /api/flutter/build",
-        },
-    )
 
 
 def main() -> None:

@@ -1,6 +1,6 @@
 """Round AA window clock - the ONE description of a prediction window.
 
-Every countdown (dashboard ring, Flutter ring, the `¶gn` phase stamp on each
+Every countdown (dashboard ring, the `¶gn` phase stamp on each
 formula and emotion) is rendered from the block built here and from nothing
 else.  The block is *absolute*: it names the instants the window started and
 ends (epoch ms and µs) plus the server's own time, so a client measures its

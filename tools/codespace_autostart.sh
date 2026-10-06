@@ -16,12 +16,9 @@
 #   2. start the engine on the one port (`bash run.sh --bg`, idempotent, with a
 #      supervisor that restarts it if it ever dies);
 #   3. wait until /api/health answers and the first prediction is published;
-#   4. make port 8000 public, so the forwarded URL opens in any browser;
-#   5. kick off the Flutter SDK download + web build **in the background** and
-#      log it to flutter-setup.log, so /flutter comes alive by itself.
+#   4. make port 8000 public, so the forwarded URL opens in any browser.
 #
 # Environment switches (all optional):
-#   AUTO_FLUTTER=0        skip the Flutter download and web build
 #   PORT=8020             serve on a different port
 #   AUTO_OPEN=0           do not try to make the port public
 # =============================================================================
@@ -42,16 +39,13 @@ done
 VENV="$REPO_ROOT/.venv"
 PY="$VENV/bin/python"
 # Runtime state lives in .run/, NOT in .devcontainer/: VS Code watches that
-# folder and any file written there ("flutter.pid", the stamp, the lock)
+# folder and any file written there (the stamp, the lock)
 # pops "We have noticed a change to the dev container configuration -
 # rebuild?".  Only devcontainer.json and setup.sh belong in .devcontainer/.
 STATE_DIR="$REPO_ROOT/.run"
 SETUP_SH="$REPO_ROOT/.devcontainer/setup.sh"
 STAMP="$STATE_DIR/.provisioned"
-FLUTTER_LOG="$REPO_ROOT/flutter-setup.log"
-FLUTTER_PID="$STATE_DIR/flutter.pid"
 PORT="${PORT:-8000}"
-AUTO_FLUTTER="${AUTO_FLUTTER:-1}"
 AUTO_OPEN="${AUTO_OPEN:-1}"
 
 if [ -t 1 ]; then B=$'\033[1m'; DIM=$'\033[2m'; R=$'\033[0m'
@@ -231,58 +225,6 @@ self_update() {
 }
 
 # -----------------------------------------------------------------------------
-# 2. Flutter: download the SDK and build the web client, in the background
-# -----------------------------------------------------------------------------
-flutter_running() {
-  [ -f "$FLUTTER_PID" ] || return 1
-  local pid
-  pid="$(cat "$FLUTTER_PID" 2>/dev/null || true)"
-  [ -n "$pid" ] || return 1
-  kill -0 "$pid" 2>/dev/null
-}
-
-flutter_ready() {
-  [ -f "$REPO_ROOT/frontend/build/web/index.html" ]
-}
-
-start_flutter() {
-  if [ "$AUTO_FLUTTER" != "1" ]; then
-    log "AUTO_FLUTTER=0 - skipping the Flutter download (set AUTO_FLUTTER=1 to enable)"
-    return 0
-  fi
-  if flutter_ready; then
-    ok "Flutter web bundle already built - served at /flutter"
-    return 0
-  fi
-  if flutter_running; then
-    log "Flutter setup is already running (pid $(cat "$FLUTTER_PID")) - log: flutter-setup.log"
-    return 0
-  fi
-  log "starting the Flutter SDK download + web build in the background"
-  log "it needs no input and does not block the dashboard; watch: tail -f flutter-setup.log"
-  # A new *session* (setsid), not just nohup: when a devcontainer lifecycle
-  # hook finishes, its process group can be cleaned up, and the download used
-  # to die with it - silently.  The engine also supervises this job itself
-  # (backend/api/flutter_build.py: /flutter shows progress, /api/flutter/build
-  # restarts it), so a dead download is visible and one click away from a retry.
-  # Lowest CPU/IO priority: the Dart compiler saturates a 2-core Codespace
-  # for minutes, and at normal priority it starved the engine's event loop -
-  # the WebSocket went silent and the panel froze under a running countdown.
-  local lowprio=""
-  command -v nice >/dev/null 2>&1 && lowprio="nice -n 19"
-  command -v ionice >/dev/null 2>&1 && lowprio="$lowprio ionice -c 3"
-  if command -v setsid >/dev/null 2>&1; then
-    setsid nohup $lowprio env INSTALL_FLUTTER=1 AUTO_FLUTTER=1 PORT="$PORT" \
-      bash "$REPO_ROOT/frontend/run_web.sh" </dev/null >>"$FLUTTER_LOG" 2>&1 &
-  else
-    nohup $lowprio env INSTALL_FLUTTER=1 AUTO_FLUTTER=1 PORT="$PORT" \
-      bash "$REPO_ROOT/frontend/run_web.sh" </dev/null >>"$FLUTTER_LOG" 2>&1 &
-  fi
-  echo $! > "$FLUTTER_PID"
-  disown 2>/dev/null || true
-}
-
-# -----------------------------------------------------------------------------
 # 3. The engine
 # -----------------------------------------------------------------------------
 engine_answers() {
@@ -385,13 +327,6 @@ banner() {
   printf '  api keys     %s/settings   (click, paste, test - no terminal)\n' "$url"
   printf '  brain matrix %s/matrix\n' "$url"
   printf '  api docs     %s/docs\n' "$url"
-  if flutter_ready; then
-    printf '  flutter app  %s/flutter\n' "$url"
-  elif flutter_running; then
-    printf '  flutter app  %s/flutter   (still building, log: flutter-setup.log)\n' "$url"
-  else
-    printf '  flutter app  %s/flutter   (not built; AUTO_FLUTTER=0 was set)\n' "$url"
-  fi
   if [ -n "${LOCKED_SIDE:-}" ]; then
     printf '  right now    %s locked · %s\n' "$LOCKED_SIDE" "$(prediction_age)"
   fi
@@ -416,13 +351,8 @@ EOF
 case "$MODE" in
   provision)
     start_placeholder
-    # NOTE: start_flutter detaches the download itself (nohup ... &).  Never
-    # `wait` on it here: postCreateCommand would then hang for the minutes the
-    # Flutter SDK takes, and the user would stare at a frozen "creating
-    # container" screen for a step that is entirely optional.
     with_lock provision
     with_lock start_engine
-    start_flutter
     ok "provisioning finished - the engine is starting; the attach hook prints the URL"
     ;;
   start)
@@ -431,7 +361,6 @@ case "$MODE" in
     with_lock provision
     with_lock start_engine
     open_port
-    start_flutter
     wait_until_ready 150 || true
     ;;
   attach)
@@ -440,7 +369,6 @@ case "$MODE" in
     with_lock provision
     with_lock start_engine
     open_port
-    start_flutter
     wait_until_ready 150 || true
     wait_until_locked
     banner
@@ -453,7 +381,6 @@ case "$MODE" in
     ;;
   status)
     printf 'engine: %s\n' "$(engine_answers && echo "answering on ${PORT}" || echo 'not answering')"
-    printf 'flutter: %s\n' "$(flutter_ready && echo built || (flutter_running && echo building || echo 'not started'))"
     printf 'url: %s\n' "$(codespace_url)"
     ;;
 esac

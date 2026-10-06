@@ -2,7 +2,7 @@
 
 The user's rule: *"remove unnecessary code that isn't in use but present."*  The
 sweep in ``tools/dead_code.py`` is how that stays true - it walks Python, the
-browser bundle, the stylesheet and the Flutter client and reports definitions
+browser bundle and the stylesheet and reports definitions
 with no callers.  These tests are the gate: they fail the moment a new orphan
 appears, and they fail if someone deletes the tool instead of keeping the tree
 clean.
@@ -58,7 +58,7 @@ def test_the_scanner_still_finds_its_own_fixtures() -> None:
     # (built at run time so this test file cannot make its own name "used")
     assert ("not" + "-a-real-class") not in consumers
     # and the report covers every language the repository ships
-    assert set(module.report()) == {"python", "javascript", "css", "dart"}
+    assert set(module.report()) == {"python", "javascript", "css"}
 
 
 def test_python_sources_have_no_unused_imports() -> None:

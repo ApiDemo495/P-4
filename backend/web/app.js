@@ -81,8 +81,7 @@ function pctClass(v) {
   return "neutral";
 }
 
-/* Haptics: navigator.vibrate where the browser supports it (Android Chrome),
-   the Flutter client uses real HapticFeedback for the same events. */
+/* Haptics: navigator.vibrate where the browser supports it (Android Chrome). */
 function haptic(pattern = 18) {
   try {
     if (navigator.vibrate) navigator.vibrate(pattern);
@@ -2555,7 +2554,6 @@ function maybeShowSetupBanner() {
   const dismissed = localStorage.getItem("drosophila.setup.dismissed") === "1";
   const nothingSet = !configured.gemini && !configured.cryptopanic && !configured.newsapi && !configured.github;
   $("setup-banner").classList.toggle("hidden", dismissed || !nothingSet);
-  $("flutter-link").classList.toggle("hidden", !(state.config && state.config.flutter_web));
 }
 
 document.querySelectorAll("[data-reveal]").forEach((btn) => {

@@ -314,7 +314,7 @@ async function refreshAutostart() {
   const logs = res.logs || {};
   const blocks = [];
   (logs.setup_passes || []).forEach((f) => blocks.push(`── ${f.path} (${f.bytes} B)\n${f.tail.join("\n")}`));
-  ["pip", "flutter", "server"].forEach((k) => {
+  ["pip", "server"].forEach((k) => {
     const f = logs[k];
     if (f) blocks.push(`── ${f.path} ${f.exists ? `(${f.bytes} B, ${f.age_seconds}s old)` : "(not present)"}\n${f.tail.join("\n")}`);
   });

@@ -3,7 +3,7 @@
 # DROSOPHILA TRADER v2.0 - dev container bootstrap.
 #
 # Idempotent: safe to re-run.  Every network step is optional and failure of an
-# optional step (Flutter SDK, llama-cpp-python, redis) does not abort the setup
+# optional step (llama-cpp-python, redis) does not abort the setup
 # of the core engine.
 #
 #   bash .devcontainer/setup.sh
@@ -11,7 +11,6 @@
 # Environment switches:
 #   INSTALL_LLAMA_CPP=1   build llama-cpp-python for real local GGUF inference
 #   INSTALL_ONNX=1        install onnxruntime for local ONNX inference
-#   INSTALL_FLUTTER=1     fetch the Flutter SDK for the mobile front end
 #   INSTALL_NEUPRINT=1    install neuprint-python + caveclient (live connectome)
 # =============================================================================
 set -uo pipefail
@@ -25,7 +24,6 @@ ok()   { printf '\033[1;32m[setup]\033[0m %s\n' "$*"; }
 
 INSTALL_LLAMA_CPP="${INSTALL_LLAMA_CPP:-0}"
 INSTALL_ONNX="${INSTALL_ONNX:-0}"
-INSTALL_FLUTTER="${INSTALL_FLUTTER:-0}"
 INSTALL_NEUPRINT="${INSTALL_NEUPRINT:-0}"
 
 # -----------------------------------------------------------------------------
@@ -172,28 +170,7 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 5. Flutter front end (optional)
-# -----------------------------------------------------------------------------
-if [ "$INSTALL_FLUTTER" = "1" ]; then
-  if command -v flutter >/dev/null 2>&1; then
-    ok "flutter already on PATH ($(flutter --version 2>/dev/null | head -1))"
-  else
-    log "cloning the Flutter SDK into ~/flutter (stable)"
-    git clone --depth 1 --single-branch -b stable https://github.com/flutter/flutter.git "$HOME/flutter" \
-      && export PATH="$HOME/flutter/bin:$PATH" \
-      && flutter --version \
-      && (cd "$REPO_ROOT/frontend" && flutter pub get) \
-      && ok "Flutter ready - 'cd frontend && flutter run'" \
-      || warn "Flutter setup failed; the web dashboard is unaffected"
-    cat <<'EOF'
-    Add Flutter to your shell profile:
-      export PATH="$HOME/flutter/bin:$PATH"
-EOF
-  fi
-fi
-
-# -----------------------------------------------------------------------------
-# 6. Smoke check
+# 5. Smoke check
 # -----------------------------------------------------------------------------
 log "verifying imports"
 PYTHONPATH="$REPO_ROOT" "$PY" - <<'PYEOF' || warn "import check failed - inspect the traceback above"
@@ -217,7 +194,7 @@ ok "setup complete"
 cat <<EOF
 
   Start the engine + dashboard (one command, handles everything).
-  EVERYTHING is served from ONE port - dashboard, /settings, /matrix, /flutter,
+  EVERYTHING is served from ONE port - dashboard, /settings, /matrix,
   the WebSocket stream and the API:
       bash run.sh              # -> http://localhost:8000/
       bash run.sh --bg         # background
@@ -226,9 +203,6 @@ cat <<EOF
 
   Diagnose the environment without starting anything:
       bash run.sh --check
-
-  Build the Flutter client as a web app (served at /flutter):
-      bash frontend/run_web.sh
 
   Run the end-to-end test suite (Appendix E, 13 scenarios):
       PYTHONPATH=$REPO_ROOT .venv/bin/python -m pytest -q
