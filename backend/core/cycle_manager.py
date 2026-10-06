@@ -34,6 +34,7 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from backend.agents import fusion as fusion_module
+from backend.core import hedge_outcomes
 from backend.agents.orchestrator import AgentOrchestrator
 from backend.brain.brain import Brain
 from backend.core import config as cfg
@@ -961,6 +962,12 @@ class CycleManager:
             "gcdv": round(float(f.get("GCDV", 0.0)), 4),
             "stress": "high" if float(f.get("HSI", 0.0)) > 0.8 else "low",
         }
+        # Round AI: the outcome system - joint BTC/PAXG distribution, pair
+        # actions and scenarios for the locked side (lock-safe: frozen inputs).
+        try:
+            hedge["outcomes"] = hedge_outcomes.build(snapshot, f, fusion.decision, float(fusion.confidence), self.asset)
+        except Exception as exc:  # noqa: BLE001
+            hedge["outcomes"] = {"valid": False, "reason": f"outcome system failed: {exc}"}
         latest = (snapshot.news_items or (None,))[0]
         news_block = {
             "latest_headline": latest.headline if latest else "No headlines available",
@@ -1271,6 +1278,17 @@ class CycleManager:
         self._outcome_tasks.add(task)
         task.add_done_callback(self._outcome_tasks.discard)
 
+    def _trading_cost_bps(self, asset: str) -> float:
+        """Round AI: the spread a trade would have paid this window (never raises)."""
+        try:
+            l2 = self.market.buffers[asset].book
+            bid, ask = l2.best_bid(), l2.best_ask()
+            if bid > 0 and ask > bid:
+                return max(1.0, (ask - bid) / bid * 1e4)
+        except Exception:  # noqa: BLE001
+            pass
+        return 1.0
+
     async def _evaluate_outcome(self, signal: FrozenSignal, snapshot: FrozenMarketSnapshot) -> None:
         horizon = self.settings.outcome_horizon
         await asyncio.sleep(horizon)
@@ -1297,6 +1315,7 @@ class CycleManager:
         learned_update = self.ledger.score(
             signal.asset, signal.cycle_number,
             None if exit_price == entry else exit_price > entry,
+            move_bps=change_bps, cost_bps=self._trading_cost_bps(signal.asset),
         )
         if learned_update:
             log.info("ledger scored window %s: %s (%d sources right, %d wrong)",
@@ -1647,6 +1666,7 @@ class CycleManager:
             candles=snapshot.candles(self.asset) if snapshot is not None else None,
             ticks=snapshot.ticks(self.asset) if snapshot is not None else None,
             physics_vote=float((physics_report or {}).get("vote") or 0.0),
+            news_themes=self._news_theme_votes(common["news_impact"]),
         )
         learned = self.ledger.evaluate(self.asset, votes)
         self._last_votes = votes
@@ -1657,6 +1677,18 @@ class CycleManager:
                             "voters": learned.get("voters", 0), "watching": len(votes)}
             return spec
         return fusion_module.fuse(**common, learned=learned)
+
+    def _news_theme_votes(self, impact: dict | None) -> dict[str, float]:
+        """theme -> signed impact on this asset, from the wire's drivers."""
+        out: dict[str, float] = {}
+        try:
+            for d in ((impact or {}).get("drivers") or {}).get(self.asset) or []:
+                theme = str(d.get("theme_key") or d.get("theme") or "").strip()
+                if theme:
+                    out[theme] = out.get(theme, 0.0) + float(d.get("impact") or 0.0)
+        except Exception:  # noqa: BLE001
+            return {}
+        return out
 
     def _ledger_sources_safe(self) -> list:
         """Ledger source rows for the lock-weight table (never raises)."""

@@ -256,3 +256,38 @@ def test_kraken_rest_is_a_real_source_with_a_book(monkeypatch):
     hub.binance = BinanceWebSocket(lambda *a: None, None, cfg.Settings())
     hub.binance.status.last_error = "InvalidStatus: HTTP 451"
     assert hub.feeds_report()["feeds"]["binance"]["last_error"] == "InvalidStatus: HTTP 451"
+
+
+def test_round_ai_news_weight_depends_on_novelty():
+    """Duplicates weigh nothing, the k-th headline on a theme weighs 1/k, and
+    a theme that has sat on the wire for hours is habituated."""
+    from backend.news import impact
+
+    impact._THEME_PRESENCE.clear()
+    now = time.time()
+
+    class Item:
+        def __init__(self, h, age=60.0, tier=1):
+            self.headline, self.tier, self.published_at = h, tier, now - age
+
+    one = impact.aggregate([Item("Russia launches missile strikes on Kyiv overnight")], now=now)
+    twice = impact.aggregate([Item("Russia launches missile strikes on Kyiv overnight"),
+                              Item("Russia launches missile strikes on Kyiv overnight, officials say", age=120)], now=now)
+    assert twice["duplicates"] == 1 and abs(twice["BTC"] - one["BTC"]) < 1e-9
+    wordings = ["Shelling reported near the northern border", "Troops advance toward the capital", "Drone strike damages refinery",
+                "Air strike kills twelve in eastern city", "Army offensive widens along the river", "Missile hits apartment block",
+                "Nuclear plant loses external power amid fighting", "Escalation feared as reserves are mobilised",
+                "Invasion force crosses the second bridge", "Naval base under attack, ministry says"]
+    many = impact.aggregate([Item(w, age=60 + i) for i, w in enumerate(wordings)], now=now)
+    # ten distinct war headlines: harmonic saturation, not ten times the shock
+    assert abs(many["BTC"]) < 3.0 * abs(one["BTC"])
+    assert many["themes"]["war"]["headlines"] == 10
+    # habituation: the same theme, continuously present for four hours, weighs a quarter
+    impact._THEME_PRESENCE.clear()
+    impact.aggregate([Item("Airstrike hits the port")], now=now - 4 * 3600)
+    for h in range(1, 4):
+        impact.aggregate([Item("Airstrike hits the port again")], now=now - (4 - h) * 3600)
+    late = impact.aggregate([Item("New airstrike hits the port tonight")], now=now)
+    assert 0.2 < late["themes"]["war"]["habituation"] < 0.3
+    assert abs(late["BTC"]) < 0.3 * abs(one["BTC"])
+    impact._THEME_PRESENCE.clear()

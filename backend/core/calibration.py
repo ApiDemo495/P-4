@@ -57,8 +57,15 @@ log = logging.getLogger("drosophila.calibration")
 
 #: Crowd-emotion votes count at half weight (Round P: "remove weightage of emotions to half").
 EMOTION_VOTE_SCALE = 0.5
-PRIOR_STRENGTH = 4.0          # Beta(a, a): four pseudo-observations at 50 %
-MAX_ABS_WEIGHT = 1.5          # log-odds clip: ~82 % reliability saturates
+#: Round AI ("strict the learning system"): a stronger prior, a tighter clip,
+#: a 2.5-sigma bar for "follow"/"fade", noise sources pull at a tenth, and
+#: a window only counts as a hit when the move cleared the cost of trading it.
+PRIOR_STRENGTH = 6.0          # Beta(a, a): six pseudo-observations at 50 %
+MAX_ABS_WEIGHT = 1.2          # log-odds clip: ~77 % reliability saturates
+SIGNIFICANCE_SE = 2.5         # standard errors from a coin toss before a verdict
+MIN_VERDICT_N = 12            # decayed samples before any verdict but "noise"
+NOISE_PULL = 0.10             # weight multiplier for sources without a real edge
+MIN_COST_BPS = 1.0            # a window inside ±cost is not a win for anyone
 BUCKETS = (0.5, 0.55, 0.6, 0.65, 0.7, 0.8, 1.01)
 
 
@@ -90,13 +97,13 @@ class SourceStat:
     def verdict(self) -> str:
         """follow / fade / noise - only when the edge is statistically real
         (two standard errors away from a coin toss on the decayed sample)."""
-        if self.n < 8:
+        if self.n < MIN_VERDICT_N:
             return "noise"
         p = self.reliability()
         se = math.sqrt(0.25 / self.n)
-        if p - 0.5 > 2.0 * se and self.weight() > 0.1:
+        if p - 0.5 > SIGNIFICANCE_SE * se and self.weight() > 0.1:
             return "follow"
-        if 0.5 - p > 2.0 * se and self.weight() < -0.1:
+        if 0.5 - p > SIGNIFICANCE_SE * se and self.weight() < -0.1:
             return "fade"
         return "noise"
 
@@ -118,6 +125,8 @@ class AssetLedger:
     buckets: list[list[float]] = field(default_factory=lambda: [[0.0, 0.0] for _ in range(len(BUCKETS) - 1)])
     # The last 200 (p_up, actual_up) pairs, for the Brier score.
     recent: list[tuple[float, int]] = field(default_factory=list)
+    # Round AI: windows whose move stayed inside the trading cost (no hit for anyone).
+    flat: int = 0
 
 
 def _bucket_index(p_side: float) -> int:
@@ -136,7 +145,7 @@ class EvidenceLedger:
         self.enabled = (os.environ.get("CALIBRATION_ENABLED", "1").strip() != "0") if enabled is None else enabled
         # Round Y: the record ramps in linearly up to this many scored windows
         # (see fusion.fuse); 20 windows = 20 minutes of live trading.
-        self.min_samples = int(_env_float("CALIBRATION_MIN_SAMPLES", 20)) if min_samples is None else int(min_samples)
+        self.min_samples = int(_env_float("CALIBRATION_MIN_SAMPLES", 40)) if min_samples is None else int(min_samples)
         self.half_life = _env_float("CALIBRATION_HALF_LIFE", 120.0) if half_life is None else float(half_life)
         self.decay = 0.5 ** (1.0 / max(1.0, self.half_life))
         self._assets: dict[str, AssetLedger] = {}
@@ -160,6 +169,7 @@ class EvidenceLedger:
         candles=None,
         ticks=None,
         physics_vote: float = 0.0,
+        news_themes: dict[str, float] | None = None,
     ) -> dict[str, int]:
         """Collect this window's directional votes, one per source."""
         votes: dict[str, int] = {}
@@ -191,6 +201,13 @@ class EvidenceLedger:
         s = sign(niv)
         if s:
             votes["news:NIV"] = s
+        # Round AI: one vote per news *theme* that is driving the wire, so the
+        # ledger learns which themes actually move this asset and which are
+        # repeated headlines the market has already priced.
+        for theme, impact in (news_themes or {}).items():
+            s = sign(impact)
+            if s:
+                votes[f"news:theme:{theme}"] = s
         s = sign(crowd_tone)
         if s:
             votes["crowd:tone"] = s
@@ -245,7 +262,7 @@ class EvidenceLedger:
                 # quarter weight: 20 correlated formulas drifting the same way
                 # by chance must not add up to a confident call.
                 if stat.verdict() == "noise":
-                    w *= 0.25
+                    w *= NOISE_PULL
                 else:
                     significant += 1
                 contribution = w * vote
@@ -261,8 +278,13 @@ class EvidenceLedger:
             b = ledger.buckets[_bucket_index(p_side_raw)]
             realised = (b[0] / b[1]) if b[1] >= 5 else None
             # The probability the engine *prints* is what it has earned in
-            # this confidence bucket, once the bucket has a record.
-            p_side = float(realised) if (realised is not None and b[1] >= 15) else p_side_raw
+            # this confidence bucket, once the bucket has a record - less one
+            # standard error (Round AI: never print more than the record
+            # supports), and never above the raw claim.
+            if realised is not None and b[1] >= 15:
+                p_side = min(p_side_raw, float(realised) - math.sqrt(0.25 / b[1]))
+            else:
+                p_side = p_side_raw
             p_side = max(0.5, min(0.95, p_side))
             p_up = p_side if p_raw >= 0.5 else 1.0 - p_side
             # Guardrail: the ledger only decides while its own record is at
@@ -272,6 +294,7 @@ class EvidenceLedger:
             rows.sort(key=lambda r: -abs(r[5]))
             return {
                 "active": active,
+                "flat_windows": ledger.flat,
                 "handed_back": handed_back,
                 "ledger_hit_rate": None if ledger_rate is None else round(ledger_rate, 4),
                 "spec_hit_rate": None if spec_rate is None else round(spec_rate, 4),
@@ -324,15 +347,25 @@ class EvidenceLedger:
                 oldest = sorted(self._pending)[0]
                 self._pending.pop(oldest, None)
 
-    def score(self, asset: str, cycle_number: int, actual_up: bool | None) -> dict | None:
-        """Credit every source that voted on this window.  ``None`` = flat."""
+    def score(self, asset: str, cycle_number: int, actual_up: bool | None, *,
+              move_bps: float | None = None, cost_bps: float = MIN_COST_BPS) -> dict | None:
+        """Credit every source that voted on this window.  ``None`` = flat.
+
+        Round AI: when the realised ``move_bps`` is given, a window whose move
+        stayed inside ``±cost_bps`` (the spread that a trade would have paid)
+        is a *flat* window - nobody is credited a hit, the sources that voted
+        are charged half a miss each (they called a move that did not pay),
+        and the calibration bucket records a non-hit for the engine's claim.
+        """
         with self._lock:
             entry = self._pending.pop((asset, int(cycle_number)), None)
             if entry is None or actual_up is None:
                 return None
             votes, p_up = entry
             ledger = self._assets.setdefault(asset, AssetLedger())
-            truth = 1 if actual_up else -1
+            cost = max(MIN_COST_BPS, float(cost_bps or 0.0))
+            flat = move_bps is not None and abs(float(move_bps)) <= cost
+            truth = 0 if flat else (1 if actual_up else -1)
             for stat in ledger.sources.values():
                 stat.hits *= self.decay
                 stat.misses *= self.decay
@@ -343,23 +376,29 @@ class EvidenceLedger:
                 stat = ledger.sources.setdefault(name, SourceStat())
                 stat.votes += 1
                 stat.last_vote = vote
-                if vote == truth:
+                if flat:
+                    stat.misses += 0.5
+                elif vote == truth:
                     stat.hits += 1.0
                     hits += 1
                 else:
                     stat.misses += 1.0
                     misses += 1
             ledger.scored += 1
+            if flat:
+                ledger.flat += 1
             p_side = max(p_up, 1.0 - p_up)
             ledger_side_up = p_up >= 0.5
             b = ledger.buckets[_bucket_index(p_side)]
             b[1] += 1.0
-            if ledger_side_up == actual_up:
+            if not flat and ledger_side_up == actual_up:
                 b[0] += 1.0
             ledger.recent.append((p_up, 1 if actual_up else 0))
             del ledger.recent[:-200]
             self.updated_at = time.time()
-            snapshot = {"asset": asset, "cycle_number": cycle_number, "actual": "up" if actual_up else "down",
+            snapshot = {"asset": asset, "cycle_number": cycle_number,
+                        "actual": "flat" if flat else ("up" if actual_up else "down"),
+                        "move_bps": None if move_bps is None else round(float(move_bps), 2), "cost_bps": round(cost, 2),
                         "sources_right": hits, "sources_wrong": misses, "scored": ledger.scored}
         self._save()
         return snapshot
@@ -388,7 +427,7 @@ class EvidenceLedger:
                     cal.append({"claimed": f"{int(BUCKETS[i]*100)}-{min(100, int(BUCKETS[i+1]*100))}%",
                                 "windows": int(n), "realised": None if n < 1 else round(h / n, 3)})
                 ledger_rate, spec_rate, handed_back = self._ledger_vs_spec(ledger)
-                out["assets"][a] = {"scored": ledger.scored,
+                out["assets"][a] = {"scored": ledger.scored, "flat_windows": ledger.flat,
                                     "active": bool(self.enabled and ledger.scored >= self.min_samples and not handed_back),
                                     "handed_back_to_spec": handed_back,
                                     "ledger_hit_rate": None if ledger_rate is None else round(ledger_rate, 4),
@@ -407,7 +446,7 @@ class EvidenceLedger:
                 payload = {
                     "version": 1, "updated_at": self.updated_at,
                     "assets": {
-                        a: {"scored": l.scored, "buckets": l.buckets, "recent": l.recent[-200:],
+                        a: {"scored": l.scored, "flat": l.flat, "buckets": l.buckets, "recent": l.recent[-200:],
                             "sources": {n: s.to_dict() for n, s in l.sources.items()}}
                         for a, l in self._assets.items()
                     },
@@ -425,7 +464,7 @@ class EvidenceLedger:
                 return
             raw = json.loads(self.path.read_text(encoding="utf-8"))
             for a, l in (raw.get("assets") or {}).items():
-                ledger = AssetLedger(scored=int(l.get("scored", 0)))
+                ledger = AssetLedger(scored=int(l.get("scored", 0)), flat=int(l.get("flat", 0)))
                 buckets = l.get("buckets")
                 if isinstance(buckets, list) and len(buckets) == len(BUCKETS) - 1:
                     ledger.buckets = [[float(x[0]), float(x[1])] for x in buckets]

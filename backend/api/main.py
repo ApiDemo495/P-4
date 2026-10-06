@@ -118,7 +118,7 @@ async def lifespan(app: FastAPI):
     # its own (never a checkout, never main); AUTO_UPDATE=0 turns it off.
     update_task = asyncio.create_task(self_update.auto_loop(), name="auto-update") \
         if self_update.auto_enabled() else None
-    # Round T: hashrate, gold spot, DEX pools and other venues for the
+    # Round T: gold spot, other venues and wBTC for the
     # thermodynamic layer - public APIs, no keys, cached between cycles.
     from backend.physics.telemetry import get_telemetry
 

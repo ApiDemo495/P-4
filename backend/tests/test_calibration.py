@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from backend.core.calibration import EvidenceLedger, SourceStat
+from backend.core.calibration import MAX_ABS_WEIGHT, EvidenceLedger, SourceStat
 
 
 def _synthetic(ledger: EvidenceLedger, n: int, seed: int = 7) -> tuple[int, int]:
@@ -39,7 +39,7 @@ def test_source_stat_weights_are_log_odds_and_clipped() -> None:
     assert 0.55 < s.reliability() < 0.60
     assert math.isclose(s.weight(), math.log(s.reliability() / (1 - s.reliability())))
     s2 = SourceStat(hits=1000, misses=0)
-    assert s2.weight() == 1.5
+    assert s2.weight() == MAX_ABS_WEIGHT
     assert SourceStat(hits=40, misses=60).weight() < 0
 
 
@@ -149,3 +149,31 @@ def test_fusion_lets_an_active_ledger_decide_and_caps_confidence() -> None:
     off = fusion.fuse(agents={}, ccs_value=0.8, ccs_confidence=0.9, hsi=0.1, settings=cfg.SETTINGS,
                       learned={"active": False, "scored": 3})
     assert off.decision == "BUY" and off.learned["active"] is False
+
+
+def test_round_ai_flat_windows_are_not_hits_and_verdicts_are_stricter() -> None:
+    """A move inside the spread is a flat window: nobody is credited, the
+    engine's confidence bucket records a non-hit, and voters pay half a miss."""
+    ledger = EvidenceLedger(None, enabled=True, min_samples=1)
+    ledger.remember("BTC", 1, {"a": 1, "b": -1}, 0.7)
+    out = ledger.score("BTC", 1, True, move_bps=0.4, cost_bps=1.0)
+    assert out["actual"] == "flat" and out["sources_right"] == 0 and out["sources_wrong"] == 0
+    rep = ledger.report("BTC")["assets"]["BTC"]
+    assert rep["flat_windows"] == 1
+    by = {r["source"]: r for r in rep["sources"]}
+    assert by["a"]["n"] == 0.5 and by["b"]["n"] == 0.5
+    # a real move still scores normally
+    ledger.remember("BTC", 2, {"a": 1, "b": -1}, 0.7)
+    out = ledger.score("BTC", 2, True, move_bps=5.0, cost_bps=1.0)
+    assert out["actual"] == "up" and out["sources_right"] == 1 and out["sources_wrong"] == 1
+    # verdicts need 12 decayed samples and 2.5 standard errors
+    s = SourceStat(hits=8, misses=2)
+    assert s.verdict() == "noise"
+    s = SourceStat(hits=20, misses=4)
+    assert s.verdict() == "noise"          # 83 % on 24 samples is not yet 2.5 SE clear of a coin toss
+    s = SourceStat(hits=40, misses=8)
+    assert s.verdict() == "follow"
+    # theme votes reach the ledger as their own sources
+    votes = EvidenceLedger.votes_from(formula_values={}, directional={}, ccs_value=0.0, agents={}, spec_score=0.0,
+                                      news_themes={"war": -0.3, "gold": 0.0})
+    assert votes == {"news:theme:war": -1}

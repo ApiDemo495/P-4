@@ -11,24 +11,25 @@ from fastapi import APIRouter
 
 from backend.api.state import get_manager
 from backend.physics import constants as K
+from backend.physics import kinetics
 from backend.physics.telemetry import get_telemetry
 
 router = APIRouter()
 
 SECTIONS = [
     {"section": "0", "title": "Ontology: BTC = consumed work, PAXG = inert rest mass", "status": "framing"},
-    {"section": "1", "title": "Landauer thermal valve (Θ, w_thermal)", "status": "implemented", "inputs": "hashrate live/model, T_avg model"},
-    {"section": "2", "title": "Planetary solar flux (Ω, w_solar, α blend)", "status": "implemented", "inputs": "exact geometry, hub table model"},
+    {"section": "1", "title": "Landauer thermal valve (Θ, w_thermal)", "status": "retired", "why": "hashrate is constant inside a minute - the valve never moved (Round AI)"},
+    {"section": "2", "title": "Planetary solar flux (Ω, w_solar, α blend)", "status": "retired", "why": "a modelled hub table, not a measurement; constant inside a minute (Round AI)"},
     {"section": "3", "title": "Multi-node ZK Nash swarm", "status": "not implemented", "why": "needs many nodes; one terminal"},
-    {"section": "4", "title": "Work-to-rest-mass ratio, E=mc² price update, phase angle", "status": "implemented"},
-    {"section": "5", "title": "AMM price surface x·y=k (5.1–5.2)", "status": "implemented (live pools via DexScreener)", "note": "5.3–5.5 routing/CLMM need on-chain execution"},
+    {"section": "4", "title": "Work-to-rest-mass ratio, E=mc² price update, phase angle", "status": "retired", "why": "drift and phase angle printed 0.00 / 'balanced' every window (Round AI)"},
+    {"section": "5", "title": "AMM price surface x·y=k", "status": "retired", "why": "needs a DEX host that is unreachable from most networks (Round AI)"},
     {"section": "6", "title": "Relativistic spatial arbitrage", "status": "not implemented", "why": "needs geographically separate nodes"},
     {"section": "7", "title": "Lending-protocol liquidation sniping", "status": "not implemented", "why": "needs on-chain position data + execution"},
-    {"section": "8", "title": "VPIN · fragmentation · O-U bridge · pendulum · Avellaneda-Stoikov", "status": "implemented (tape + venues)"},
+    {"section": "8", "title": "VPIN · O-U bridge (cost-gated) · pendulum · Avellaneda-Stoikov · fragmentation", "status": "implemented (tape + venues)"},
+    {"section": "8.6-8.10", "title": "Hawkes self-excitation · momentum flux · trade-sign entropy · cross-leg diffusion · tape temperature", "status": "implemented (tape only, Round AI)"},
     {"section": "9", "title": "Sovereign MEV block sequencing", "status": "not implemented", "why": "the app is not a block builder"},
-    {"section": "10", "title": "PAXG / wBTC peg drift", "status": "implemented (gold spot + wBTC live)"},
-    {"section": "11", "title": "Kelly blend, thermodynamic band, execution sequence", "status": "implemented as a weighted fusion layer", "deviation": "band = ±0.15 and acts as drag, not a hard clamp"},
-    {"section": "12", "title": "TSR, phase angle (12.1, 12.4)", "status": "implemented", "note": "12.6 'cannot lose' is not claimed"},
+    {"section": "10", "title": "PAXG / wBTC peg drift", "status": "implemented when a gold spot or wBTC quote is live; inactive otherwise"},
+    {"section": "11", "title": "Multi-mechanism Kelly, temperature drag, spread-cost gate", "status": "implemented as a weighted fusion layer"},
     {"section": "13", "title": "60.000 s heartbeat", "status": "the existing minute-aligned lock"},
 ]
 
@@ -64,8 +65,8 @@ async def physics_spec() -> dict:
     return {
         "sections": SECTIONS,
         "constants": {
-            "k_B": K.K_B, "theta_star": K.THETA_STAR, "lambda_thermal": K.LAMBDA_THERMAL, "mu_solar": K.MU_SOLAR,
-            "bits_erased_per_double_sha": K.BITS_ERASED_PER_DOUBLE_SHA, "vpin_crit": K.VPIN_CRIT,
-            "ou_min_sharpe": K.OU_MIN_SHARPE, "delta_w": K.DELTA_W_DEFAULT, "mining_hubs": len(K.MINING_HUBS),
+            "vpin_crit": K.VPIN_CRIT, "ou_min_sharpe": K.OU_MIN_SHARPE, "delta_w": K.DELTA_W_DEFAULT,
+            "kelly_cap": K.KELLY_CAP, "hawkes_critical": kinetics.HAWKES_CRITICAL,
+            "entropy_informed": kinetics.ENTROPY_INFORMED, "temperature_hot": kinetics.TEMPERATURE_HOT,
         },
     }

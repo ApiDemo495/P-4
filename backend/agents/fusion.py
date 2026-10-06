@@ -210,14 +210,14 @@ def fuse(
                 "model": result.model,
             }
 
-    # Round T: the thermodynamic layer (Landauer / solar / E=mc² / VPIN /
-    # O-U / pendulum / AMM / peg) - one more weighted voter, never a veto.
+    # Round T/AI: the physics layer (O-U / VPIN / Hawkes / momentum flux /
+    # entropy / diffusion / pendulum / peg) - one more weighted voter, never a veto.
     physics = physics or {}
     physics_weight = float(getattr(settings, "weight_physics", 0.0) or 0.0)
     if physics and physics_weight > 0:
         p_value = max(-1.0, min(1.0, float(physics.get("vote") or 0.0)))
-        # A layer running on modelled telemetry alone counts half; every live
-        # source (hashrate, gold spot, pools, venues) earns part of the rest.
+        # Round AI: every active mechanism on a real tape is a live input; a
+        # layer on the simulator counts half.
         liveness = min(1.0, int(physics.get("live_inputs") or 0) / 3.0)
         physics_weight = table.mark("physics", 0.5 + 0.5 * liveness)
         active["physics"] = physics_weight
@@ -228,7 +228,7 @@ def fuse(
             "weight": physics_weight,
             "status": "LIVE" if int(physics.get("live_inputs") or 0) > 0 else "MODEL",
             "weighted_value": round(physics_weight * p_value, 4),
-            "source": "thermodynamic layer: Landauer·solar·E=mc² + VPIN·O-U·pendulum·AMM·peg (Kelly)",
+            "source": "physics layer: O-U·VPIN·Hawkes·momentum flux·entropy·diffusion·pendulum·temperature (Kelly, cost-gated)",
             "w_final": (physics.get("weights") or {}).get("w_final"),
         }
 
@@ -511,8 +511,8 @@ def _explain(
     physics = contributions.get("physics")
     if physics:
         parts.append(
-            f"thermodynamic layer {physics['decision']} ({physics['value']:+.2f}, "
-            f"target BTC weight {float(physics.get('w_final') or 0.5):.0%})"
+            f"physics layer {physics['decision']} ({physics['value']:+.2f}, "
+            f"Kelly BTC weight {float(physics.get('w_final') or 0.5):.0%})"
         )
     news = contributions.get("news")
     if news:

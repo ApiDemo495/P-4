@@ -1,43 +1,47 @@
-"""The thermodynamic layer's per-cycle pass.
+"""The physics layer's per-cycle pass (Round AI rebuild).
 
-``PhysicsEngine.compute(snapshot, asset)`` runs every implemented section on
-the frozen snapshot plus the cached telemetry and returns one JSON-ready
-report: the signed vote for ``asset`` (BTC +, PAXG the mirror), a confidence,
-the physical and microstructural weights, every mechanism with its inputs and
-its printed logic, the Kelly blend, TSR and the phase angle.
+``PhysicsEngine.compute(snapshot, asset)`` runs every kinetic mechanism on the
+frozen snapshot and returns one JSON-ready report: the signed vote for
+``asset`` (BTC +, PAXG the mirror), a confidence, every mechanism with its
+inputs and printed logic, the multi-mechanism Kelly blend, the temperature
+drag and the cost gate.
 
-Deterministic, allocation-light (< 2 ms) and lock-safe: it reads nothing
-live except the telemetry cache, which the fusion stage snapshots with it.
+What changed in Round AI and why
+--------------------------------
+The old layer centred on three *planetary* quantities - the Landauer thermal
+valve, the solar-flux opportunity cost and the E = mc² work-to-rest-mass
+ratio.  All three depend on the global hashrate, which moves by fractions of
+a percent per day: inside a 60-second window they were constants, so their
+drift terms printed 0.00, the phase angle was always "balanced", and the
+AMM surface needed a DEX host that is unreachable from most networks.  They
+are gone.  Every mechanism that remains or was added reads the tape of the
+window itself, carries an ``active`` flag with the reason when it cannot be
+estimated (so it is excluded from the blend instead of voting 0.00), and the
+blend is gated by the cost of actually crossing the spread.
+
+Deterministic, allocation-light (< 3 ms) and lock-safe: it reads nothing
+live except the telemetry cache (venue quotes, gold spot) and that only to
+*enable* the two mechanisms that need it.
 """
 from __future__ import annotations
 
 import time
-from collections import deque
 
 from backend.core import config as cfg
 from backend.physics import constants as K
-from backend.physics import micro, physical, unified, venues
+from backend.physics import kinetics, micro, unified, venues
 from backend.physics.telemetry import get_telemetry
 
 
 class PhysicsEngine:
     def __init__(self, delta_w: float | None = None) -> None:
+        # Kept for configuration compatibility (PHYSICS_DELTA_W); it now bounds
+        # how far the Kelly tilt may push w_micro from ½ in one window.
         self.delta_w = float(delta_w if delta_w is not None else
                              getattr(cfg.SETTINGS, "physics_delta_w", K.DELTA_W_DEFAULT))
-        self.theta_hist: deque[tuple[float, float]] = deque(maxlen=720)      # (t, Θ) ~ 1 h at 5 s
-        self.omega_hist: deque[tuple[float, float]] = deque(maxlen=720)
-        self.ratio_hist: deque[tuple[float, float, float]] = deque(maxlen=720)  # (t, R, market)
         self.edge_hist: dict[str, list[float]] = {m: [] for m in unified.MECHANISMS}
         self.last_report: dict | None = None
         self.passes = 0
-
-    # ------------------------------------------------------------------
-    def _remember(self, store: deque, now: float, *values: float, min_gap: float = 5.0) -> None:
-        if store and now - store[-1][0] < min_gap:
-            return
-        store.append((now, *values))
-        while store and now - store[0][0] > 3600.0:
-            store.popleft()
 
     # ------------------------------------------------------------------
     def compute(self, snapshot, asset: str, seconds_left: float = 60.0) -> dict:
@@ -47,77 +51,76 @@ class PhysicsEngine:
         btc_usd = float(snapshot.last_price("BTC"))
         paxg_usd = float(snapshot.last_price("PAXG"))
         market_ratio = btc_usd / paxg_usd if paxg_usd > 0 else 0.0
+        source = str(getattr(snapshot, "source", "") or "")
+        real_tape = source not in ("", "simulator", "none")
 
-        hashrate = float(tele.hashrate.value or K.MODEL_HASHRATE_H_PER_S)
-        hr_source = ("live (" + tele.hashrate.provider + ")") if tele.hashrate.source == "live" else "model (hashrate constant)"
-        series = list(tele.hashrate.detail.get("series") or [])
-
-        # --- Sections 1, 2, 4 ---------------------------------------------
-        th = physical.landauer(hashrate, series, now, hr_source)
-        so = physical.solar(hashrate, now)
-        self._remember(self.theta_hist, now, th["theta"])
-        self._remember(self.omega_hist, now, so["omega"])
-        alpha = physical.blend_alpha([v for _, v in self.theta_hist], [v for _, v in self.omega_hist])
-        w_composite = alpha * th["value"] + (1.0 - alpha) * so["value"]
-        em = physical.energy_mass(hashrate, market_ratio, list(self.ratio_hist), now, hr_source)
-        self._remember(self.ratio_hist, now, em["ratio_oz_per_btc"], market_ratio, min_gap=30.0)
-
-        # --- Sections 5, 8, 10 --------------------------------------------
-        pools = list(tele.pools.value or [])
-        pool_source = "live (dexscreener)" if tele.pools.source == "live" else "unavailable (DexScreener unreachable here)"
         mechanisms = {
-            "amm": venues.amm_surface(pools, btc_usd, paxg_usd, pool_source),
             "vpin": micro.vpin(snapshot),
-            "fragmentation": micro.fragmentation(snapshot, tele.venues.value or {}, pools),
             "ou": micro.ornstein_uhlenbeck(snapshot),
             "pendulum": micro.pendulum(snapshot),
+            "hawkes": kinetics.hawkes(snapshot),
+            "kinetic": kinetics.kinetic(snapshot),
+            "entropy": kinetics.entropy(snapshot),
+            "diffusion": kinetics.diffusion(snapshot),
+            "temperature": kinetics.temperature(snapshot),
             "as_spread": micro.avellaneda_stoikov(snapshot, seconds_left),
+            "fragmentation": micro.fragmentation(snapshot, tele.venues.value or {}, []),
             "peg": venues.peg_drift(paxg_usd, tele.xau.value, tele.xau.provider, tele.wbtc.value, btc_usd,
                                     tele.wbtc.provider),
-            "energy_mass": {**em, "direction": int(em["value"] > 0.05) - int(em["value"] < -0.05),
-                            "edge_bps": min(4.0, abs(em["value"]) * 4.0)},
         }
         for name, m in mechanisms.items():
-            self.edge_hist[name].append(float(m.get("direction", 0)) * float(m.get("edge_bps", 0.0)))
+            m.setdefault("active", True)
+            m.setdefault("direction", 0)
+            m.setdefault("edge_bps", 0.0)
+            self.edge_hist[name].append(float(m.get("direction", 0)) * float(m.get("edge_bps", 0.0)) if m["active"] else 0.0)
             del self.edge_hist[name][:-240]
 
-        # --- Sections 11-12 -----------------------------------------------
-        kel = unified.kelly(mechanisms, self.edge_hist)
-        w_final, clamped = unified.clamp_weight(kel["w_micro"], w_composite, self.delta_w)
-        vote_btc, drag = unified.window_vote(kel["w_micro"], w_composite)
+        active = {k: m for k, m in mechanisms.items() if m.get("active")}
+        directional = [m for m in active.values() if m.get("direction")]
+
+        # --- Kelly blend over the active mechanisms, temperature drag, cost gate
+        kel = unified.kelly(active, self.edge_hist)
+        drag = float(mechanisms["temperature"].get("drag", 0.0) or 0.0)
+        w_micro = kel["w_micro"]
+        w_final, clamped = unified.clamp_weight(w_micro, 0.5, self.delta_w)
+        raw_vote = 2.0 * (w_micro - 0.5) * (1.0 - drag)
+        gross_edge = sum(float(m.get("edge_bps", 0.0)) for m in directional)
+        cost_bps = float(mechanisms["as_spread"].get("cost_bps", 0.0) or 0.0)
+        net_edge = gross_edge - cost_bps
+        below_cost = bool(directional) and net_edge <= 0.0
+        vote_btc = raw_vote * (0.5 if below_cost else 1.0)
         vote = vote_btc if asset.upper() == "BTC" else -vote_btc
-        directional = [m for m in mechanisms.values() if m.get("direction")]
+
         agree = (abs(sum(m["direction"] for m in directional)) / len(directional)) if directional else 0.0
-        live_inputs = sum(1 for m in mechanisms.values() if str(m.get("source", "")).startswith("live"))
-        confidence = max(0.05, min(0.95, 0.35 + 0.35 * agree + 0.05 * live_inputs + 0.2 * min(1.0, abs(vote_btc) / 0.3)))
-        total_edge = sum(float(m.get("edge_bps", 0.0)) for m in mechanisms.values())
-        floor_edge = float(mechanisms["fragmentation"].get("edge_bps", 0.0)) + 0.5 * float(mechanisms["as_spread"].get("edge_bps", 0.0))
-        tsr = unified.thermodynamic_sharpe(total_edge, th["theta"])
+        live_inputs = (len(active) if real_tape else 0) + sum(
+            1 for m in active.values() if str(m.get("source", "")).startswith("live"))
+        confidence = max(0.05, min(0.95, 0.30 + 0.35 * agree + 0.03 * min(8, live_inputs)
+                                   + 0.2 * min(1.0, abs(vote_btc) / 0.3) - 0.15 * drag - (0.1 if below_cost else 0.0)))
 
         self.passes += 1
+        w_logic = (f"w_micro = ½ + ½·tanh(Σf/0.6) = {w_micro:.4f} from {len(directional)} voting of {len(active)} active mechanisms; "
+                   f"vote = 2(w_micro − ½)·(1 − drag {drag:.2f}) = {raw_vote:+.4f}; gross edge {gross_edge:.2f} bp − spread cost "
+                   f"{cost_bps:.2f} bp = {net_edge:+.2f} bp" + (" ≤ 0 ⇒ vote halved" if below_cost else "") + f" ⇒ {vote_btc:+.4f}")
         report = {
             "asset": asset.upper(), "pair": "BTC/PAXG", "vote": round(vote, 4), "vote_btc": round(vote_btc, 4),
             "side": ("BUY" if vote >= 0 else "SELL"), "confidence": round(confidence, 4),
             "weights": {
-                "w_thermal": round(th["value"], 4), "w_solar": round(so["value"], 4), "alpha": round(alpha, 4),
-                "w_composite": round(w_composite, 4), "w_micro": round(kel["w_micro"], 4),
-                "delta_w": self.delta_w, "w_final": round(w_final, 4), "w_paxg": round(1.0 - w_final, 4),
-                "clamped": clamped, "drag": round(drag, 4),
-                "logic": (f"w_composite = α·w_thermal + (1−α)·w_solar = {alpha:.3f}·{th['value']:.3f} + {1 - alpha:.3f}·{so['value']:.3f} = {w_composite:.4f} (portfolio target); "
-                          f"w_final = clamp(w_micro = {kel['w_micro']:.4f}, w_composite ± {self.delta_w}) = {w_final:.4f}"
-                          f"{' (clamped)' if clamped else ''}; "
-                          f"60 s vote = 2(w_micro − ½)·(1 − drag), drag = {drag:.3f} against the physical lean ⇒ {vote_btc:+.4f}"),
+                "w_micro": round(w_micro, 4), "w_final": round(w_final, 4), "w_paxg": round(1.0 - w_final, 4),
+                "delta_w": self.delta_w, "clamped": clamped, "drag": round(drag, 4),
+                "below_cost": below_cost, "logic": w_logic,
             },
-            "physical": {"landauer": th, "solar": so, "energy_mass": em},
             "mechanisms": [mechanisms[m] for m in unified.MECHANISMS],
+            "active": sorted(active), "inactive": {k: m.get("logic", "") for k, m in mechanisms.items() if not m.get("active")},
             "kelly": kel,
             "composite": {
-                "tsr": round(tsr, 5), "theta": round(th["theta"], 4),
-                "expected_edge_bps": round(total_edge, 3), "floor_edge_bps": round(floor_edge, 3),
-                "phase_angle_deg": round(physical.math.degrees(em["phase_angle_rad"]), 3),
-                "phase": unified.phase_label(em["phase_angle_rad"]),
+                "gross_edge_bps": round(gross_edge, 3), "cost_bps": round(cost_bps, 3), "net_edge_bps": round(net_edge, 3),
+                "below_cost": below_cost, "temperature": round(float(mechanisms["temperature"].get("value", 1.0)), 3),
+                "hawkes_n": round(float(mechanisms["hawkes"].get("value", 0.0)), 3),
+                "entropy": round(float(mechanisms["entropy"].get("value", 0.0)), 3),
+                "voting": len(directional), "active": len(active), "agreement": round(agree, 3),
                 "note": ("expected edges are model estimates for this window, never a guaranteed yield; "
-                         "Sections 3, 7 and 9 of the source document are not implemented"),
+                         "planetary sections (Landauer, solar, E=mc², AMM) were retired in Round AI because they "
+                         "are constant inside a minute; Sections 3, 6, 7 and 9 of the source document are not implemented"),
             },
             "market": {"btc_usd": round(btc_usd, 2), "paxg_usd": round(paxg_usd, 2), "ratio": round(market_ratio, 4)},
             "telemetry": tele.status(),
@@ -127,4 +130,3 @@ class PhysicsEngine:
         }
         self.last_report = report
         return report
-

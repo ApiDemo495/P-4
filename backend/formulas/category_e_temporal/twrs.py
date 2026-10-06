@@ -37,6 +37,9 @@ POWER = 1.0
 #: needs the tails: 60 ticks (one window) contains roughly one tail observation,
 #: which is why the old per-window skew looked like a random number generator.
 HORIZON = 3000
+WINSOR_SIGMA = 4.0
+SKEW_SCALE = 1.5
+GATE_T_LOW, GATE_T_HIGH = 2.0, 5.0
 #: The engine hands the formula one window per cycle, so the state has to stitch
 #: the windows into a single continuous return series.  v2.0.0 appended only the
 #: trailing 60 prices per window: the deque filled with *disjoint* snippets and
@@ -105,6 +108,13 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     weights = (np.arange(1, n + 1, dtype=np.float64) / n) ** POWER
     w_sum = float(np.sum(weights)) + EPS
 
+    # Round AI: winsorise at ±WINSOR_SIGMA before the moments.  One bad print
+    # (an off-market trade, a feed glitch) contributes r³ to the third moment
+    # and pinned the output at ±0.999 for the next five minutes; the tails the
+    # skew is *about* are still there at four sigma.
+    raw_sd = float(np.sqrt(np.mean(returns**2))) + EPS
+    returns = np.clip(returns, -WINSOR_SIGMA * raw_sd, WINSOR_SIGMA * raw_sd)
+
     mean = float(np.sum(weights * returns) / w_sum)
     centered = returns - mean
     m2 = float(np.sum(weights * centered**2) / w_sum)
@@ -120,17 +130,29 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
         return 0.0
     skew = m3 / (m2**1.5)
     state.last_skew = skew
+    # Gate by the skew's own standard error sqrt(6/n_eff): a skew that is not
+    # two standard errors from zero is noise and votes nothing; the gate is
+    # fully open at five.  The magnitude is tanh(skew / 1.5) so a genuinely
+    # one-sided tape reads strong without pinning at ±1.000.
+    n_eff = (w_sum ** 2) / (float(np.sum(weights**2)) + EPS)
+    se = float(np.sqrt(6.0 / max(n_eff, 1.0)))
+    t_stat = skew / (se + EPS)
+    gate = float(np.clip((abs(t_stat) - GATE_T_LOW) / (GATE_T_HIGH - GATE_T_LOW), 0.0, 1.0))
     trace(ctx, "returns in the horizon", n, "ticks (5 minutes)")
     trace(ctx, "new returns this window", fresh_n, "ticks")
-    trace(ctx, "weighted skew", skew, "m3 / m2^1.5")
-    return finite(tanh(skew))
+    trace(ctx, "weighted skew", skew, "m3 / m2^1.5 (returns winsorised at ±4σ)")
+    trace(ctx, "skew t-stat", t_stat, "skew / sqrt(6 / n_eff)")
+    trace(ctx, "significance gate", gate, f"0 below {GATE_T_LOW:g} SE, 1 above {GATE_T_HIGH:g} SE")
+    return finite(tanh(skew / SKEW_SCALE) * gate)
 
 
-DOUBLE_CHECK = "value = tanh(weighted skew)"
+DOUBLE_CHECK = "value = tanh(skew / 1.5) x gate, gate = clip((|t| - 2) / 3, 0, 1), t = skew / sqrt(6 / n_eff)"
 
 
 def double_check(t: dict, asset: str) -> float:
     """Independent re-derivation of the output from the traced intermediates."""
-    if "weighted skew" not in t:
+    if "skew t-stat" not in t or "weighted skew" not in t:
         return 0.0
-    return tanh(float(t["weighted skew"]))
+    t_stat = float(t["skew t-stat"])
+    gate = max(0.0, min(1.0, (abs(t_stat) - GATE_T_LOW) / (GATE_T_HIGH - GATE_T_LOW)))
+    return tanh(float(t["weighted skew"]) / SKEW_SCALE) * gate

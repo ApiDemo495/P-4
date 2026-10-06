@@ -398,11 +398,11 @@ def build_reasoning(
             "weight": float(p_contrib.get("weight") or 0.0),
             "supports": supports,
             "text": (
-                f"Thermodynamic layer {p_contrib.get('decision')} ({_fmt(p_vote, 2)}): "
-                f"Landauer Θ {float(comp.get('theta') or 0.0):.3f}, target BTC weight "
-                f"{float(wts.get('w_composite') or 0.5):.0%}, microstructure {float(wts.get('w_micro') or 0.5):.0%}"
-                + (f"; voting: {names}" if names else "; no microstructural mechanism fired")
-                + f"; {int(physics.get('live_inputs') or 0)} live telemetry inputs — "
+                f"Physics layer {p_contrib.get('decision')} ({_fmt(p_vote, 2)}): "
+                f"tape temperature {float(comp.get('temperature') or 1.0):.2f}, Hawkes n {float(comp.get('hawkes_n') or 0.0):.2f}, "
+                f"Kelly weight {float(wts.get('w_micro') or 0.5):.0%}, net edge {float(comp.get('net_edge_bps') or 0.0):+.2f} bp after spread"
+                + (f"; voting: {names}" if names else "; no mechanism fired")
+                + f"; {int(comp.get('active') or 0)} active mechanisms — "
                 + ("leans with" if supports else "leans against") + f" the {side} side."
             ),
         })

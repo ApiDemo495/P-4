@@ -7,10 +7,28 @@ for PAXG.  This module maps every headline - crypto or not - onto a theme with
 a signed impact per asset, then aggregates the live wire into one number per
 asset the fusion can vote with, decayed by age and weighted by source tier.
 
-    impact(asset) in [-1, +1]  =  tanh( sum_i  w_tier(i) * decay(age_i) * impact_i(asset) )
+    impact(asset) in [-1, +1]  =  tanh( sum_i  w_tier(i) * decay(age_i) * novelty_i * impact_i(asset) )
 
     decay(age) = 0.5 ** (age / HALF_LIFE_S)         (half-life 20 min)
     w_tier     = 1.0 / 0.7 / 0.45 for tier 1 / 2 / 3
+
+Round AI - "not all the time the same news affects the market again and
+again".  Three corrections make a headline's weight depend on how *new* it is:
+
+* **duplicates** - two headlines whose word sets overlap by more than 60 %
+  are the same story told twice; the second one weighs nothing;
+* **saturation** - the k-th distinct headline on the same theme in the window
+  weighs 1/k: ten "war" headlines are not ten shocks, they are one shock
+  with ten reporters;
+* **habituation** - a theme that has been continuously on the wire for hours
+  is already in the price.  The module remembers when each theme first
+  appeared without a gap; its weight halves every ``HABITUATION_HALF_LIFE_S``
+  (2 h) of continuous presence and recovers after a ``THEME_GAP_RESET_S``
+  (90 min) absence.  A *new* theme always enters at full weight.
+
+The learning layer completes this: every theme that drives the wire also
+votes in the evidence ledger (``news:theme:<name>``), so a theme whose
+headlines repeatedly fail to move this asset is faded by the record.
 
 Nothing here is a prediction; it is the sign and size of the shock the
 headline describes, so the engine can *take it into consideration* instead of
@@ -25,6 +43,47 @@ from dataclasses import dataclass
 
 HALF_LIFE_S = 20 * 60.0
 TIER_WEIGHT = {1: 1.0, 2: 0.7, 3: 0.45}
+DUPLICATE_JACCARD = 0.6
+HABITUATION_HALF_LIFE_S = 2 * 3600.0
+THEME_GAP_RESET_S = 90 * 60.0
+_STOP = frozenset("a an the of to in on for and or as at by from with is are was were be been it its this that after over "
+                  "amid into vs says said say will would could new us u.s".split())
+
+#: theme -> (first_seen_continuous, last_seen) - module state, reset on restart.
+_THEME_PRESENCE: dict[str, list[float]] = {}
+
+
+def _tokens(headline: str) -> frozenset:
+    words = re.findall(r"[a-z0-9][a-z0-9\-\.]+", (headline or "").lower())
+    return frozenset(w for w in words if w not in _STOP and len(w) > 2)
+
+
+def _is_duplicate(tokens: frozenset, seen: list[frozenset]) -> bool:
+    if not tokens:
+        return False
+    for other in seen:
+        if not other:
+            continue
+        inter = len(tokens & other)
+        union = len(tokens | other)
+        if union and inter / union >= DUPLICATE_JACCARD:
+            return True
+    return False
+
+
+def habituation(theme: str, now: float, present: bool = True) -> float:
+    """Weight multiplier for a theme given how long it has been continuously
+    on the wire: 1.0 when new, 0.5 after two hours, 0.25 after four."""
+    rec = _THEME_PRESENCE.get(theme)
+    if present:
+        if rec is None or now - rec[1] > THEME_GAP_RESET_S:
+            rec = [now, now]
+            _THEME_PRESENCE[theme] = rec
+        rec[1] = max(rec[1], now)
+    if rec is None:
+        return 1.0
+    continuous = max(0.0, now - rec[0])
+    return 0.5 ** (continuous / HABITUATION_HALF_LIFE_S)
 
 
 @dataclass(frozen=True)
@@ -136,28 +195,54 @@ def aggregate(items, now: float | None = None, limit_drivers: int = 4) -> dict:
     drivers: dict[str, list] = {"BTC": [], "PAXG": []}
     classified = 0
     world = 0
-    for item in items or ():
-        info = classify(getattr(item, "headline", ""))
+    duplicates = 0
+    seen_tokens: list[frozenset] = []
+    theme_count: dict[str, int] = {}
+    theme_habit: dict[str, float] = {}
+    # newest first so the first telling of a story is the one that counts
+    ordered = sorted(items or (), key=lambda i: -float(getattr(i, "published_at", 0.0) or 0.0))
+    for item in ordered:
+        headline = getattr(item, "headline", "")
+        info = classify(headline)
         if info["theme"] == "neutral":
             continue
         classified += 1
         if info["scope"] == "world":
             world += 1
         age = max(0.0, now - float(getattr(item, "published_at", now) or now))
+        if age > 12 * HALF_LIFE_S:
+            continue                                   # four hours: < 0.03 % weight left
+        tokens = _tokens(headline)
+        if _is_duplicate(tokens, seen_tokens):
+            duplicates += 1
+            continue
+        seen_tokens.append(tokens)
+        theme = info["theme"]
+        k = theme_count.get(theme, 0) + 1
+        theme_count[theme] = k
+        if theme not in theme_habit:
+            theme_habit[theme] = habituation(theme, now)
+        novelty = (1.0 / k) * theme_habit[theme]
         decay = 0.5 ** (age / HALF_LIFE_S)
-        w = TIER_WEIGHT.get(int(getattr(item, "tier", 3) or 3), 0.45) * decay * info["magnitude"]
+        w = TIER_WEIGHT.get(int(getattr(item, "tier", 3) or 3), 0.45) * decay * info["magnitude"] * novelty
         weight_sum += w
         for asset, key in (("BTC", "btc"), ("PAXG", "paxg")):
             contribution = w * float(info[key])
             total[asset] += contribution
             if abs(contribution) > 1e-6:
                 drivers[asset].append({
-                    "headline": getattr(item, "headline", "")[:140],
+                    "headline": headline[:140],
                     "theme": info["label"],
+                    "theme_key": theme,
                     "impact": round(contribution, 4),
                     "age_seconds": round(age, 0),
+                    "novelty": round(novelty, 3),
+                    "nth_on_theme": k,
+                    "habituation": round(theme_habit[theme], 3),
                 })
-    out: dict = {"classified": classified, "world_items": world, "weight": round(weight_sum, 4), "drivers": {}}
+    out: dict = {"classified": classified, "world_items": world, "duplicates": duplicates,
+                 "themes": {t: {"headlines": n, "habituation": round(theme_habit.get(t, 1.0), 3)} for t, n in theme_count.items()},
+                 "weight": round(weight_sum, 4), "drivers": {}}
     for asset in ("BTC", "PAXG"):
         out[asset] = round(math.tanh(total[asset]), 4)
         out["drivers"][asset] = sorted(drivers[asset], key=lambda d: -abs(d["impact"]))[:limit_drivers]

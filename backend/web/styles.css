@@ -1086,6 +1086,17 @@ body.pulse .widget-panel, body.pulse .card { animation: pulse-breath .6s var(--e
 .hedge-item b { font-size: 17px; font-weight: 700; letter-spacing: -.02em; }
 .hedge-item .bar.tiny { margin-top: 8px; }
 @media (max-width: 760px) { .hedge-grid { grid-template-columns: 1fr 1fr; } }
+.hedge-best { font-size: 12.5px; line-height: 1.5; padding: 10px 12px; border-radius: 12px; background: linear-gradient(135deg, rgba(167,139,250,.10), rgba(255,255,255,.02)); border: 1px solid rgba(167,139,250,.25); margin: 6px 0 8px; }
+.hedge-kv { margin-top: 8px; }
+.hedge-actions { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+.hedge-actions th { text-align: left; font-weight: 500; color: var(--muted); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; padding: 4px 6px; }
+.hedge-actions td { padding: 6px; border-top: 1px solid rgba(255,255,255,.05); vertical-align: top; }
+.hedge-actions td .muted { font-size: 10.5px; }
+.hedge-actions tr.best td { background: rgba(167,139,250,.08); }
+.hedge-scenarios { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; font-size: 11px; }
+.hedge-scenarios .scenario { padding: 4px 8px; border-radius: 999px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.07); }
+.hedge-logic { margin-top: 8px; font-size: 11px; }
+.hedge-logic .mono div { padding: 3px 0; border-top: 1px dashed rgba(255,255,255,.06); }
 .brain-status { padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,.025); border: 1px solid rgba(255,255,255,.05); margin-top: 8px; }
 
 /* agents */

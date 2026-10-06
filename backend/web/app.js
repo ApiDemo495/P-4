@@ -347,7 +347,8 @@ function renderPanelRails() {
     const f = rail.querySelector(".rail-feed");
     f.className = `rail-feed ${feed}`;
     const cov = state.liveProvenance?.coverage;
-    f.textContent = `&b ${feed === "live" ? src : feed === "partial" ? `${src} ${Math.round((cov ?? 0) * 100)}%` : feed}`;
+    const holding = state.liveProvenance?.holding_back || [];
+    f.textContent = `&b ${feed === "live" ? src : feed === "partial" ? `${src} ${Math.round((cov ?? 0) * 100)}%${holding.length ? " · " + holding.join("+") : ""}` : feed}`;
     const rows = state.liveProvenance?.feeds || {};
     f.title = "&b - " + (Object.keys(rows).length
       ? Object.entries(rows).map(([k, r]) => `${k}: ${r.state}${r.note && r.state !== "live" ? ` (${r.note})` : ""}`).join(" · ")
@@ -1840,16 +1841,41 @@ function renderConvictionBox() {
 function renderHedge(s) {
   markPanel("hedge");
   const h = s.hedge || {};
-  const set = (id, value) => { $(id).textContent = value === undefined ? "—" : fmtSigned(value, 3); };
-  set("h-hsi", h.hsi); set("h-hrdd", h.hrdd); set("h-shrp", h.shrp); set("h-gcdv", h.gcdv);
-  $("h-hsi-bar").style.width = `${Math.min(100, Math.abs(h.hsi || 0) * 100)}%`;
-  $("h-hsi-bar").className = "bar-fill " + (h.hsi > 0.8 ? "neg" : "neutral");
-  [["h-hrdd-bar", h.hrdd], ["h-shrp-bar", h.shrp], ["h-gcdv-bar", h.gcdv]].forEach(([id, v]) => {
-    const el = $(id);
-    el.style.width = `${Math.min(100, Math.abs(v || 0) * 100)}%`;
-    el.className = "bar-fill " + pctClass(v || 0);
-  });
-  $("hedge-stress").textContent = (h.stress || "—") + " stress";
+  const o = h.outcomes || {};
+  const regime = o.regime || {};
+  const stress = h.stress === "high" ? "high stress" : "";
+  $("hedge-regime").textContent = regime.label ? `${regime.label}${stress ? " · " + stress : ""}` : (h.stress ? `${h.stress} stress` : "—");
+  $("hedge-regime").title = regime.detail || "";
+  if (!o.valid) {
+    $("hedge-best").textContent = o.reason ? `outcomes pending — ${o.reason}` : "waiting for the first locked window…";
+    ["hj-uu", "hj-ud", "hj-du", "hj-dd"].forEach((id) => { $(id).textContent = "—"; $(id + "-bar").style.width = "0%"; });
+    ["hk-beta", "hk-sigma", "hk-spread", "hk-rotation"].forEach((id) => { $(id).textContent = "—"; });
+    $("hedge-actions").innerHTML = "";
+    $("hedge-scenarios").textContent = "";
+    $("hedge-logic").innerHTML = "";
+  } else {
+    const best = o.best || {};
+    $("hedge-best").innerHTML =
+      `<b>${escapeHtml(best.action || "")}</b> — ${escapeHtml(best.note || "")} · ` +
+      `E <b class="${best.expected_bps >= 0 ? "sig-BUY" : "sig-SELL"}">${fmtSigned(best.expected_bps, 2)} bp</b> ± ${Number(best.sigma_bps).toFixed(2)} · ` +
+      `P(profit) <b>${fmtPct(best.p_profit)}</b> · hedging removes ${fmtPct(o.variance_reduction)} of variance`;
+    const j = o.joint || {};
+    [["hj-uu", j.btc_up_paxg_up], ["hj-ud", j.btc_up_paxg_down], ["hj-du", j.btc_down_paxg_up], ["hj-dd", j.btc_down_paxg_down]].forEach(([id, v]) => {
+      $(id).textContent = fmtPct(v);
+      $(id + "-bar").style.width = `${Math.round((v || 0) * 100)}%`;
+    });
+    $("hk-beta").textContent = `ρ ${fmtSigned(o.rho, 3)} · β ${fmtSigned(o.beta_paxg_on_btc, 3)}`;
+    $("hk-sigma").textContent = `${Number(o.sigma_btc_bps).toFixed(1)} · ${Number(o.sigma_paxg_bps).toFixed(1)} bp`;
+    $("hk-spread").textContent = `${fmtSigned((o.spread || {}).z, 2)} — ${(o.spread || {}).read || ""}`;
+    $("hk-rotation").textContent = regime.rotation || "—";
+    $("hedge-actions").innerHTML = (o.actions || []).map((a) =>
+      `<tr class="${a.action === best.action ? "best" : ""}"><td>${escapeHtml(a.action)}<div class="muted">${escapeHtml(a.note || "")}</div></td>` +
+      `<td class="mono ${a.expected_bps >= 0 ? "sig-BUY" : "sig-SELL"}">${fmtSigned(a.expected_bps, 2)}</td>` +
+      `<td class="mono">${Number(a.sigma_bps).toFixed(2)}</td><td class="mono">${fmtPct(a.p_profit)}</td></tr>`).join("");
+    $("hedge-scenarios").innerHTML = (o.scenarios || []).map((sc) =>
+      `<span class="scenario">if ${escapeHtml(sc.if)} → ${escapeHtml(sc.then)} · best action ${fmtSigned(sc.best_action_pnl_bps, 1)} bp</span>`).join("");
+    $("hedge-logic").innerHTML = (o.logic || []).map((l) => `<div>${escapeHtml(l)}</div>`).join("");
+  }
   $("brain-status").textContent = s.brain_status || "—";
   $("brain-detail").textContent = `CCSv2 ${fmtSigned(s.ccs_value)} @ ${fmtPct(s.ccs_confidence)}`;
   $("drg-value").textContent = fmtSigned(s.drg || 0);
@@ -1887,7 +1913,11 @@ function renderNewsList(data) {
       return `<span class="impact-cell"><span class="muted">${asset}</span> <b class="${cls}">${fmtSigned(v, 2)}</b>` +
         (top ? `<span class="muted"> ← ${escapeHtml(top.theme)}</span>` : "") + `</span>`;
     };
-    impactEl.innerHTML = `${cell("BTC")} ${cell("PAXG")} <span class="muted">· ${imp.classified || 0} themed, ${imp.world_items || 0} world</span>`;
+    const themes = Object.entries(imp.themes || {}).sort((a, b) => b[1].headlines - a[1].headlines).slice(0, 3)
+      .map(([t, v]) => `${t}×${v.headlines}${v.habituation < 0.9 ? ` (${Math.round(v.habituation * 100)}% fresh)` : ""}`).join(", ");
+    impactEl.innerHTML = `${cell("BTC")} ${cell("PAXG")} <span class="muted">· ${imp.classified || 0} themed, ${imp.world_items || 0} world` +
+      `${imp.duplicates ? `, ${imp.duplicates} duplicates ignored` : ""}${themes ? ` · ${escapeHtml(themes)}` : ""}</span>`;
+    impactEl.title = "weight = tier × age decay × novelty (1/k-th headline on the theme × habituation: halves every 2 h a theme stays on the wire)";
   }
   (data.items || []).forEach((item) => {
     const row = document.createElement("div");
@@ -2037,7 +2067,7 @@ function renderBrainExplain(data) {
   renderBrainPipeline();
 }
 
-/* The thermodynamic capital layer (Round T): the report locked with the
+/* The physics layer (Round T, rebuilt in Round AI): the report locked with the
    window on screen.  It travels inside the fusion, so it cannot change
    mid-window either. */
 function renderPhysics(payload) {
@@ -2050,40 +2080,45 @@ function renderPhysics(payload) {
       ? "disabled (PHYSICS_WEIGHT=0)" : "waiting for the first locked window…";
     return;
   }
-  const w = r.weights || {}, comp = r.composite || {}, ph = r.physical || {};
+  const w = r.weights || {}, comp = r.composite || {};
   const side = r.vote >= 0 ? "BUY" : "SELL";
+  const byKey = {};
+  (r.mechanisms || []).forEach((m) => { byKey[m.key] = m; });
   $("ph-head").textContent =
     `${payload.locked ? "🔒 locked with this window" : "live"} · weight ${fmtPct(payload.weight)} of fusion · ${r.elapsed_us} µs`;
   $("ph-verdict").innerHTML =
     `<span class="sig-${side}">${side} ${r.asset}</span> vote <b>${Number(r.vote).toFixed(3)}</b> at ${fmtPct(r.confidence)} · ` +
-    `target BTC weight <b>${fmtPct(w.w_composite)}</b> (thermal ${fmtPct(w.w_thermal)} · solar ${fmtPct(w.w_solar)} · α ${Number(w.alpha).toFixed(2)}) · ` +
-    `microstructure ${fmtPct(w.w_micro)}${w.clamped ? " · clamped to the band" : ""}${w.drag > 0 ? ` · drag ${fmtPct(w.drag)}` : ""}`;
-  $("ph-bar-fill").style.width = `${Math.round(Number(w.w_composite) * 100)}%`;
+    `Kelly BTC weight <b>${fmtPct(w.w_micro)}</b> from ${comp.voting ?? 0} voting of ${comp.active ?? 0} active mechanisms` +
+    `${w.drag > 0 ? ` · temperature drag ${fmtPct(w.drag)}` : ""}${w.below_cost ? " · <span class=\"sig-SELL\">edge below spread cost — vote halved</span>" : ""}`;
+  $("ph-bar-fill").style.width = `${Math.round(Number(w.w_micro) * 100)}%`;
   $("ph-bar-micro").style.left = `${Math.round(Number(w.w_micro) * 100)}%`;
-  $("ph-bar-text").textContent = `physics ${fmtPct(w.w_composite)} · micro ${fmtPct(w.w_micro)} · final ${fmtPct(w.w_final)}`;
-  const L = ph.landauer || {}, S = ph.solar || {}, E = ph.energy_mass || {};
-  $("ph-theta").textContent = `${Number(L.theta).toFixed(4)} (Θ* ${L.theta_star}) · Ṡ ${Number(L.s_dot_w).toExponential(2)} W`;
-  $("ph-omega").textContent = `${Number(S.omega).toFixed(4)} · ${Math.round(Number(S.sunlit_share) * 100)}% of hashrate in sunlight`;
-  $("ph-ratio").textContent = `${Number(E.ratio_oz_per_btc).toFixed(1)} vs market ${Number(E.market_ratio).toFixed(2)}`;
-  $("ph-phase").textContent = `${Number(comp.phase_angle_deg).toFixed(2)}° — ${comp.phase}`;
-  $("ph-tsr").textContent = `${Number(comp.tsr).toFixed(4)} · expected edge ${Number(comp.expected_edge_bps).toFixed(2)} bp (floor ${Number(comp.floor_edge_bps).toFixed(2)})`;
+  $("ph-bar-text").textContent = `Kelly ${fmtPct(w.w_micro)} · agreement ${fmtPct(comp.agreement)}`;
+  const T = byKey.temperature || {}, H = byKey.hawkes || {}, E = byKey.entropy || {}, Kn = byKey.kinetic || {};
+  const act = (m, txt) => (m && m.active ? txt : `inactive — ${String((m && m.logic) || "").split(" - ")[0].replace(/^inactive: /, "")}`);
+  $("ph-temp").textContent = act(T, `${Number(T.value).toFixed(2)} · σ₆₀ ${Number(T.sigma_60s_bps).toFixed(1)} bp · drag ${fmtPct(T.drag)}`);
+  $("ph-hawkes").textContent = act(H, `${Number(H.value).toFixed(3)} · ${Number(H.arrivals_per_s).toFixed(2)} prints/s${H.critical ? " · CRITICAL" : ""}`);
+  $("ph-entropy").textContent = act(E, `${Number(E.value).toFixed(3)} (${Number(E.entropy_bits).toFixed(2)} bits) · ${E.informed ? "informed flow" : "noise"}`);
+  $("ph-kinetic").textContent = act(Kn, `${Number(Kn.value).toFixed(2)} σ · KE ${Number(Kn.ke_ratio).toFixed(2)}× baseline`);
+  $("ph-edge").textContent = `${Number(comp.gross_edge_bps).toFixed(2)} − ${Number(comp.cost_bps).toFixed(2)} = ${Number(comp.net_edge_bps).toFixed(2)} bp`;
   const tele = r.telemetry || {};
-  $("ph-live").textContent = `${r.live_inputs} live inputs · hashrate ${tele.hashrate?.source || "—"} · gold spot ${tele.xau_usd?.source || "—"} · pools ${tele.dex_pools?.source || "—"} · venues ${tele.venues?.source || "—"}`;
+  $("ph-live").textContent = `${(r.active || []).length} active · ${Object.keys(r.inactive || {}).length} inactive · gold spot ${tele.xau_usd?.source || "—"} · venues ${tele.venues?.source || "—"}`;
   const body = $("ph-mechanisms");
   body.innerHTML = "";
   (r.mechanisms || []).forEach((m) => {
     const tr = document.createElement("tr");
-    const dir = m.direction > 0 ? '<span class="sig-BUY">BTC +</span>' : m.direction < 0 ? '<span class="sig-SELL">PAXG +</span>' : '<span class="muted">—</span>';
+    if (!m.active) tr.className = "muted";
+    const dir = !m.active ? '<span class="muted">inactive</span>'
+      : m.direction > 0 ? '<span class="sig-BUY">BTC +</span>' : m.direction < 0 ? '<span class="sig-SELL">PAXG +</span>' : '<span class="muted">regime</span>';
     const unit = m.unit || (m.key === "vpin" ? "" : m.key === "pendulum" ? " REI" : m.key === "ou" ? " dev" : " bp");
+    const reading = m.active ? `${Number(m.value).toFixed(3)}${escapeHtml(unit)}` : "—";
     tr.innerHTML = `<td class="muted">${escapeHtml(m.section)}</td><td>${escapeHtml(m.name)}</td>` +
-      `<td class="mono">${Number(m.value).toFixed(3)}${escapeHtml(unit)}</td><td>${dir}</td>` +
-      `<td class="mono">${Number(m.edge_bps || 0).toFixed(2)} bp</td><td class="muted">${escapeHtml(String(m.source || ""))}</td>`;
+      `<td class="mono">${reading}</td><td>${dir}</td>` +
+      `<td class="mono">${m.active ? Number(m.edge_bps || 0).toFixed(2) + " bp" : ""}</td><td class="muted">${escapeHtml(m.active ? String(m.source || "") : String(m.logic || "").replace(/^inactive: /, "").split(";")[0])}</td>`;
     body.appendChild(tr);
   });
   const logic = [
-    ["§1 Landauer", L.logic], ["§2 Solar", S.logic], ["§4 E = mc²", E.logic],
     ...(r.mechanisms || []).map((m) => [`§${m.section} ${m.name}`, m.logic]),
-    ["§11 Kelly", (r.kelly || {}).logic], ["§11.4 weights", w.logic],
+    ["§11 Kelly", (r.kelly || {}).logic], ["§11 vote", w.logic],
   ];
   $("ph-logic").innerHTML = logic.map(([k, v]) =>
     `<div class="ph-logic-row"><b>${escapeHtml(k)}</b><div>${escapeHtml(String(v || ""))}</div></div>`).join("");

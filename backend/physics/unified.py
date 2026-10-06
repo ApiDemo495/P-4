@@ -1,11 +1,10 @@
 """Sections 11-12: multi-mechanism Kelly, the thermodynamic band and the
 composite metrics (TSR, phase angle).
 
-The physical weight ``w_composite`` (Sections 1-2 blended by alpha) is the
-centre of a band of half-width ``delta_w``; the microstructural Kelly weight
-is clamped into that band (11.4).  The layer's single output is a signed vote
-``2·(w_final − ½)`` for BTC against PAXG, which fusion weighs beside the brain
-and the AI agents.
+Round AI: the blend runs over the *active* mechanisms only; the layer's
+single output is the signed vote ``2·(w_micro − ½)·(1 − drag)`` for BTC
+against PAXG (see ``engine.py``), which fusion weighs beside the brain and
+the AI agents.
 """
 from __future__ import annotations
 
@@ -15,7 +14,8 @@ import numpy as np
 
 from backend.physics import constants as K
 
-MECHANISMS = ("amm", "fragmentation", "ou", "as_spread", "peg", "vpin", "pendulum", "energy_mass")
+MECHANISMS = ("ou", "vpin", "hawkes", "kinetic", "entropy", "diffusion", "pendulum", "temperature", "as_spread",
+              "fragmentation", "peg")
 
 
 def kelly(mechanisms: dict[str, dict], history: dict[str, list[float]]) -> dict:
@@ -57,29 +57,3 @@ def clamp_weight(w_micro: float, w_composite: float, delta_w: float) -> tuple[fl
     lo, hi = w_composite - delta_w, w_composite + delta_w
     clamped = w_micro < lo or w_micro > hi
     return max(lo, min(hi, w_micro)), clamped
-
-
-def window_vote(w_micro: float, w_composite: float) -> tuple[float, float]:
-    """The 60-second direction comes from the microstructure; the physical
-    weight is a *portfolio* target that moves over hours, so it acts as drag
-    on votes that lean against it rather than as the direction itself
-    (deviation from 11.4, documented in SPEC_NOTES T)."""
-    raw = 2.0 * (w_micro - 0.5)
-    lean = 2.0 * (w_composite - 0.5)            # + ⇒ physics wants more BTC
-    against = max(0.0, -math.copysign(1.0, raw) * lean) if raw != 0 else 0.0
-    drag = min(0.6, against)
-    return raw * (1.0 - drag), drag
-
-
-def thermodynamic_sharpe(total_edge_bps: float, theta: float) -> float:
-    """TSR = (Y_total / V) / sqrt(ΔS_BTC / S_max): return per unit of entropy
-    budget consumed; ΔS/S_max over one cycle equals Θ."""
-    if theta <= 0:
-        return 0.0
-    return (total_edge_bps / 1e4) / math.sqrt(theta) * 100.0   # scaled so 1 bp at Θ=1 reads 0.01
-
-
-def phase_label(phi: float) -> str:
-    if abs(abs(phi) - math.pi / 2) < math.radians(5):
-        return "phase transition: flatten and wait"
-    return "energy-dominant: accumulate BTC" if phi > 0 else "mass-dominant: accumulate PAXG" if phi < 0 else "balanced"

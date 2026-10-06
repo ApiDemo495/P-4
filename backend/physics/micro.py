@@ -61,7 +61,7 @@ def vpin(snapshot) -> dict:
     edge = (v - K.VPIN_CRIT) / (1.0 - K.VPIN_CRIT) * 8.0 if toxic else 0.0   # ≤ 8 bp momentum impulse
     return {
         "key": "vpin", "section": "8.1", "name": "VPIN flow toxicity",
-        "value": v, "direction": direction, "edge_bps": edge, "imbalance": imbalance,
+        "value": v, "direction": direction, "edge_bps": edge, "imbalance": imbalance, "active": True,
         "buckets": K.VPIN_BUCKETS, "bucket_volume": bucket, "toxic": toxic, "source": "tape",
         "logic": (f"{K.VPIN_BUCKETS} equal-volume buckets of {bucket:.4f}; VPIN = Σ|V_buy−V_sell| / ΣV = {v:.3f} "
                   f"{'>' if toxic else '≤'} {K.VPIN_CRIT} ⇒ {'toxic: follow dominant flow' if toxic else 'balanced: mean reversion regime'}; "
@@ -91,8 +91,8 @@ def fragmentation(snapshot, venues: dict, pools: list[dict]) -> dict:
         mid = snapshot.last_price("BTC")
         spread = (quotes["binance"][1] - quotes["binance"][0]) if "binance" in quotes else 0.0
         return {"key": "fragmentation", "section": "8.2", "name": "Multi-venue fragmentation", "value": 0.0,
-                "direction": 0, "edge_bps": 0.0, "venues": len(quotes), "source": "tape (one venue visible)",
-                "logic": f"only {len(quotes)} venue visible (others blocked or unreachable here); "
+                "direction": 0, "edge_bps": 0.0, "venues": len(quotes), "source": "tape (one venue visible)", "active": False,
+                "logic": f"inactive: only {len(quotes)} venue visible (needs 2+ live venue quotes); "
                          f"own spread {spread / max(mid, 1e-9) * 1e4:.2f} bp; α_frag undefined"}
     bids = {k: v[0] for k, v in quotes.items()}
     asks = {k: v[1] for k, v in quotes.items()}
@@ -108,7 +108,7 @@ def fragmentation(snapshot, venues: dict, pools: list[dict]) -> dict:
         "value": alpha_bps, "direction": 0, "edge_bps": max(0.0, cross_bps),
         "composite_spread": composite, "mean_internal_spread": mean_internal,
         "best_bid_venue": max(bids, key=bids.get), "best_ask_venue": min(asks, key=asks.get),
-        "venues": len(quotes), "source": "live" if len(quotes) > 1 else "tape",
+        "venues": len(quotes), "source": "live" if len(quotes) > 1 else "tape", "active": True,
         "logic": (f"{len(quotes)} venues; S_composite = max ask − min bid = {composite:.2f}; "
                   f"mean S_k = {mean_internal:.2f}; α_frag = {alpha_bps:.2f} bp; "
                   f"crossed by {cross_bps:+.2f} bp (buy {min(asks, key=asks.get)}, sell {max(bids, key=bids.get)})"),
@@ -141,17 +141,37 @@ def ornstein_uhlenbeck(snapshot) -> dict:
     expected = gap * (1.0 - math.exp(-60.0 * kappa_s))
     var60 = sigma_s ** 2 * (1.0 - math.exp(-120.0 * kappa_s)) / (2.0 * kappa_s) if kappa_s > 0 else 0.0
     sharpe = abs(expected) / math.sqrt(var60) if var60 > 0 else 0.0
-    execute = sharpe > K.OU_MIN_SHARPE
+    # Round AI: a reversion is only tradeable inside the window if its
+    # half-life sits between 5 s and 10 min (faster is bid/ask bounce, slower
+    # never arrives within 60 s) and the expected move clears the cost of
+    # crossing the spread.  The edge is capped at one 60-second sigma - the
+    # old 20 bp cap let a thin-tape fit dominate the Kelly blend.
+    half_life_s = math.log(2.0) / kappa_s if kappa_s > 0 else float("inf")
+    tradeable = 5.0 <= half_life_s <= 600.0
+    try:
+        book = snapshot.book("BTC")
+        cost_bps = (float(book[1, 0, 0]) - float(book[0, 0, 0])) / max(1e-9, float(book[0, 0, 0])) * 1e4
+    except (IndexError, TypeError, ZeroDivisionError):
+        cost_bps = 0.0
+    cost_bps = max(0.5, cost_bps)
+    expected_bps = abs(expected) / p0 * 1e4 if p0 > 0 else 0.0
+    sigma60_bps = math.sqrt(var60) / p0 * 1e4 if (var60 > 0 and p0 > 0) else 0.0
+    execute = sharpe > K.OU_MIN_SHARPE and tradeable and expected_bps > cost_bps
     direction = int(np.sign(gap)) if execute else 0
-    edge_bps = min(20.0, abs(expected) / p0 * 1e4) if (execute and p0 > 0) else 0.0
+    edge_bps = min(expected_bps - cost_bps, max(1.0, sigma60_bps)) if execute else 0.0
+    why = ("execute" if execute else
+           f"half-life {half_life_s:.0f} s outside 5-600 s" if not tradeable else
+           f"E[ΔP] {expected_bps:.2f} bp ≤ spread cost {cost_bps:.2f} bp" if expected_bps <= cost_bps else
+           "stand aside")
     return {
-        **base, "value": gap / p0 if p0 > 0 else 0.0, "direction": direction, "edge_bps": edge_bps,
+        **base, "value": gap / p0 if p0 > 0 else 0.0, "direction": direction, "edge_bps": edge_bps, "active": True,
+        "half_life_s": half_life_s, "cost_bps": cost_bps, "expected_bps": expected_bps, "sigma60_bps": sigma60_bps,
         "p0": p0, "p_bar": p_bar, "kappa_per_min": kappa_s * 60.0, "sigma_per_s": sigma_s,
         "expected_move": expected, "sharpe": sharpe, "execute": execute, "samples": int(p.size),
         "logic": (f"dP = κ(P̄−P)dt + σdW on {p.size} prints; P̄ (VWAP-300 s) = {p_bar:.4f}, P₀ = {p0:.4f}; "
                   f"κ = −ln φ/Δt = {kappa_s * 60:.3f}/min, σ = {sigma_s:.5f}/√s; "
-                  f"E[ΔP₆₀] = (P̄−P₀)(1−e^(−60κ)) = {expected:+.5f}; SR₆₀ = {sharpe:.2f} "
-                  f"{'>' if execute else '≤'} {K.OU_MIN_SHARPE} ⇒ {'execute' if execute else 'stand aside'}"),
+                  f"half-life {half_life_s:.0f} s; E[ΔP₆₀] = (P̄−P₀)(1−e^(−60κ)) = {expected:+.5f} = {expected_bps:.2f} bp vs cost {cost_bps:.2f} bp; "
+                  f"SR₆₀ = {sharpe:.2f} {'>' if sharpe > K.OU_MIN_SHARPE else '≤'} {K.OU_MIN_SHARPE} ⇒ {why}"),
     }
 
 
@@ -203,7 +223,7 @@ def pendulum(snapshot) -> dict:
     delta = rei_next - rei_now
     direction = int(np.sign(delta)) if abs(delta) > 0.01 else 0
     return {
-        **base, "value": rei_now, "direction": direction, "edge_bps": min(6.0, abs(delta) * 100.0),
+        **base, "value": rei_now, "direction": direction, "edge_bps": min(6.0, abs(delta) * 100.0), "active": True,
         "rei_next": rei_next, "omega0": math.sqrt(omega0_sq), "beta": beta, "fitted": fitted,
         "bins": int(rei.size),
         "logic": (f"REI = V_BTC/(V_BTC+V_PAXG) over {rei.size} bins of {dt:.0f} s = {rei_now:.3f}; "
@@ -240,7 +260,7 @@ def avellaneda_stoikov(snapshot, seconds_left: float = 60.0) -> dict:
     income_bps = fill_rate * 2.0 * half_bps * 60.0 / max(1.0, p.size)   # per unit of inventory
     kappa_arrival = arrival
     return {
-        **base, "value": half_bps, "edge_bps": min(income_bps, 3.0),
+        **base, "value": half_bps, "edge_bps": min(income_bps, 3.0), "active": True, "cost_bps": half_bps,
         "sigma_per_sqrt_s": sigma, "kappa_arrival": kappa_arrival, "gamma": gamma, "seconds_left": seconds_left,
         "logic": (f"δ = σ²(T−t)/2 + (1/γ)·ln(1+γ/κ) with σ = {sigma:.2e}/√s, T−t = {seconds_left:.0f} s, "
                   f"γ = {gamma}, κ_book = 1/half-spread = {kappa_book:.0f}, arrivals {kappa_arrival:.2f}/s ⇒ half-spread {half_bps:.3f} bp; "

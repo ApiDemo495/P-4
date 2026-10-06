@@ -115,8 +115,15 @@ REAL_SOURCES = ("binance", "kraken", "krakenrest", "coingecko")
 #: among its feeds and its coverage is the weighted mean.  "offline" is now
 #: reserved for *no real data at all* - a missing order book on a REST tape
 #: reads "partial · book: source has no order book", never "offline".
-FEED_STATE_WEIGHT = {"live": 1.0, "delayed": 0.75, "derived": 0.6, "warming": 0.5,
+#: Round AI: "derived" is real-time real data behind a transform (a widened
+#: BTC/PAXG grid on a thin gold tape, a REST source without an order book)
+#: - it is live for the purpose of the grade; it only shows as a note.
+FEED_STATE_WEIGHT = {"live": 1.0, "derived": 1.0, "delayed": 0.75, "warming": 0.5,
                      "stale": 0.4, "simulated": 0.0, "offline": 0.0}
+LIVE_EQUIVALENT = ("live", "derived")
+#: The grade is a verdict on the *market* feeds; the news wire is reported
+#: beside it (a quiet news day must not demote twenty tape formulas).
+MARKET_FEEDS = ("tape", "book", "candles", "cross")
 
 
 def _feed(state: str, note: str = "", **extra) -> dict:
@@ -150,7 +157,7 @@ def provenance(snapshot, asset: str) -> dict:
     elif not real or tick_age is None:
         feeds["tape"] = _feed("offline", "no ticks from a live feed yet" if real else f"source {source or 'none'}",
                               source=source, ticks=n_ticks)
-    elif tick_age < stale_s:
+    elif tick_age < max(stale_s, _quiet_allowance(ticks)):
         feeds["tape"] = _feed("live", f"{source} · last print {tick_age:.1f} s ago · {n_ticks} ticks",
                               source=source, age_s=round(tick_age, 1), ticks=n_ticks)
     elif tick_age < 5 * stale_s:
@@ -226,10 +233,26 @@ def provenance(snapshot, asset: str) -> dict:
         feeds["cross"] = _feed("offline", "no live source", **desc)
 
     feeds["formulas"] = _feed("live", "upstream formula values of this very pass")
-    weights = [f["weight"] for k, f in feeds.items() if k != "formulas"]
+    market = [feeds[k] for k in MARKET_FEEDS if k in feeds]
+    weights = [f["weight"] for f in market]
     out["coverage"] = round(sum(weights) / len(weights), 3) if weights else 0.0
-    out["grade"] = _grade(feeds.values(), real, simulated)
+    out["grade"] = _grade(market, real, simulated)
+    out["news_state"] = feeds["news"]["state"]
+    out["holding_back"] = [k for k in MARKET_FEEDS if k in feeds and feeds[k]["state"] not in LIVE_EQUIVALENT]
     return out
+
+
+def _quiet_allowance(ticks) -> float:
+    """A quiet tape is not a broken one: allow three median inter-print gaps
+    (of the last 50 prints) before a connected feed reads 'delayed'."""
+    try:
+        t = np.asarray(ticks[-50:, 0], dtype=float)
+        if t.size < 5:
+            return 0.0
+        gaps = np.diff(t) / 1000.0
+        return float(3.0 * np.median(gaps[gaps > 0])) if np.any(gaps > 0) else 0.0
+    except Exception:  # noqa: BLE001
+        return 0.0
 
 
 def _grade(feed_rows, real: bool, simulated: bool) -> str:
@@ -238,7 +261,7 @@ def _grade(feed_rows, real: bool, simulated: bool) -> str:
         return "simulated"
     if not real or all(s == "offline" for s in states):
         return "offline"
-    if all(s == "live" for s in states):
+    if all(s in LIVE_EQUIVALENT for s in states):
         return "live"
     return "partial"
 
@@ -431,7 +454,7 @@ class FormulaResult:
         out = {}
         for spec in ALL_FORMULAS:
             rows = [feeds.get(f) or _feed("offline", "not in this pass") for f in spec.feeds]
-            missing = [f for f, r in zip(spec.feeds, rows) if r["state"] != "live"]
+            missing = [f for f, r in zip(spec.feeds, rows) if r["state"] not in LIVE_EQUIVALENT]
             cov = round(sum(r["weight"] for r in rows) / len(rows), 3) if rows else 0.0
             out[spec.name] = {
                 "feeds": list(spec.feeds),
@@ -439,7 +462,7 @@ class FormulaResult:
                 "grade": _grade(rows, real, simulated),
                 "coverage": cov,
                 "missing": missing,
-                "detail": " · ".join(f"{f} {r['state']}" + (f" ({r['note']})" if r["state"] != "live" and r["note"] else "")
+                "detail": " · ".join(f"{f} {r['state']}" + (f" ({r['note']})" if r["state"] not in LIVE_EQUIVALENT and r["note"] else "")
                                      for f, r in zip(spec.feeds, rows)),
             }
         return out

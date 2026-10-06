@@ -1,8 +1,6 @@
 """Live telemetry for the thermodynamic layer - public APIs, no keys.
 
-* global hashrate       mempool.space -> blockchain.info
 * gold spot (XAU/USD)   gold-api.com  -> CoinGecko (pax-gold / tether-gold)
-* DEX pools             DexScreener (PAXG and WBTC pairs, price + liquidity)
 * other venues          Coinbase, Kraken public tickers (BTC, PAXG)
 * wrapped BTC           CoinGecko wrapped-bitcoin vs bitcoin
 
@@ -21,7 +19,6 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from backend.physics import constants as K
 
 log = logging.getLogger("drosophila.physics.telemetry")
 
@@ -55,13 +52,10 @@ class Reading:
 class Telemetry:
     """Cached readings + the refresh loop."""
 
-    CADENCE = {"hashrate": 300.0, "xau": 60.0, "pools": 60.0, "venues": 20.0, "wbtc": 120.0}
+    CADENCE = {"xau": 60.0, "venues": 20.0, "wbtc": 120.0}
 
     def __init__(self) -> None:
-        self.hashrate = Reading(value=K.MODEL_HASHRATE_H_PER_S, provider="model constant",
-                                detail={"series": []})
         self.xau = Reading(value=None, provider="none")
-        self.pools = Reading(value=[], provider="none")
         self.venues = Reading(value={}, provider="none")
         self.wbtc = Reading(value=None, provider="none")
         self._last_try: dict[str, float] = {}
@@ -70,13 +64,10 @@ class Telemetry:
     # ------------------------------------------------------------ status
     def status(self) -> dict:
         return {
-            "hashrate": self.hashrate.to_dict(),
             "xau_usd": self.xau.to_dict(),
-            "dex_pools": {**self.pools.to_dict(), "value": len(self.pools.value or [])},
             "venues": {**self.venues.to_dict(), "value": sorted((self.venues.value or {}).keys())},
             "wbtc_usd": self.wbtc.to_dict(),
-            "live_sources": sum(1 for r in (self.hashrate, self.xau, self.pools, self.venues, self.wbtc)
-                                if r.source == "live"),
+            "live_sources": sum(1 for r in (self.xau, self.venues, self.wbtc) if r.source == "live"),
         }
 
     # ------------------------------------------------------------- loop
@@ -96,8 +87,7 @@ class Telemetry:
         due = [k for k, c in self.CADENCE.items() if force or now - self._last_try.get(k, 0.0) >= c]
         if not due:
             return
-        fetchers = {"hashrate": self._fetch_hashrate, "xau": self._fetch_xau, "pools": self._fetch_pools,
-                    "venues": self._fetch_venues, "wbtc": self._fetch_wbtc}
+        fetchers = {"xau": self._fetch_xau, "venues": self._fetch_venues, "wbtc": self._fetch_wbtc}
         async with httpx.AsyncClient(timeout=TIMEOUT, headers={"User-Agent": "drosophila-trader/2.0"}) as client:
             tasks = {k: fetchers[k](client) for k in due}
             results = await asyncio.gather(*tasks.values(), return_exceptions=True)
@@ -108,24 +98,6 @@ class Telemetry:
                 reading.error = f"{type(result).__name__}: {result}"[:160]
 
     # ---------------------------------------------------------- fetchers
-    async def _fetch_hashrate(self, client: httpx.AsyncClient) -> None:
-        try:
-            r = await client.get("https://mempool.space/api/v1/mining/hashrate/1m")
-            r.raise_for_status()
-            data = r.json()
-            current = float(data["currentHashrate"])
-            series = [float(p["avgHashrate"]) for p in data.get("hashrates", [])][-30:]
-            self.hashrate = Reading(current, "live", "mempool.space", time.time(),
-                                    detail={"series": series, "difficulty": data.get("currentDifficulty")})
-            return
-        except Exception as exc:  # noqa: BLE001
-            first = f"mempool.space: {type(exc).__name__}"
-        r = await client.get("https://blockchain.info/q/hashrate")
-        r.raise_for_status()
-        current = float(r.text.strip()) * 1e9   # GH/s -> H/s
-        self.hashrate = Reading(current, "live", "blockchain.info", time.time(),
-                                error=first, detail={"series": self.hashrate.detail.get("series", [])})
-
     async def _fetch_xau(self, client: httpx.AsyncClient) -> None:
         try:
             r = await client.get("https://api.gold-api.com/price/XAU")
@@ -146,29 +118,6 @@ class Telemetry:
             raise ValueError("coingecko returned no gold prices")
         self.xau = Reading(sum(prices) / len(prices), "live", "coingecko (PAXG+XAUT mean)", time.time(),
                            error=first, detail={"paxg_xaut": prices})
-
-    async def _fetch_pools(self, client: httpx.AsyncClient) -> None:
-        pools: list[dict] = []
-        for query in ("PAXG", "WBTC"):
-            r = await client.get("https://api.dexscreener.com/latest/dex/search", params={"q": query})
-            r.raise_for_status()
-            for pair in (r.json().get("pairs") or [])[:40]:
-                try:
-                    liquidity = float((pair.get("liquidity") or {}).get("usd") or 0.0)
-                    price = float(pair.get("priceUsd") or 0.0)
-                except (TypeError, ValueError):
-                    continue
-                base = (pair.get("baseToken") or {}).get("symbol", "")
-                quote = (pair.get("quoteToken") or {}).get("symbol", "")
-                if liquidity < 50_000 or price <= 0 or base.upper() not in ("PAXG", "WBTC", "CBBTC", "TBTC"):
-                    continue
-                pools.append({
-                    "dex": pair.get("dexId"), "chain": pair.get("chainId"),
-                    "base": base.upper(), "quote": quote.upper(),
-                    "price_usd": price, "liquidity_usd": liquidity,
-                    "fee": 0.003 if "v2" in str(pair.get("labels") or "") else 0.0005,
-                })
-        self.pools = Reading(pools[:40], "live", "dexscreener", time.time())
 
     async def _fetch_venues(self, client: httpx.AsyncClient) -> None:
         venues: dict[str, dict] = {}
