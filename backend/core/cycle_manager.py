@@ -962,7 +962,7 @@ class CycleManager:
             "gcdv": round(float(f.get("GCDV", 0.0)), 4),
             "stress": "high" if float(f.get("HSI", 0.0)) > 0.8 else "low",
         }
-        # Round AI: the outcome system - joint BTC/PAXG distribution, pair
+        # Round AJ: the outcome system - joint BTC/PAXG distribution, pair
         # actions and scenarios for the locked side (lock-safe: frozen inputs).
         try:
             hedge["outcomes"] = hedge_outcomes.build(snapshot, f, fusion.decision, float(fusion.confidence), self.asset)
@@ -1279,7 +1279,7 @@ class CycleManager:
         task.add_done_callback(self._outcome_tasks.discard)
 
     def _trading_cost_bps(self, asset: str) -> float:
-        """Round AI: the spread a trade would have paid this window (never raises)."""
+        """Round AJ: the spread a trade would have paid this window (never raises)."""
         try:
             l2 = self.market.buffers[asset].book
             bid, ask = l2.best_bid(), l2.best_ask()

@@ -57,7 +57,7 @@ log = logging.getLogger("drosophila.calibration")
 
 #: Crowd-emotion votes count at half weight (Round P: "remove weightage of emotions to half").
 EMOTION_VOTE_SCALE = 0.5
-#: Round AI ("strict the learning system"): a stronger prior, a tighter clip,
+#: Round AJ ("strict the learning system"): a stronger prior, a tighter clip,
 #: a 2.5-sigma bar for "follow"/"fade", noise sources pull at a tenth, and
 #: a window only counts as a hit when the move cleared the cost of trading it.
 PRIOR_STRENGTH = 6.0          # Beta(a, a): six pseudo-observations at 50 %
@@ -125,7 +125,7 @@ class AssetLedger:
     buckets: list[list[float]] = field(default_factory=lambda: [[0.0, 0.0] for _ in range(len(BUCKETS) - 1)])
     # The last 200 (p_up, actual_up) pairs, for the Brier score.
     recent: list[tuple[float, int]] = field(default_factory=list)
-    # Round AI: windows whose move stayed inside the trading cost (no hit for anyone).
+    # Round AJ: windows whose move stayed inside the trading cost (no hit for anyone).
     flat: int = 0
 
 
@@ -201,7 +201,7 @@ class EvidenceLedger:
         s = sign(niv)
         if s:
             votes["news:NIV"] = s
-        # Round AI: one vote per news *theme* that is driving the wire, so the
+        # Round AJ: one vote per news *theme* that is driving the wire, so the
         # ledger learns which themes actually move this asset and which are
         # repeated headlines the market has already priced.
         for theme, impact in (news_themes or {}).items():
@@ -279,7 +279,7 @@ class EvidenceLedger:
             realised = (b[0] / b[1]) if b[1] >= 5 else None
             # The probability the engine *prints* is what it has earned in
             # this confidence bucket, once the bucket has a record - less one
-            # standard error (Round AI: never print more than the record
+            # standard error (Round AJ: never print more than the record
             # supports), and never above the raw claim.
             if realised is not None and b[1] >= 15:
                 p_side = min(p_side_raw, float(realised) - math.sqrt(0.25 / b[1]))
@@ -351,7 +351,7 @@ class EvidenceLedger:
               move_bps: float | None = None, cost_bps: float = MIN_COST_BPS) -> dict | None:
         """Credit every source that voted on this window.  ``None`` = flat.
 
-        Round AI: when the realised ``move_bps`` is given, a window whose move
+        Round AJ: when the realised ``move_bps`` is given, a window whose move
         stayed inside ``±cost_bps`` (the spread that a trade would have paid)
         is a *flat* window - nobody is credited a hit, the sources that voted
         are charged half a miss each (they called a move that did not pay),

@@ -1,4 +1,4 @@
-"""Section 10 (peg drift) - the on-chain leg that survives Round AI.
+"""Section 10 (peg drift) - the on-chain leg that survives Round AJ.
 
 It depends on live telemetry (gold spot, wrapped-BTC price).  When no source
 is reachable the mechanism is *inactive* (excluded from the blend) and says

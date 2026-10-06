@@ -108,7 +108,7 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     weights = (np.arange(1, n + 1, dtype=np.float64) / n) ** POWER
     w_sum = float(np.sum(weights)) + EPS
 
-    # Round AI: winsorise at ±WINSOR_SIGMA before the moments.  One bad print
+    # Round AJ: winsorise at ±WINSOR_SIGMA before the moments.  One bad print
     # (an off-market trade, a feed glitch) contributes r³ to the third moment
     # and pinned the output at ±0.999 for the next five minutes; the tails the
     # skew is *about* are still there at four sigma.

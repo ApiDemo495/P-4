@@ -1,7 +1,7 @@
 """Sections 11-12: multi-mechanism Kelly, the thermodynamic band and the
 composite metrics (TSR, phase angle).
 
-Round AI: the blend runs over the *active* mechanisms only; the layer's
+Round AJ: the blend runs over the *active* mechanisms only; the layer's
 single output is the signed vote ``2·(w_micro − ½)·(1 − drag)`` for BTC
 against PAXG (see ``engine.py``), which fusion weighs beside the brain and
 the AI agents.

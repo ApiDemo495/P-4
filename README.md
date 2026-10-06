@@ -573,27 +573,49 @@ tail -f server.log
 
 ---
 
-## 9b. The thermodynamic capital layer (BTC = work, PAXG = rest mass)
+## 9b. The physics layer (kinetics of the tape, BTC vs PAXG)
 
-A second, independent view of the pair, built from physical law and
-microstructure rather than price patterns, voting beside the brain and the
-AI agents (weight `PHYSICS_WEIGHT`, default 0.20; `0` disables):
+A second, independent view of the pair, built from the physics of the order
+flow rather than price patterns, voting beside the brain and the AI agents
+(weight `PHYSICS_WEIGHT`, default 0.20; `0` disables). Every mechanism reads
+the frozen tape of the window, so it is computable on any real feed; a
+mechanism that cannot be estimated is **inactive** (listed with the reason,
+excluded from the blend) instead of voting 0.00.
 
-| § | mechanism | inputs |
+| § | mechanism | what it measures |
 |---|---|---|
-| 1 | Landauer thermal valve Θ = Ṡ/Ṡ_max, w_thermal | global hashrate (mempool.space / blockchain.info, model fallback) |
-| 2 | Solar flux Ω over 12 mining regions, w_solar, α blend | exact Sun geometry, hub table |
-| 4 | E = mc² ratio R, phase angle Φ, per-cycle exp update | hashrate, gold energy intensity |
-| 5 | AMM price surface x·y = k, Δ_max | DexScreener pools (no key) |
-| 8 | VPIN · fragmentation · O-U bridge · REI pendulum · Avellaneda-Stoikov | the frozen tape; Coinbase + Kraken tickers |
-| 10 | PAXG/XAU and wBTC/BTC peg bands | gold-api.com / CoinGecko |
-| 11-12 | Kelly blend, thermodynamic band (drag), TSR | the rows above |
+| 8.3 | Ornstein-Uhlenbeck bridge | reversion of the BTC/PAXG ratio to its 5-min VWAP; tradeable only if the half-life is 5-600 s and E[ΔP] clears the spread; edge capped at one 60 s σ |
+| 8.1 | VPIN | flow toxicity; above 0.40 the dominant side is informed |
+| 8.6 | Hawkes self-excitation | branching ratio n of trade arrivals; clustered flow carries its sign, n ≥ 0.95 is a cascade about to exhaust |
+| 8.7 | Momentum flux (kinetic energy) | p = Σ side·v·\|Δln P\| over 60 s, z-scored against ten minutes |
+| 8.8 | Trade-sign entropy | Shannon entropy of sign blocks; low entropy = an order being worked |
+| 8.9 | Cross-leg diffusion | lagged BTC↔PAXG cross-correlation on a 5 s grid; the leader's last move predicts the follower |
+| 8.4 | REI pendulum | BTC share of pair notional as a damped oscillator, integrated 60 s ahead |
+| 8.10 | Tape temperature | realised variance of the last minute vs ten minutes; a hot tape drags every vote |
+| 8.5 | Avellaneda-Stoikov | the spread cost the blend must beat |
+| 8.2 / 10 | fragmentation · peg | only when 2+ venue quotes / a gold-spot quote are live |
+| 11 | Kelly | Σ⁻¹μ over the active mechanisms, temperature drag, spread-cost gate |
 
-Dashboard card "Thermodynamic capital layer" (every formula with its numbers),
+The planetary sections of the original document (Landauer valve, solar flux,
+E = mc², AMM surface) were retired: inside a 60-second window the global
+hashrate is a constant, so they printed 0.00 and "balanced" every window.
+
+Dashboard card "Physics layer" (every mechanism with its numbers and reason),
 `GET /api/physics/current` (locked with the window), `/api/physics/live`,
-`/api/physics/telemetry`, `/api/physics/spec` (which sections are implemented
-and why §3, §6, §7, §9 are not). Expected edges are model estimates; no
-"cannot lose" claim is made anywhere.
+`/api/physics/telemetry`, `/api/physics/spec`. Expected edges are model
+estimates; no "cannot lose" claim is made anywhere.
+
+## 9c. Hedge outcomes
+
+The "Hedge Status" tiles were replaced by an outcome system. For the locked
+side the engine prints the distribution it is trading on: σ of each leg over
+60 s, ρ, the dollar hedge ratio β and the variance a hedge removes; the
+**joint outcome matrix** P(BTC↑/↓ × PAXG↑/↓) from a bivariate normal; the
+four pair actions consistent with the lock (outright, hedged at β,
+pair-neutral, mirror leg) with expected bp, σ and P(profit), the best by μ/σ;
+1σ/2σ scenarios; the spread z-score; and the regime read from HSI / HRDD /
+GCDV / SHRP ("hedge working", "weakening", "breaking", "ratio drifting",
+"paths diverging"). It is in `signal.hedge.outcomes` of `/api/signal/current`.
 
 ## 10. Documentation
 

@@ -151,7 +151,7 @@ def test_fusion_lets_an_active_ledger_decide_and_caps_confidence() -> None:
     assert off.decision == "BUY" and off.learned["active"] is False
 
 
-def test_round_ai_flat_windows_are_not_hits_and_verdicts_are_stricter() -> None:
+def test_round_aj_flat_windows_are_not_hits_and_verdicts_are_stricter() -> None:
     """A move inside the spread is a flat window: nobody is credited, the
     engine's confidence bucket records a non-hit, and voters pay half a miss."""
     ledger = EvidenceLedger(None, enabled=True, min_samples=1)

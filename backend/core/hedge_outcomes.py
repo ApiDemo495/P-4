@@ -1,6 +1,6 @@
 """Hedge outcomes - what the BTC/PAXG pair is expected to *do* this window.
 
-Round AI replaced the "Hedge Status" tiles (four bare formula numbers) with
+Round AJ replaced the "Hedge Status" tiles (four bare formula numbers) with
 an outcome system.  Given the locked side and its confidence, the synchronised
 BTC/PAXG return grid and the four hedge formulas, it produces:
 
@@ -121,7 +121,9 @@ def build(snapshot, formulas: dict, side: str, confidence: float, asset: str = "
     # Mean of the locked leg: the drift that makes P(side) equal the lock's
     # confidence over the horizon.  The other leg follows rho, then the flow
     # rotation (SHRP > 0 for PAXG means flow into gold) tilts it.
-    p_side = min(0.95, max(0.5, float(confidence)))
+    # The lock's confidence is a conviction in [0, 1], not a probability:
+    # map it to P(side) in [0.5, 0.95] (full conviction = 95 %).
+    p_side = min(0.95, max(0.5, 0.5 + 0.45 * float(confidence)))
     z = _phi_inv(p_side)
     sign = 1.0 if side == "BUY" else -1.0
     if asset.upper() == "BTC":
@@ -167,7 +169,7 @@ def build(snapshot, formulas: dict, side: str, confidence: float, asset: str = "
     logic = [
         f"grid {window:.0f} s, {n} returns; σ_BTC({horizon_s:.0f} s) = {s_b * 1e4:.1f} bp, σ_PAXG = {s_p * 1e4:.1f} bp, ρ = {rho:+.3f}",
         f"β(BTC on PAXG) = ρ·σ_B/σ_P = {beta_b_on_p:+.3f}; β(PAXG on BTC) = {beta_p_on_b:+.3f}; hedging removes ρ² = {rho * rho:.0%} of variance",
-        f"lock {side} {asset} at {p_side:.0%} ⇒ μ_{asset} = Φ⁻¹({p_side:.2f})·σ = {(mu_b if asset.upper() == 'BTC' else mu_p) * 1e4:+.1f} bp; "
+        f"lock {side} {asset}, conviction {float(confidence):.0%} ⇒ P(side) = ½ + 0.45·conviction = {p_side:.0%} ⇒ μ_{asset} = Φ⁻¹({p_side:.2f})·σ = {(mu_b if asset.upper() == 'BTC' else mu_p) * 1e4:+.1f} bp; "
         f"other leg = β·μ + ¼·rotation(SHRP {shrp:+.2f})·σ",
         f"P(BTC↑,PAXG↑) = {joint['btc_up_paxg_up']:.0%}, P(BTC↑,PAXG↓) = {joint['btc_up_paxg_down']:.0%}, "
         f"P(BTC↓,PAXG↑) = {joint['btc_down_paxg_up']:.0%}, P(BTC↓,PAXG↓) = {joint['btc_down_paxg_down']:.0%} (bivariate normal, Drezner quadrature)",

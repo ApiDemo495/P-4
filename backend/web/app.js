@@ -2067,7 +2067,7 @@ function renderBrainExplain(data) {
   renderBrainPipeline();
 }
 
-/* The physics layer (Round T, rebuilt in Round AI): the report locked with the
+/* The physics layer (Round T, rebuilt in Round AJ): the report locked with the
    window on screen.  It travels inside the fusion, so it cannot change
    mid-window either. */
 function renderPhysics(payload) {

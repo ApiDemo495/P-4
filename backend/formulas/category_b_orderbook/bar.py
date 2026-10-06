@@ -71,7 +71,7 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     a_ask = max(0.0, prev_ask - _side_total(now, 1, ACTIVE_LEVELS))
     state.last_a_bid, state.last_a_ask = a_bid, a_ask
 
-    # Round AI: absorption is measured as the *fraction* of each side's
+    # Round AJ: absorption is measured as the *fraction* of each side's
     # resting depth that disappeared, and the asymmetry of those fractions is
     # scaled by FULL_VOTE_FRACTION.  The old (ask − bid)/(ask + bid) printed
     # −1.000 when 0.01 BTC left the bid and nothing left the ask - a rounding

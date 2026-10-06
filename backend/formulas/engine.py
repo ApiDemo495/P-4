@@ -115,7 +115,7 @@ REAL_SOURCES = ("binance", "kraken", "krakenrest", "coingecko")
 #: among its feeds and its coverage is the weighted mean.  "offline" is now
 #: reserved for *no real data at all* - a missing order book on a REST tape
 #: reads "partial · book: source has no order book", never "offline".
-#: Round AI: "derived" is real-time real data behind a transform (a widened
+#: Round AJ: "derived" is real-time real data behind a transform (a widened
 #: BTC/PAXG grid on a thin gold tape, a REST source without an order book)
 #: - it is live for the purpose of the grade; it only shows as a note.
 FEED_STATE_WEIGHT = {"live": 1.0, "derived": 1.0, "delayed": 0.75, "warming": 0.5,

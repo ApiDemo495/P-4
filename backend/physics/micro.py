@@ -141,7 +141,7 @@ def ornstein_uhlenbeck(snapshot) -> dict:
     expected = gap * (1.0 - math.exp(-60.0 * kappa_s))
     var60 = sigma_s ** 2 * (1.0 - math.exp(-120.0 * kappa_s)) / (2.0 * kappa_s) if kappa_s > 0 else 0.0
     sharpe = abs(expected) / math.sqrt(var60) if var60 > 0 else 0.0
-    # Round AI: a reversion is only tradeable inside the window if its
+    # Round AJ: a reversion is only tradeable inside the window if its
     # half-life sits between 5 s and 10 min (faster is bid/ask bounce, slower
     # never arrives within 60 s) and the expected move clears the cost of
     # crossing the spread.  The edge is capped at one 60-second sigma - the

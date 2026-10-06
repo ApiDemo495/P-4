@@ -1,4 +1,4 @@
-"""The physics layer's per-cycle pass (Round AI rebuild).
+"""The physics layer's per-cycle pass (Round AJ rebuild).
 
 ``PhysicsEngine.compute(snapshot, asset)`` runs every kinetic mechanism on the
 frozen snapshot and returns one JSON-ready report: the signed vote for
@@ -6,7 +6,7 @@ frozen snapshot and returns one JSON-ready report: the signed vote for
 inputs and printed logic, the multi-mechanism Kelly blend, the temperature
 drag and the cost gate.
 
-What changed in Round AI and why
+What changed in Round AJ and why
 --------------------------------
 The old layer centred on three *planetary* quantities - the Landauer thermal
 valve, the solar-flux opportunity cost and the E = mc² work-to-rest-mass
@@ -119,7 +119,7 @@ class PhysicsEngine:
                 "entropy": round(float(mechanisms["entropy"].get("value", 0.0)), 3),
                 "voting": len(directional), "active": len(active), "agreement": round(agree, 3),
                 "note": ("expected edges are model estimates for this window, never a guaranteed yield; "
-                         "planetary sections (Landauer, solar, E=mc², AMM) were retired in Round AI because they "
+                         "planetary sections (Landauer, solar, E=mc², AMM) were retired in Round AJ because they "
                          "are constant inside a minute; Sections 3, 6, 7 and 9 of the source document are not implemented"),
             },
             "market": {"btc_usd": round(btc_usd, 2), "paxg_usd": round(paxg_usd, 2), "ratio": round(market_ratio, 4)},

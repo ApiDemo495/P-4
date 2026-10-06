@@ -216,7 +216,7 @@ def fuse(
     physics_weight = float(getattr(settings, "weight_physics", 0.0) or 0.0)
     if physics and physics_weight > 0:
         p_value = max(-1.0, min(1.0, float(physics.get("vote") or 0.0)))
-        # Round AI: every active mechanism on a real tape is a live input; a
+        # Round AJ: every active mechanism on a real tape is a live input; a
         # layer on the simulator counts half.
         liveness = min(1.0, int(physics.get("live_inputs") or 0) / 3.0)
         physics_weight = table.mark("physics", 0.5 + 0.5 * liveness)

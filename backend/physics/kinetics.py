@@ -1,4 +1,4 @@
-"""Round AI - the kinetic mechanisms of the physics layer.
+"""Round AJ - the kinetic mechanisms of the physics layer.
 
 Every mechanism here reads only the frozen tape of the window (BTC and PAXG
 prints: ``[t_ms, price, volume, side]``), so it is computable on every real

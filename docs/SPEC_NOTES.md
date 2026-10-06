@@ -1598,3 +1598,56 @@ a hook still running - all documented in the README with the one-click
 `codespaces.new?ref=arena/01a0c844-p-4` link. Also: when the probe says
 Binance is blocked and Kraken reachable, Kraken is the active tape from boot
 (no two seconds of rejected writes).
+
+## AJ — physics rebuilt on the tape, hedge outcomes, &b, strict ledger, news novelty
+
+**User message.** "Fix all the formulas of physics some are 0.00, remove hedge
+status instead of that add more powerful hedge outcomes system, try to fix &b
+partial. Its predictions are terrible fix them. Change in physics formula add
+new ones that needed and remove useless. Fix each formula of maths they are
+calculating wrong or their calculations lead to loss. Strict the learning
+system. Fix weightage of news since not all time same news affect market
+again and again."
+
+**Physics (`backend/physics`).** Retired §1 Landauer, §2 solar, §4 E=mc² and
+§5 AMM (`physical.py` deleted, hashrate/DEX telemetry dropped): the global
+hashrate is constant inside a minute, so Δln R, Ṙ and the phase angle were
+0.00 / "balanced" every window and the AMM needed DexScreener. New
+`kinetics.py`: Hawkes branching ratio (variance-to-mean of 1 s arrival
+counts), momentum flux z-score with kinetic energy, trade-sign block entropy,
+cross-leg lagged diffusion, tape temperature (drag). O-U is cost-gated
+(half-life 5-600 s, E[ΔP] > spread, edge ≤ 1 σ₆₀ instead of a 20 bp cap that
+dominated the Kelly). Every mechanism carries `active` + reason; the Kelly
+runs over active mechanisms only; the vote is halved when gross edge ≤ spread
+cost. `/api/physics/spec` marks the retired sections. UI card rewritten.
+
+**Hedge outcomes (`backend/core/hedge_outcomes.py`).** Bivariate-normal joint
+matrix (Drezner-Wesolowsky quadrature), β both ways, ρ², four pair actions
+with E[bp]/σ/P(profit), scenarios, spread z, regime from HSI/HRDD/GCDV/SHRP.
+The lock's conviction maps to P(side) = ½ + 0.45·conviction. Lives in
+`signal.hedge.outcomes`; the UI card "Hedge Outcomes" replaces the tiles.
+
+**&b.** `derived` (widened grid, REST without a book) now counts as live;
+the grade is over the market feeds only (`MARKET_FEEDS`), news reported beside
+it (`news_state`); a quiet tape is allowed three median inter-print gaps
+before "delayed"; `holding_back` names the feed when it is partial.
+
+**Maths.** BAR: fraction of resting depth consumed, 5 % = full vote, < 0.5 %
+= 0 (it printed −1.000 on a 0.01 BTC bid change). TWRS: returns winsorised at
+±4σ, tanh(skew/1.5) gated by the skew's t-statistic (2 → 5 SE) - it was
+pinned at −0.9996 by single prints.
+
+**Ledger.** Prior 6, clip 1.2, verdicts at 2.5 SE and ≥ 12 samples, noise
+pull 0.10, `CALIBRATION_MIN_SAMPLES` 40, printed probability ≤ realised
+bucket rate − 1 SE; `score(move_bps, cost_bps)`: a window inside the spread
+is *flat* - no hits, half a miss to every voter, a non-hit in the bucket.
+`news:theme:<name>` votes per driving theme.
+
+**News.** `impact.aggregate`: Jaccard ≥ 0.6 duplicates weigh nothing; k-th
+headline on a theme weighs 1/k; `habituation()` halves a theme every 2 h of
+continuous presence (reset after 90 min away); four-hour cutoff; drivers
+carry `theme_key`, `novelty`, `nth_on_theme`, `habituation`.
+
+**Verification.** `test_round_aj.py`, `test_round_t.py` (rewritten),
+`test_calibration.py::test_round_aj_*`, `test_round_z.py::test_round_aj_*`;
+full suite 274; dead-code 0; assets `v=2.22.0`.

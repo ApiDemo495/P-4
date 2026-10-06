@@ -12,7 +12,7 @@ asset the fusion can vote with, decayed by age and weighted by source tier.
     decay(age) = 0.5 ** (age / HALF_LIFE_S)         (half-life 20 min)
     w_tier     = 1.0 / 0.7 / 0.45 for tier 1 / 2 / 3
 
-Round AI - "not all the time the same news affects the market again and
+Round AJ - "not all the time the same news affects the market again and
 again".  Three corrections make a headline's weight depend on how *new* it is:
 
 * **duplicates** - two headlines whose word sets overlap by more than 60 %

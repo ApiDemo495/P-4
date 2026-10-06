@@ -1,4 +1,4 @@
-"""Constants of the physics layer (Round AI: planetary sections retired).
+"""Constants of the physics layer (Round AJ: planetary sections retired).
 
 Exact SI constants are exact.  Everything under *modelled magnitudes* is a
 published-order-of-magnitude estimate, labelled ``model`` wherever it reaches

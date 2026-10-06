@@ -258,7 +258,7 @@ def test_kraken_rest_is_a_real_source_with_a_book(monkeypatch):
     assert hub.feeds_report()["feeds"]["binance"]["last_error"] == "InvalidStatus: HTTP 451"
 
 
-def test_round_ai_news_weight_depends_on_novelty():
+def test_round_aj_news_weight_depends_on_novelty():
     """Duplicates weigh nothing, the k-th headline on a theme weighs 1/k, and
     a theme that has sat on the wire for hours is habituated."""
     from backend.news import impact
