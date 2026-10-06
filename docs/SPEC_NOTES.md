@@ -1575,3 +1575,11 @@ assertions in the tests, and every README / spec reference. Everything the app
 offers is the web dashboard on port 8000 - which already carried every feature
 (the Flutter client rendered the same payloads). `.gitignore` no longer tracks
 a build directory. Tests 270, dead code 0, payload check 69/69.
+
+## AH — Gemini: newest generation wins
+
+`choose_model` ranks the ListModels answer by generation parsed from the id
+(3.8 > 3.7 > 3.6 > 3.5 > 3 > 2.5), then flash > flash-lite > pro, then GA >
+preview; embedding / image / tts / live / audio ids are excluded. 3.5–3.8 (and
+anything newer) are picked automatically; `PREFERRED_MODELS` is only the
+offline default. Tests in `test_round_af.py`.

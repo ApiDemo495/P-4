@@ -68,7 +68,16 @@ def test_provenance_is_graded_not_binary():
 
 
 def test_gemini_model_discovery():
+    # newest generation first (3.8 > 3.7 > 3.5 > 3 > 2.5), flash before pro,
+    # never an embedding / image / tts model
+    pool = ["models/gemini-2.5-flash", "models/gemini-2.5-pro", "models/gemini-3-pro-preview",
+            "models/gemini-3.5-flash", "models/gemini-3.5-pro", "models/gemini-3.7-flash",
+            "models/gemini-3.8-flash-image", "models/gemini-embedding-001", "models/gemini-flash-latest"]
+    assert choose_model(pool) == "gemini-3.7-flash"
+    assert choose_model(pool + ["models/gemini-3.8-flash"]) == "gemini-3.8-flash"
+    assert choose_model(["models/gemini-3.8-flash", "models/gemini-3.8-pro"]) == "gemini-3.8-flash"
+    assert choose_model(["models/gemini-3.6-flash-preview", "models/gemini-3.6-flash"]) == "gemini-3.6-flash"
     assert choose_model(["models/gemini-2.0-flash", "models/gemini-2.5-flash"]) == "gemini-2.5-flash"
-    assert choose_model(["models/gemini-2.0-flash"], pinned="gemini-2.0-flash") == "gemini-2.0-flash"
-    assert choose_model(["models/gemini-9-flash", "models/gemini-embedding-001"]) == "gemini-9-flash"
-    assert choose_model([]) == "gemini-2.5-flash"
+    assert choose_model(pool, pinned="gemini-3.5-pro") == "gemini-3.5-pro"
+    assert choose_model(["models/gemini-9.1-flash"]) == "gemini-9.1-flash", "future generations need no code change"
+    assert choose_model([]) == "gemini-3.8-flash"

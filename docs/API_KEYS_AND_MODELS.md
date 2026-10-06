@@ -125,14 +125,16 @@ request limits that are far above what this app uses (one call per agent per
    line names the model that will be used. (Or `GEMINI_API_KEY=` in `.env`.)
 
 **Which model does it use?** `GEMINI_MODEL=auto` (the default) asks Google
-which models *your* key can call and picks the first of `gemini-2.5-flash`,
-`gemini-2.5-flash-lite`, `gemini-flash-latest`, `gemini-2.0-flash`, … so a
-retired model id (the old default `gemini-1.5-flash` now answers 404) can never
-break the agent again; if a pinned id ever returns 404 mid-run the agent
-re-discovers and retries once. To pin one anyway:
+which models *your* key can call and picks the **newest generation** it finds
+— 3.8 over 3.7 over 3.5 over 3 over 2.5 — preferring `flash` (the engine needs
+an answer inside 7 s) over `flash-lite` over `pro`, and GA over preview. New
+generations need no code change: the version is read from the model id. A
+retired id (the old default `gemini-1.5-flash` answers 404) can never break
+the agent again; if a pinned id returns 404 mid-run the agent re-discovers and
+retries once. To pin one anyway:
 
 ```
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.8-flash
 ```
 
 **Common errors**

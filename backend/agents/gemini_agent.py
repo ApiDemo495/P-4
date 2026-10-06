@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 
 import httpx
@@ -38,28 +39,55 @@ log = logging.getLogger("drosophila.agents.gemini")
 BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 NAME = "gemini"
 
-#: Round AF - Google retires model ids (``gemini-1.5-flash`` now answers 404,
-#: which the Settings page showed as a bare "HTTP error").  The agent asks the
-#: API which models THIS key can use (ListModels) and picks the first match in
-#: this order; ``GEMINI_MODEL`` still pins one explicitly.
+#: Round AF/AH - Google retires model ids (``gemini-1.5-flash`` answers 404)
+#: and ships new generations faster than any hard-coded list.  The agent asks
+#: the API which models THIS key can use (ListModels) and ranks them by
+#: generation: the NEWEST version wins (3.8 > 3.7 > ... > 3.5 > 3.0 > 2.5),
+#: then the family (flash > flash-lite > pro - this engine needs a 7 s answer),
+#: then GA over preview.  ``GEMINI_MODEL`` still pins one explicitly.  The
+#: list below is only the tie-break order / the offline default.
 PREFERRED_MODELS: tuple[str, ...] = (
-    "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-2.0-flash",
-    "gemini-2.0-flash-lite", "gemini-2.5-pro", "gemini-pro-latest",
+    "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash",
+    "gemini-3.5-flash-lite", "gemini-3.5-pro", "gemini-3-flash", "gemini-3-pro",
+    "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-2.5-pro",
 )
+#: never pick these for a text decision
+_EXCLUDE = ("embedding", "image", "tts", "live", "audio", "native-audio", "veo", "imagen", "robotics",
+            "computer-use", "deep-research", "aqa", "learnlm", "gemma", "thinking-exp")
+_VERSION = re.compile(r"gemini-(\d+)(?:\.(\d+))?")
+_FAMILY_RANK = {"flash": 3, "flash-lite": 2, "pro": 1}
+
+
+def model_rank(model_id: str) -> tuple:
+    """Sort key: newest generation first, flash before pro, GA before preview.
+    Returns ``None`` for ids that are not text-decision models."""
+    m = model_id.lower()
+    if not m.startswith("gemini") or any(x in m for x in _EXCLUDE):
+        return None
+    v = _VERSION.search(m)
+    if v:
+        major, minor = int(v.group(1)), int(v.group(2) or 0)
+    elif "latest" in m:
+        major, minor = 0, 0          # "gemini-flash-latest" - unknown generation, keep as fallback
+    else:
+        return None
+    family = "flash-lite" if "flash-lite" in m else "flash" if "flash" in m else "pro" if "pro" in m else None
+    if family is None:
+        return None
+    preview = any(x in m for x in ("preview", "exp", "-0", "latest"))
+    return (major, minor, _FAMILY_RANK[family], 0 if preview else 1, m)
 
 
 def choose_model(available: list[str], pinned: str = "") -> str:
     """Pick a usable model id from a ListModels answer (names come back as
-    ``models/<id>``).  A pinned id wins when the key can use it."""
+    ``models/<id>``).  A pinned id wins when the key can use it; otherwise the
+    newest flash-class model this key can call."""
     ids = [m.split("/", 1)[-1] for m in available]
     if pinned and pinned != "auto" and pinned in ids:
         return pinned
-    for want in PREFERRED_MODELS:
-        if want in ids:
-            return want
-    flash = [m for m in ids if "flash" in m and "image" not in m and "tts" not in m and "live" not in m]
-    if flash:
-        return sorted(flash, reverse=True)[0]
+    ranked = sorted((r, i) for i in ids if (r := model_rank(i)) is not None)
+    if ranked:
+        return ranked[-1][1]
     text = [m for m in ids if m.startswith("gemini") and "embedding" not in m and "image" not in m]
     return text[0] if text else (pinned if pinned and pinned != "auto" else PREFERRED_MODELS[0])
 
