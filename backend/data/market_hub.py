@@ -118,6 +118,12 @@ class MarketDataHub:
                 self.active_source = "simulator"
                 self._warm_up()
 
+        if mode == "auto" and self.kraken is not None and not self.connectivity.get("binance_reachable", True) \
+                and self.connectivity.get("kraken_reachable"):
+            # Binance is geo-blocked here but Kraken answers: make Kraken the
+            # active tape from the first tick instead of rejecting its writes
+            # for two seconds while the supervisor notices (rehearsal AI).
+            self.active_source = "kraken"
         if mode == "auto" and self.kraken_rest is not None and not self.connectivity.get("binance_reachable", True):
             # Binance is blocked from here (451 in US regions): start the HTTPS
             # tape immediately so the first window already has real prices.

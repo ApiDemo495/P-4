@@ -1583,3 +1583,18 @@ a build directory. Tests 270, dead code 0, payload check 69/69.
 preview; embedding / image / tts / live / audio ids are excluded. 3.5–3.8 (and
 anything newer) are picked automatically; `PREFERRED_MODELS` is only the
 offline default. Tests in `test_round_af.py`.
+
+## AI — the Codespace start, rehearsed on GitHub
+
+`.github/workflows/devcontainer-rehearsal.yml` (devcontainers/ci) pulls the
+exact image devcontainer.json names, runs postCreate/postStart/postAttach the
+way Codespaces does, then checks `/api/health` and `/api/signal/current` and
+posts the transcript on PR #1 (Actions logs are unreadable from the sandbox).
+First run: provisioned in 2 s (`/opt/venv` adopted), engine answering at once,
+Kraken WS connected (Binance 451 from GitHub's US region), first signal BUY
+locked 5 s after creation. The container start therefore works unattended;
+remaining failure modes are a Codespace created on `main`, recovery mode, or
+a hook still running - all documented in the README with the one-click
+`codespaces.new?ref=arena/01a0c844-p-4` link. Also: when the probe says
+Binance is blocked and Kraken reachable, Kraken is the active tape from boot
+(no two seconds of rejected writes).

@@ -56,9 +56,15 @@ is exactly one URL to forward and no second window to keep open.
 
 ## 0. Zero commands: open the Codespace and wait
 
-There is nothing to type. Create a Codespace on this branch (the **Code**
-button → *Codespaces* → *Create on arena/01a0c844-p-4*) and the container does
-the rest by itself:
+There is nothing to type. Create a Codespace **on this branch** - the one-click
+link does exactly that:
+
+**https://codespaces.new/ApiDemo495/P-4?ref=arena/01a0c844-p-4&quickstart=1**
+
+(`main` carries only this README: a Codespace created there has nothing to
+start. The **Code → Codespaces** button on the repository page defaults to
+`main`; use the link above, or switch the branch picker first.) Then the
+container does the rest by itself:
 
 | When | What happens automatically |
 | --- | --- |
@@ -86,6 +92,19 @@ so the dashboard appears on its own. Everything else is on that one URL:
 
 **If it ever looks stuck**, open the Ports tab and click the globe next to
 `8000`, or open the URL it prints. The engine restarts itself if it stops.
+
+**Proof it works unattended:** every change to the container files runs the
+`devcontainer-rehearsal` GitHub Action, which starts the very same image and
+lifecycle hooks on a GitHub runner and posts the transcript on PR #1 — the last
+run shows provisioning in 2 s and the first signal locked 5 s after creation.
+If your Codespace does not do the same, one of three things is true: it was
+created on `main`; it is in **recovery mode** (yellow banner "running in
+recovery mode" — the container failed to build, click *Rebuild*); or a hook is
+still running — open `/settings` → **Codespace self-start**, or run:
+
+```bash
+cat .run/logs/autostart.journal
+```
 
 ### Switches (all optional - set them as Codespace secrets or in `.env`)
 
