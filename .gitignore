@@ -58,3 +58,4 @@ server.log
 # automatic-startup runtime state (never committed)
 .run/
 node_modules/
+rehearsal-transcript.txt
