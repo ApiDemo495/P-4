@@ -64,6 +64,7 @@ class FormulaSpec:
     origin: str = "template"      # "template" or "bred"
     expression: str = ""          # for bred formulas: the symbolic tree
     gates: dict = field(default_factory=dict)  # autopsy-derived regime gates
+    expression_tree: object = None  # bred formulas: the nested-tuple tree
 
     @property
     def domain_name(self) -> str:
