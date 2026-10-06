@@ -114,8 +114,10 @@ def rrank(x: np.ndarray, n: int = 55) -> np.ndarray:
     w = windows(x, n)
     with np.errstate(all="ignore"):
         last = w[:, -1:]
-        r = np.nanmean(np.where(np.isnan(w), np.nan, (w < last).astype(float)), axis=1)
-    return 2.0 * r - 1.0
+        below = np.nanmean(np.where(np.isnan(w), np.nan, (w < last).astype(float)), axis=1)
+        at_most = np.nanmean(np.where(np.isnan(w), np.nan, (w <= last).astype(float)), axis=1)
+        r = 0.5 * (below + at_most)   # mid-rank: ties (e.g. a saturated signal) read as neutral
+    return np.clip(2.0 * r - 1.0, -1.0, 1.0)
 
 
 def normalize(x: np.ndarray, how: str, n: int = 55, scale: float = 1.0) -> np.ndarray:

@@ -56,7 +56,12 @@ def _alpha_div(m1, s1, m2, s2, a):
                 - np.log(va / (s1 ** (2 * (1 - a)) * s2 ** (2 * a))) / (2 * (1 - a)))
 
 
+def _short(w, n):
+    return int(min(w, max(2, n // 2)))
+
+
 def k_alpha(frame, n, norm, w=5, alpha=0.5, **_):
+    w = _short(w, n)
     m1, s1 = _mu_sigma(frame, w)
     m2, s2 = _mu_sigma(frame, n)
     div = _alpha_div(m1, s1, m2, s2, alpha)
@@ -65,6 +70,7 @@ def k_alpha(frame, n, norm, w=5, alpha=0.5, **_):
 
 
 def k_kl(frame, n, norm, w=5, **_):
+    w = _short(w, n)
     m1, s1 = _mu_sigma(frame, w)
     m2, s2 = _mu_sigma(frame, n)
     with np.errstate(all="ignore"):
@@ -74,6 +80,7 @@ def k_kl(frame, n, norm, w=5, **_):
 
 
 def k_jeffreys(frame, n, norm, w=5, **_):
+    w = _short(w, n)
     m1, s1 = _mu_sigma(frame, w)
     m2, s2 = _mu_sigma(frame, n)
     with np.errstate(all="ignore"):

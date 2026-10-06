@@ -218,6 +218,8 @@ class CandleStore:
     def _close_locked(self, cur: _Minute) -> np.ndarray:
         if cur.last_book is not None:
             cur.last_book = np.array(cur.last_book, dtype=np.float64, copy=True)
+            if len(cur.books) < 2:
+                cur.books = [cur.first_book, cur.last_book]
         row = cur.row(with_ot=True)
         if len(self._rows) and self._rows[-1, 0] >= row[0]:
             # replace a bootstrapped copy of the same minute with the live one
