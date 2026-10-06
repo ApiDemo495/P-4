@@ -107,7 +107,7 @@ $("save-keys").onclick = async () => {
       if (!res.error) saved.push(`${provider} slot ${box.dataset.slot}`);
     }
   }
-  for (const slot of ["neuprint", "cave"]) {
+  for (const slot of ["neuprint", "cave", "glassnode", "twelvedata", "lunarcrush"]) {
     const input = $(`key-${slot}`);
     if (!input || !input.value.trim()) continue;
     const res = await getJSON(`/api/settings/keys/${slot}`, {

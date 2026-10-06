@@ -127,6 +127,17 @@ class CycleManager:
 
         self.physics = PhysicsEngine()
         self.last_physics: dict | None = None
+        # Round AL: the Formula Genesis Engine - 2,100+ generated formulas,
+        # 200 active, regime-gated, one more weighted voter.  Candles are
+        # rolled from the hub's tape; scoring runs on its own worker thread.
+        from backend.data.keyed_providers import MacroFeed
+        from backend.genesis.engine import GenesisEngine
+
+        self.macro = MacroFeed(self.settings)
+        self.genesis = GenesisEngine(state_dir=str(cfg.REPO_ROOT / ".run" / "genesis"))
+        self.genesis.macro_provider = self.macro.series
+        self.genesis.attach(self.market)
+        self.last_genesis: dict | None = None
         self.last_news_impact: dict = {}
         self.lock = SignalLockController()
 
@@ -241,6 +252,14 @@ class CycleManager:
         await self.brain.start()
         await self.news.start()
         await self.clock.sync(force=True)
+        # Round AL: public minute history first (Kraken, then Gemini), then the
+        # worker thread takes over from the live tape.
+        try:
+            await asyncio.wait_for(self.genesis.bootstrap(), timeout=25)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("genesis bootstrap skipped: %s", exc)
+        self.genesis.start()
+        await self.macro.start()
 
         await self._restore_state()
 
@@ -294,6 +313,8 @@ class CycleManager:
             ("news", self.news.stop),
             ("brain", self.brain.stop),
             ("market", self.market.stop),
+            ("macro", self.macro.stop),
+            ("genesis", self._stop_genesis),
         ):
             try:
                 await step()
@@ -1400,6 +1421,23 @@ class CycleManager:
             ],
         }
 
+    async def _stop_genesis(self) -> None:
+        self.genesis.stop()
+
+    def genesis_payload(self) -> dict:
+        """The genesis composite *as locked with the window on screen*, plus
+        the live one and the engine's status line."""
+        locked = (self.last_fusion or {}).get("genesis") or None
+        live = self.genesis.vote(self.asset)
+        return {
+            "locked": locked is not None,
+            "weight": float(getattr(self.settings, "weight_genesis", 0.0) or 0.0),
+            "report": locked or live,
+            "live": {k: v for k, v in live.items() if k != "readings"},
+            "status": self.genesis.status(self.asset)["assets"].get(self.asset, {}),
+            "providers": self.macro.status(),
+        }
+
     def physics_payload(self) -> dict:
         """The thermodynamic layer's report *as locked with the window on
         screen* (it travels inside the fusion, so the Round R lock covers it)."""
@@ -1477,6 +1515,7 @@ class CycleManager:
         payload["accuracy"] = self.accuracy_block()
         payload["brain_explain"] = self.brain_explain_payload()
         payload["physics"] = self.physics_payload()
+        payload["genesis"] = self.genesis_payload()
         if include_history:
             payload["history"] = self.history_payload(limit=72)
             payload["outcomes"] = self.outcomes_payload()
@@ -1624,6 +1663,14 @@ class CycleManager:
             except Exception as exc:  # noqa: BLE001
                 log.warning("thermodynamic layer failed this pass: %s", exc)
                 warnings.append(f"thermodynamic layer skipped: {exc}")
+        genesis_report = None
+        if float(getattr(self.settings, "weight_genesis", 0.0) or 0.0) > 0:
+            try:
+                genesis_report = {k: v for k, v in self.genesis.vote(self.asset).items() if k != "readings"}
+                self.last_genesis = genesis_report
+            except Exception as exc:  # noqa: BLE001
+                log.warning("genesis layer failed this pass: %s", exc)
+                warnings.append(f"genesis layer skipped: {exc}")
         common = dict(
             agents=agent_results,
             ccs_value=float(formula_result.values.get("CCSv2", 0.0)),
@@ -1639,6 +1686,7 @@ class CycleManager:
             recent_accuracy=self.accuracy_block(),
             crowd=crowd if crowd is not None else self.emotion_locked,
             physics=physics_report,
+            genesis=genesis_report,
             news_impact=self._news_impact_safe(),
             asset=self.asset,
             ledger_sources=self._ledger_sources_safe(),
@@ -1666,6 +1714,8 @@ class CycleManager:
             candles=snapshot.candles(self.asset) if snapshot is not None else None,
             ticks=snapshot.ticks(self.asset) if snapshot is not None else None,
             physics_vote=float((physics_report or {}).get("vote") or 0.0),
+            genesis_vote=float((genesis_report or {}).get("vote") or 0.0)
+            if (genesis_report or {}).get("status") == "live" else 0.0,
             news_themes=self._news_theme_votes(common["news_impact"]),
         )
         learned = self.ledger.evaluate(self.asset, votes)

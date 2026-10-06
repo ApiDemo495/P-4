@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from importlib import import_module
 
+from backend.genesis.domains._interpretations import INTERPRETATIONS
+
 MODULES = ("d01_signatures", "d02_homology", "d03_infogeo", "d04_transport", "d05_fractional",
            "d06_tropical", "d07_quantum", "d08_padic", "d09_category", "d10_algorithmic")
 
@@ -17,5 +19,7 @@ def all_variants():
     for mod in MODULES:
         for sp in import_module(f"backend.genesis.domains.{mod}").variants():
             sp.layer = LAYERS.get(sp.domain, 2)
+            if not sp.interpretation:
+                sp.interpretation = INTERPRETATIONS.get((sp.domain, sp.subcategory), "")
             specs.append(sp)
     return specs

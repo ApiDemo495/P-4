@@ -132,6 +132,31 @@
       <div class="status-line" id="status-cave">brain step 4-flywire is skipped (not failed) while this is empty</div>
     </div>
 
+    <div class="field">
+      <label>Keyed providers for the Formula Genesis Engine (optional — each feed runs only while its key is saved)</label>
+      <div class="row key-row">
+        <span class="key-role" title="Glassnode on-chain: BTC exchange net-flow, hourly">Glassnode</span>
+        <input type="password" id="key-glassnode" placeholder="GLASSNODE_API_KEY" autocomplete="off" />
+        <button class="btn tiny ghost" data-reveal="key-glassnode">👁</button>
+        <button class="btn" data-test="glassnode" data-input="key-glassnode">Test</button>
+      </div>
+      <div class="status-line" id="status-glassnode">exch_flow column is NaN (formulas skip it) while this is empty</div>
+      <div class="row key-row">
+        <span class="key-role" title="Twelve Data: US-dollar index 1-minute closes (EUR/USD proxy on free plans)">Twelve Data</span>
+        <input type="password" id="key-twelvedata" placeholder="TWELVEDATA_API_KEY" autocomplete="off" />
+        <button class="btn tiny ghost" data-reveal="key-twelvedata">👁</button>
+        <button class="btn" data-test="twelvedata" data-input="key-twelvedata">Test</button>
+      </div>
+      <div class="status-line" id="status-twelvedata">dxy column is NaN (formulas skip it) while this is empty</div>
+      <div class="row key-row">
+        <span class="key-role" title="LunarCrush: hourly social sentiment / galaxy score">LunarCrush</span>
+        <input type="password" id="key-lunarcrush" placeholder="LUNARCRUSH_API_KEY" autocomplete="off" />
+        <button class="btn tiny ghost" data-reveal="key-lunarcrush">👁</button>
+        <button class="btn" data-test="lunarcrush" data-input="key-lunarcrush">Test</button>
+      </div>
+      <div class="status-line" id="status-lunarcrush">social column is NaN (formulas skip it) while this is empty</div>
+    </div>
+
     <div class="row" style="justify-content:flex-end">
       <button class="btn" id="save-keys">Save &amp; Return</button>
     </div>

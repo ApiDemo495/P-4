@@ -64,6 +64,7 @@ class FusionResult:
     learned: dict = field(default_factory=dict)
     spec_score: float = 0.0
     physics: dict = field(default_factory=dict)
+    genesis: dict = field(default_factory=dict)
 
     # -- binary direction fields (HOLD was removed) ----------------------
     @property
@@ -104,6 +105,7 @@ class FusionResult:
             "learned": self.learned,
             "spec_score": round(self.spec_score, 4),
             "physics": self.physics,
+            "genesis": self.genesis,
         }
         # Kept for the two clients: "lean" now always equals the decision,
         # because there is no third state to lean away from.
@@ -133,6 +135,7 @@ def fuse(
     crowd: dict | None = None,
     learned: dict | None = None,
     physics: dict | None = None,
+    genesis: dict | None = None,
     news_impact: dict | None = None,
     asset: str = "BTC",
     ledger_sources: list | None = None,
@@ -232,6 +235,31 @@ def fuse(
             "w_final": (physics.get("weights") or {}).get("w_final"),
         }
 
+    # Round AL: the Formula Genesis Engine's composite - the fitness-weighted
+    # vote of the regime-gated active set (of 200, of 2,100+).  Weight scales
+    # with how many gated formulas actually fired; while the pool is still
+    # warming up it does not vote at all (never an imputed 0).
+    genesis = genesis or {}
+    genesis_weight = float(getattr(settings, "weight_genesis", 0.0) or 0.0)
+    if genesis.get("status") == "live" and genesis_weight > 0 and int(genesis.get("firing") or 0) >= 5:
+        g_value = max(-1.0, min(1.0, float(genesis.get("vote") or 0.0)))
+        firing_share = min(1.0, int(genesis.get("firing") or 0) / max(1, int(genesis.get("gated") or 1)))
+        genesis_weight = table.mark("genesis", 0.5 + 0.5 * firing_share)
+        active["genesis"] = genesis_weight
+        regime = (genesis.get("regime") or {}).get("regime", "")
+        contributions["genesis"] = {
+            "decision": BUY if g_value >= 0 else SELL,
+            "confidence": round(float(genesis.get("confidence") or 0.0), 4),
+            "value": round(g_value, 4),
+            "weight": genesis_weight,
+            "status": "LIVE",
+            "weighted_value": round(genesis_weight * g_value, 4),
+            "source": f"genesis engine: {genesis.get('firing')}/{genesis.get('gated')} gated formulas of "
+                      f"{genesis.get('active')} active firing in {regime} · generation {genesis.get('generation')}",
+            "agreement": genesis.get("agreement"),
+            "regime": regime,
+        }
+
     # Round Z: the news wire votes - signed impact on THIS asset (a war is
     # bearish BTC and bullish PAXG), weight scaled by how much fresh,
     # classified news there is (no news -> no vote, never an imputed 0).
@@ -261,7 +289,7 @@ def fuse(
     for name, weight in active.items():
         if name == "drosophila":
             score += weight * max(-1.0, min(1.0, ccs_value))
-        elif name in ("physics", "formulas", "news"):
+        elif name in ("physics", "formulas", "news", "genesis"):
             score += weight * float(contributions[name]["value"])
         else:
             result = agents[name]
@@ -467,6 +495,7 @@ def fuse(
                                                        "min_samples": learned.get("min_samples")},
         spec_score=spec_score,
         physics=physics,
+        genesis=genesis,
         lock_weights=table.as_dict(),
     )
 
@@ -513,6 +542,12 @@ def _explain(
         parts.append(
             f"physics layer {physics['decision']} ({physics['value']:+.2f}, "
             f"Kelly BTC weight {float(physics.get('w_final') or 0.5):.0%})"
+        )
+    genesis = contributions.get("genesis")
+    if genesis:
+        parts.append(
+            f"genesis engine {genesis['decision']} ({genesis['value']:+.2f}, "
+            f"{float(genesis.get('agreement') or 0.0):.0%} of firing formulas agree, regime {genesis.get('regime')})"
         )
     news = contributions.get("news")
     if news:

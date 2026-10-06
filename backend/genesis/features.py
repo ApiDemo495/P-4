@@ -77,6 +77,8 @@ class Frame:
             return self.macro[name]
         if name in self.ot:
             return self.ot[name]
+        if not hasattr(self, name):
+            return ops.nan(self.n)
         return getattr(self, name)
 
 
@@ -100,7 +102,10 @@ def build_frame(asset: str, rows: np.ndarray, other_rows: np.ndarray | None = No
     macro_cols = {}
     for name, arr in (macro or {}).items():
         a = np.asarray(arr, dtype=np.float64)
-        macro_cols[name] = a if len(a) == n else _align(cols["ts_ms"], a if a.ndim == 2 else None)
+        macro_cols[name] = a if (a.ndim == 1 and len(a) == n) else _align(cols["ts_ms"], a if a.ndim == 2 else None, stale_ms=None)
+    for name in list(macro_cols):
+        with np.errstate(all="ignore"):
+            macro_cols[name + "_ret"] = ops.logret(macro_cols[name]) if np.nanmin(macro_cols[name], initial=np.inf) > 0 else ops.diff(macro_cols[name], 1)
     return Frame(asset=asset, ts_ms=cols["ts_ms"], open=cols["open"], high=cols["high"], low=cols["low"],
                  close=close, volume=vol, trades=cols["trades"], buy_vol=cols["buy_vol"],
                  sell_vol=cols["sell_vol"], bid_depth=cols["bid_depth"], ask_depth=cols["ask_depth"],
@@ -112,8 +117,9 @@ def build_frame(asset: str, rows: np.ndarray, other_rows: np.ndarray | None = No
                  tick_size=tick_size, built_at=time.time())
 
 
-def _align(ts_ms: np.ndarray, other_rows) -> np.ndarray:
-    """Other series' close at or before each of our minutes (forward fill)."""
+def _align(ts_ms: np.ndarray, other_rows, stale_ms: float | None = 10 * 60_000) -> np.ndarray:
+    """Other series' close at or before each of our minutes (forward fill).
+    ``stale_ms=None`` keeps hourly macro series forward-filled indefinitely."""
     n = len(ts_ms)
     if other_rows is None or len(other_rows) == 0 or n == 0:
         return ops.nan(n)
@@ -124,6 +130,7 @@ def _align(ts_ms: np.ndarray, other_rows) -> np.ndarray:
     out = ops.nan(n)
     ok = idx >= 0
     out[ok] = o_close[idx[ok]]
-    # stale beyond 10 minutes counts as missing
-    out[ok & ((ts_ms - o_ts[np.clip(idx, 0, len(o_ts) - 1)]) > 10 * 60_000)] = np.nan
+    # stale beyond 10 minutes counts as missing (cross-asset / venue legs)
+    if stale_ms is not None:
+        out[ok & ((ts_ms - o_ts[np.clip(idx, 0, len(o_ts) - 1)]) > stale_ms)] = np.nan
     return out

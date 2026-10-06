@@ -20,7 +20,8 @@ from backend.genesis.spec import FormulaSpec
 
 UNARY = ("tanh", "sign", "neg", "abs", "z21", "z55", "ema5", "ema13", "diff1", "diff3", "lag1", "rank34")
 BINARY = ("add", "sub", "mul", "div", "max", "min")
-COLS = ("ret", "bar_ret", "vol_ret", "imbalance", "other_ret", "rng", "spread_bps")
+COLS = ("ret", "bar_ret", "vol_ret", "imbalance", "other_ret", "rng", "spread_bps",
+        "dxy_ret", "social_ret", "exch_flow")   # the last three are NaN->0 until a keyed provider is configured
 MAX_DEPTH = 4
 
 

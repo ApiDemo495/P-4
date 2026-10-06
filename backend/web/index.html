@@ -6,7 +6,7 @@
 <title>Drosophila Trader v2.0</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" />
-<link rel="stylesheet" href="/static/styles.css?v=2.22.0" />
+<link rel="stylesheet" href="/static/styles.css?v=2.23.0" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪰</text></svg>" />
 </head>
 <body>
@@ -444,6 +444,38 @@
     <div class="muted" style="font-size:11px;margin-top:8px" id="ph-note"></div>
   </section>
 
+  <!-- ======================= FORMULA GENESIS ENGINE ======================= -->
+  <section class="card genesis-card" id="genesis-card" data-panel="genesis">
+    <div class="card-head">
+      <h2>🧬 Formula Genesis Engine <span class="muted">v3.0 · 2,100 generated formulas · 10 domains · 200 active · regime-gated</span></h2>
+      <span class="muted" id="gn-head">—</span>
+    </div>
+    <div class="genesis-top">
+      <div class="genesis-verdict" id="gn-verdict">warming up — the pool needs 240 closed minutes before its first scoring…</div>
+      <div class="genesis-bar" title="fitness-weighted vote of the regime-gated active set (−1 … +1)">
+        <div class="physics-bar-track genesis-track">
+          <div class="physics-bar-marker" id="gn-bar-marker"></div>
+        </div>
+        <div class="physics-bar-legend"><span>SELL</span><span id="gn-bar-text">—</span><span>BUY</span></div>
+      </div>
+    </div>
+    <div class="kv-grid physics-kv genesis-kv">
+      <div class="kv-item"><span>Regime (gates the pool)</span><b id="gn-regime">—</b></div>
+      <div class="kv-item"><span>Firing / gated / active</span><b id="gn-firing">—</b></div>
+      <div class="kv-item"><span>Agreement among firing formulas</span><b id="gn-agree">—</b></div>
+      <div class="kv-item"><span>Pool lifecycle</span><b id="gn-pool">—</b></div>
+      <div class="kv-item"><span>Generation · next genesis</span><b id="gn-gen">—</b></div>
+      <div class="kv-item"><span>Candle store · re-score</span><b id="gn-candles">—</b></div>
+    </div>
+    <div class="genesis-domains" id="gn-domains"></div>
+    <table class="physics-table genesis-table"><thead><tr><th>id</th><th>formula</th><th>domain</th><th>signal</th><th>raw</th><th>fitness</th><th>state</th></tr></thead>
+      <tbody id="gn-top"></tbody></table>
+    <details class="physics-logic"><summary class="muted" style="cursor:pointer">Show the mathematics (the ten domains and every sub-category's definition)</summary>
+      <div id="gn-logic" class="mono"></div>
+    </details>
+    <div class="muted" style="font-size:11px;margin-top:8px" id="gn-note"></div>
+  </section>
+
   <!-- ======================= FORMULA EXPLORER ======================= -->
   <section class="card" data-panel="formulas">
     <div class="card-head">
@@ -538,6 +570,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=2.22.0"></script>
+<script src="/static/app.js?v=2.23.0"></script>
 </body>
 </html>

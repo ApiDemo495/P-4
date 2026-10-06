@@ -143,6 +143,7 @@ async def current_signal() -> dict:
         "prediction_stale": prediction["state"] == "STALE",
         "conviction_note": manager.conviction_note,
         "physics": manager.physics_payload(),
+        "genesis": manager.genesis_payload(),
         "window": manager.window_status(),
         # The same authoritative clock the WebSocket pushes, so a client that
         # can only poll still counts down to the true boundary.

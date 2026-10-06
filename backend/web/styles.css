@@ -806,6 +806,14 @@ th { color: var(--muted); font-weight: 600; }
 .physics-table { width: 100%; font-size: 12px; }
 .physics-table td, .physics-table th { padding: 4px 6px; border-bottom: 1px solid #1f2a3a; text-align: left; }
 .physics-logic { margin-top: 10px; }
+.genesis-top { display: grid; grid-template-columns: 1fr 260px; gap: 14px; align-items: center; margin-bottom: 12px; }
+.genesis-verdict { font-size: 13px; line-height: 1.5; }
+.genesis-track { background: linear-gradient(90deg, #ef4444, #1f2a3a 50%, #22c55e); }
+.genesis-domains { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.gn-dom { font-size: 11px; }
+.gn-sub { padding: 4px 0 4px 10px; border-left: 2px solid #1f2a3a; margin: 4px 0; }
+.gn-sub-name { color: #e2e8f0; font-weight: 600; }
+@media (max-width: 760px) { .genesis-top { grid-template-columns: 1fr; } }
 .ph-logic-row { font-size: 11px; padding: 6px 0; border-bottom: 1px dashed #1f2a3a; white-space: pre-wrap; word-break: break-word; }
 .ph-logic-row b { display: block; color: #9fb3c8; margin-bottom: 2px; }
 @media (max-width: 760px) { .physics-top { grid-template-columns: 1fr; } .physics-kv { grid-template-columns: 1fr 1fr; } }

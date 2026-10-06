@@ -171,6 +171,11 @@ class Settings:
         default_factory=lambda: _env("NEUPRINT_DATASET", "hemibrain:v1.2.1")
     )
     cave_token: str = field(default_factory=lambda: _env("CAVE_TOKEN"))
+    # Round AL: keyed macro providers for the Formula Genesis Engine.  Each
+    # feed only runs when its key is present (Settings -> keyed providers).
+    glassnode_key: str = field(default_factory=lambda: _env("GLASSNODE_API_KEY"))
+    twelvedata_key: str = field(default_factory=lambda: _env("TWELVEDATA_API_KEY"))
+    lunarcrush_key: str = field(default_factory=lambda: _env("LUNARCRUSH_API_KEY"))
     cave_server: str = field(
         default_factory=lambda: _env("CAVE_SERVER", "https://global.daf-apis.com")
     )
@@ -214,6 +219,9 @@ class Settings:
     #: Round Z: the news wire's signed impact (impact.py) votes with this
     #: weight, scaled by how much classified, fresh news there is.
     weight_news: float = field(default_factory=lambda: _env_float("NEWS_WEIGHT", 0.15))
+    #: Round AL: the Formula Genesis Engine's composite (200 active of 2,100+
+    #: generated formulas, regime-gated) votes with this weight.  0 disables it.
+    weight_genesis: float = field(default_factory=lambda: _env_float("GENESIS_WEIGHT", 0.25))
     physics_delta_w: float = field(default_factory=lambda: _env_float("PHYSICS_DELTA_W", 0.15))
     hsi_dampen_threshold: float = 0.80
     hsi_confidence_floor: float = 0.20

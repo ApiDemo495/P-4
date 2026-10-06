@@ -170,6 +170,7 @@ class EvidenceLedger:
         ticks=None,
         physics_vote: float = 0.0,
         news_themes: dict[str, float] | None = None,
+        genesis_vote: float = 0.0,
     ) -> dict[str, int]:
         """Collect this window's directional votes, one per source."""
         votes: dict[str, int] = {}
@@ -214,6 +215,9 @@ class EvidenceLedger:
         s = sign(physics_vote)
         if s:
             votes["physics:layer"] = s
+        s = sign(genesis_vote)
+        if s:
+            votes["genesis:composite"] = s
 
         # Micro-structure priors.  Signs are the *raw* direction of the
         # quantity; the ledger learns whether to follow or fade each of them.

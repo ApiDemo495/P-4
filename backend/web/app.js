@@ -2125,6 +2125,76 @@ function renderPhysics(payload) {
   $("ph-note").textContent = comp.note || "";
 }
 
+/* Round AL - the Formula Genesis Engine card. */
+let gnDomainsLoaded = false;
+async function loadGenesisDomains() {
+  if (gnDomainsLoaded) return;
+  const res = await getJSON("/api/genesis/domains");
+  if (!res || res.error || !$("gn-logic")) return;
+  gnDomainsLoaded = true;
+  $("gn-logic").innerHTML = (res.domains || []).map((d) =>
+    `<div class="ph-logic-row"><b>D${d.domain} · ${escapeHtml(d.name)}</b><div class="muted">${escapeHtml(d.description)}</div>` +
+    (d.subcategories || []).map((s) =>
+      `<div class="gn-sub"><span class="gn-sub-name">${escapeHtml(s.name)}</span> <span class="muted">layer ${s.layer}</span>` +
+      `<div>${escapeHtml(s.definition)}</div><div class="muted">${escapeHtml(s.interpretation)}</div></div>`).join("") +
+    `</div>`).join("");
+}
+
+function renderGenesis(payload) {
+  markPanel("genesis");
+  const card = $("genesis-card");
+  if (!card) return;
+  const r = payload && payload.report;
+  const st = (payload && payload.status) || {};
+  const states = st.states || {};
+  const cs = st.candles || {};
+  loadGenesisDomains();
+  $("gn-pool").textContent = `${st.pool ?? 0} in pool · ${states.ACTIVE || 0} active · ${states.CANDIDATE || 0} candidates · ` +
+    `${states.DECAYING || 0} decaying · ${st.graveyard || 0} autopsied · ${st.bred || 0} bred`;
+  const nextG = st.next_genesis_in_s;
+  $("gn-gen").textContent = `generation ${st.generation ?? 0} · ` +
+    (nextG == null ? "genesis after the first scoring" : nextG <= 0 ? "genesis due now" : `next genesis in ${Math.round(nextG / 60)} min`);
+  const nextR = st.next_rescore_in_candles;
+  $("gn-candles").textContent = `${cs.minutes ?? 0} min (${cs.live_minutes ?? 0} live${cs.bootstrapped_from ? `, history ${cs.bootstrapped_from}` : ""}) · ` +
+    (nextR == null ? "first scoring at 240" : `re-score in ${nextR} candles`) +
+    (st.rescore_seconds ? ` · last took ${st.rescore_seconds}s` : "");
+  if (!r || r.status !== "live") {
+    $("gn-head").textContent = payload && payload.weight === 0 ? "disabled (GENESIS_WEIGHT=0)" : `weight ${fmtPct((payload || {}).weight || 0)} of fusion · not voting yet`;
+    $("gn-verdict").textContent = (r && r.note) || "warming up — the pool needs 240 closed minutes before its first scoring…";
+    $("gn-note").textContent = "NumPy on one worker thread (no GPU / Rust in a Codespace): a full re-score of the pool takes ~1 minute and runs in the background.";
+    return;
+  }
+  const side = r.vote > 0 ? "BUY" : r.vote < 0 ? "SELL" : "NEUTRAL";
+  const reg = r.regime || {};
+  $("gn-head").textContent = `${payload.locked ? "🔒 locked with this window" : "live"} · weight ${fmtPct(payload.weight)} of fusion · ¶gn minute ${r.candle_ts_ms ? new Date(r.candle_ts_ms).toISOString().slice(11, 16) : "—"}`;
+  $("gn-verdict").innerHTML =
+    `<span class="sig-${side}">${side} ${escapeHtml(r.asset)}</span> composite <b>${Number(r.vote).toFixed(3)}</b> at ${fmtPct(r.confidence)} · ` +
+    `${r.votes_up} formulas up / ${r.votes_down} down · regime <b>${escapeHtml(reg.regime || "")}</b>`;
+  $("gn-bar-marker").style.left = `${Math.round((Number(r.vote) + 1) * 50)}%`;
+  $("gn-bar-text").textContent = `vote ${Number(r.vote).toFixed(3)} · agreement ${fmtPct(r.agreement)}`;
+  $("gn-regime").textContent = `${reg.regime || "—"} · ${reg.note || ""}`;
+  $("gn-firing").textContent = `${r.firing} / ${r.gated} / ${r.active}`;
+  $("gn-agree").textContent = `${fmtPct(r.agreement)} · confidence ${fmtPct(r.confidence)}`;
+  $("gn-domains").innerHTML = (r.domains || []).map((d) => {
+    const cls = d.mean > 0.05 ? "sig-BUY" : d.mean < -0.05 ? "sig-SELL" : "muted";
+    return `<span class="pill gn-dom" title="${escapeHtml(d.name)}: ${d.firing}/${d.count} firing, mean signal ${Number(d.mean).toFixed(3)}">` +
+      `D${d.domain} ${escapeHtml(d.name.split(" ")[0])} <b class="${cls}">${fmtSigned(d.mean, 2)}</b> <span class="muted">×${d.count}</span></span>`;
+  }).join("");
+  const body = $("gn-top");
+  body.innerHTML = "";
+  (r.top || []).forEach((f) => {
+    const tr = document.createElement("tr");
+    const cls = f.signal > 0 ? "sig-BUY" : f.signal < 0 ? "sig-SELL" : "muted";
+    tr.innerHTML = `<td class="mono muted">${escapeHtml(f.id)}</td><td>${escapeHtml(f.name)}</td>` +
+      `<td class="muted">${f.domain ? "D" + f.domain : "bred"}</td><td class="mono ${cls}">${fmtSigned(f.signal, 3)}</td>` +
+      `<td class="mono">${Number(f.raw).toPrecision(3)}</td><td class="mono">${Number(f.fitness).toFixed(3)}</td><td class="muted">${escapeHtml(f.state)}</td>`;
+    body.appendChild(tr);
+  });
+  const prov = payload.providers || {};
+  const keyed = Object.entries(prov).filter(([, p]) => p.configured).map(([k, p]) => `${k} ${p.error ? "✗" : `${p.rows} rows`}`);
+  $("gn-note").textContent = `${r.note || ""} · &b ${keyed.length ? `keyed providers: ${keyed.join(", ")}` : "public tape only (Glassnode / Twelve Data / LunarCrush activate with keys in Settings)"}`;
+}
+
 async function refreshBrainExplain() {
   renderBrainExplain(await getJSON("/api/brain/explain"));
 }
@@ -2710,6 +2780,7 @@ function applySnapshot(data, opts = {}) {
   if (data.brain_explain) renderBrainExplain(data.brain_explain);
   if (data.brain_status) renderBrainStatus(data.brain_status);
   if (data.physics) renderPhysics(data.physics);
+  if (data.genesis) renderGenesis(data.genesis);
   if (data.history) renderHistory(data.history);
   if (data.outcomes) renderOutcomes(data.outcomes);
   if (data.accuracy && state.prediction) state.prediction.accuracy = data.accuracy;

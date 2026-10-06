@@ -95,6 +95,10 @@ async def test_agent(name: str, payload: TestPayload | None = None) -> dict:
         feeds = await rss_source.check_feeds(manager.settings.rss_feeds)
         ok = sum(1 for f in feeds if f["ok"])
         return {"valid": ok > 0, "detail": f"{ok}/{len(feeds)} feeds reachable", "feeds": feeds}
+    if name in ("glassnode", "twelvedata", "lunarcrush"):
+        from backend.data import keyed_providers
+
+        return await keyed_providers.test_key(name, key or getattr(manager.settings, f"{name}_key", ""))
     if name == "neuprint":
         from backend.brain import health_check
 
@@ -122,6 +126,8 @@ async def key_rings() -> dict:
     rings = {name: ring.status() for name, ring in manager.settings.rings.items()}
     rings["neuprint"] = {"configured": bool(manager.settings.neuprint_token), "configured_slots": 1}
     rings["cave"] = {"configured": bool(manager.settings.cave_token), "configured_slots": 1}
+    for name in ("glassnode", "twelvedata", "lunarcrush"):
+        rings[name] = {"configured": bool(getattr(manager.settings, f"{name}_key", "")), "configured_slots": 1}
     return {"rings": rings, "max_slots": keyring.MAX_SLOTS}
 
 
@@ -138,6 +144,8 @@ def _store_key(manager, name: str, key: str, slot: int) -> None:
         manager.settings.neuprint_token = key
     elif name == "cave":
         manager.settings.cave_token = key
+    elif name in ("glassnode", "twelvedata", "lunarcrush"):
+        setattr(manager.settings, f"{name}_key", key)
     else:
         raise HTTPException(status_code=404, detail=f"unknown key slot {name!r}")
 
@@ -177,6 +185,9 @@ async def set_keys(name: str, payload: KeysPayload) -> dict:
 _SINGLE_ENV_NAMES = {
     "neuprint": "NEUPRINT_APPLICATION_CREDENTIALS",
     "cave": "CAVE_TOKEN",
+    "glassnode": "GLASSNODE_API_KEY",
+    "twelvedata": "TWELVEDATA_API_KEY",
+    "lunarcrush": "LUNARCRUSH_API_KEY",
 }
 
 

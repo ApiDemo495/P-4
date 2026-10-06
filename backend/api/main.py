@@ -27,6 +27,7 @@ from backend.api import (
     routes_agents,
     routes_brain,
     routes_emotions,
+    routes_genesis,
     routes_physics,
     routes_formulas,
     routes_news,
@@ -171,6 +172,7 @@ app.include_router(routes_news.router)
 app.include_router(routes_brain.router)
 app.include_router(routes_emotions.router)
 app.include_router(routes_physics.router)
+app.include_router(routes_genesis.router)
 
 
 @app.get("/api/feeds/diagnose")
@@ -243,6 +245,7 @@ async def system_config() -> dict:
             "github": settings.weight_github,
             "physics": settings.weight_physics,
             "formulas": settings.weight_formulas,
+            "genesis": settings.weight_genesis,
         },
         "configured": {
             "gemini": bool(settings.gemini_api_key),
@@ -251,6 +254,9 @@ async def system_config() -> dict:
             "newsapi": settings.rings["newsapi"].configured,
             "neuprint": bool(settings.neuprint_token),
             "cave": bool(settings.cave_token),
+            "glassnode": bool(settings.glassnode_key),
+            "twelvedata": bool(settings.twelvedata_key),
+            "lunarcrush": bool(settings.lunarcrush_key),
         },
         "news_enabled": settings.news_enabled,
         "market_data_mode": settings.market_data_mode,

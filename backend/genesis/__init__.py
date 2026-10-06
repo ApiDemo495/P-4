@@ -16,3 +16,8 @@ lifecycle   BIRTH -> CANDIDATE -> ACTIVE -> DECAYING -> DEAD -> AUTOPSY
 symbolic    genetic programming over expression trees (background breeding)
 engine      ``GenesisEngine`` - owns everything, feeds fusion, serves the API
 """
+import warnings as _warnings
+
+# NaN-aware rolling statistics on a warming-up tape raise "mean of empty
+# slice" style warnings by design; they are not errors.
+_warnings.filterwarnings("ignore", category=RuntimeWarning, module=r"backend\.genesis.*")

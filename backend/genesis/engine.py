@@ -74,6 +74,8 @@ class GenesisEngine:
         self._thread: threading.Thread | None = None
         self._seen_len: dict[str, int] = {a: -1 for a in self.assets}
         self._held: dict[str, dict[str, tuple[float, float]]] = {a: {} for a in self.assets}
+        #: callable returning {column: (ts_ms, value) rows} from the keyed providers
+        self.macro_provider = None
         for a in self.assets:
             self._load(a)
 
@@ -150,7 +152,14 @@ class GenesisEngine:
         store = self.stores[asset]
         rows = store.rows(limit=HISTORY_ROWS, include_open=include_open)
         other_rows = self.stores[other[0]].rows(limit=HISTORY_ROWS, include_open=include_open) if other else None
-        fr = build_frame(asset, rows, other_rows, books=store.recent_books(8), tick_size=TICK_SIZE.get(asset, 0.01))
+        macro = None
+        if self.macro_provider is not None:
+            try:
+                macro = self.macro_provider()
+            except Exception as exc:  # noqa: BLE001
+                log.debug("macro provider failed: %s", exc)
+        fr = build_frame(asset, rows, other_rows, macro=macro, books=store.recent_books(8),
+                         tick_size=TICK_SIZE.get(asset, 0.01))
         fr.eval_tail = eval_tail
         return fr
 
