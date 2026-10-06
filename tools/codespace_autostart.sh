@@ -348,14 +348,33 @@ EOF
 # -----------------------------------------------------------------------------
 # Modes
 # -----------------------------------------------------------------------------
+# Round AK: the hooks themselves finish in seconds (provision 2 s on the
+# prebuilt image, engine ready <1 min).  When a Codespace still takes many
+# minutes to open, that time is spent *before* any hook runs - VM allocation,
+# image pull, VS Code server install - so every hook stamps how long the
+# container had already been alive when it started.  --status prints the same
+# number; a large value means "enable Codespaces prebuilds" (README section 0), not
+# "the engine is slow".
+container_age() {
+  local up; up="$(cut -d' ' -f1 /proc/uptime 2>/dev/null || echo 0)"
+  printf '%d' "${up%.*}"
+}
+stamp_hook_start() {
+  local age; age="$(container_age)"
+  printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$MODE" "$age" >> "$STATE_DIR/hook-timing.log" 2>/dev/null || true
+  log "hook '$MODE' starting; this container has been alive for ${age}s (time before this is GitHub's VM/image setup, not the engine)"
+}
+
 case "$MODE" in
   provision)
+    stamp_hook_start
     start_placeholder
     with_lock provision
     with_lock start_engine
     ok "provisioning finished - the engine is starting; the attach hook prints the URL"
     ;;
   start)
+    stamp_hook_start
     start_placeholder
     with_lock self_update
     with_lock provision
@@ -364,6 +383,7 @@ case "$MODE" in
     wait_until_ready 150 || true
     ;;
   attach)
+    stamp_hook_start
     start_placeholder
     with_lock self_update
     with_lock provision
@@ -382,6 +402,11 @@ case "$MODE" in
   status)
     printf 'engine: %s\n' "$(engine_answers && echo "answering on ${PORT}" || echo 'not answering')"
     printf 'url: %s\n' "$(codespace_url)"
+    printf 'container alive: %ss\n' "$(container_age)"
+    if [ -f "$STATE_DIR/hook-timing.log" ]; then
+      printf 'hook timing (utc, hook, container age when it started):\n'
+      sed 's/^/  /' "$STATE_DIR/hook-timing.log"
+    fi
     ;;
 esac
 

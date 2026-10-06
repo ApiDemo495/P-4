@@ -106,6 +106,39 @@ still running — open `/settings` → **Codespace self-start**, or run:
 cat .run/logs/autostart.journal
 ```
 
+### Slow to open (10–20 minutes)? That is GitHub, not the engine — fix it with a prebuild
+
+The repository's own hooks are measured: provisioning 2 s, engine answering in
+under a minute (the rehearsal transcript on PR #1). When the *window* still
+takes ten or twenty minutes to appear, that time is spent **before any hook
+runs**: GitHub allocating the VM, pulling the container image into a cold
+region, and installing the VS Code server. Every hook now logs how long the
+container had already been alive when it started, so you can see where the
+minutes went:
+
+```bash
+bash tools/codespace_autostart.sh --status
+```
+
+A large "container age" at the first hook means GitHub was slow, not the
+engine. The cure GitHub offers for exactly this is a **Codespaces prebuild**:
+GitHub builds the container for this branch ahead of time, in your region, and
+a new Codespace then opens in about thirty seconds. It is a repository setting
+(one time, two minutes):
+
+1. Repository → **Settings** → **Codespaces** → **Set up prebuild**.
+2. Branch: `arena/01a0c844-p-4`. Region: the one nearest you (for India,
+   **Southeast Asia**). Trigger: *On configuration change* (default).
+3. **Create**. The first prebuild runs as a GitHub Action; from then on the
+   Codespace creation page shows a ✓ *Prebuild ready* badge for this branch.
+
+Nothing in the repository changes for this: the prebuild runs the same image
+and the same `postCreateCommand`, so the engine is already provisioned inside
+the snapshot GitHub keeps for you.
+
+Also pick the smallest machine type (2-core) on the creation page; a bigger VM
+takes longer to allocate and the engine does not need it.
+
 ### Switches (all optional - set them as Codespace secrets or in `.env`)
 
 | Variable | Default | Meaning |

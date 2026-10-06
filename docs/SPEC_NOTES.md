@@ -1651,3 +1651,16 @@ carry `theme_key`, `novelty`, `nth_on_theme`, `habituation`.
 **Verification.** `test_round_aj.py`, `test_round_t.py` (rewritten),
 `test_calibration.py::test_round_aj_*`, `test_round_z.py::test_round_aj_*`;
 full suite 274; dead-code 0; assets `v=2.22.0`.
+
+## AK
+
+- neuPrint token test: `/api/databaseInfo` is gone after the neuPrint platform
+  migration (404 regardless of token). `neuprint_test_token()` now runs the same
+  one-row Cypher the connectome loader uses, `POST /api/custom/custom`
+  (`Authorization: Bearer`), and only reports "rejected" on 401/403; a 400 about
+  the dataset lists the live dataset names from `/api/dbmeta/datasets`; a missing
+  query route falls back to that public metadata route. A 404 of one route is
+  never reported as an invalid token.
+- Codespace open time: the hooks stamp container age at start
+  (`.run/hook-timing.log`, `--status`) to separate GitHub's VM/image time from
+  ours; README section 0 documents the Codespaces prebuild setup.
