@@ -294,9 +294,19 @@ and tells you what is left.
 ## 4. API keys and live data
 
 **Prices need no key.** `MARKET_DATA_MODE=auto` connects to the Binance
-WebSocket first (aggTrade + depth20 + 1-minute klines), falls back to CoinGecko,
-and only uses the built-in simulator if neither is reachable — and it always
+WebSocket first (aggTrade + depth20 + 1-minute klines), then the Gemini public
+WebSocket (`MARKET_DATA_MODE=gemini` pins it), then Kraken, then CoinGecko,
+and only uses the built-in simulator if none is reachable — and it always
 labels which source is active in the UI.
+
+**Optional keyed providers (Formula Genesis Engine).** Three more feeds run
+*only* while their key is saved in `/settings` → "Keyed providers": Glassnode
+(`GLASSNODE_API_KEY`, BTC exchange net-flow), Twelve Data
+(`TWELVEDATA_API_KEY`, dollar index minute closes; free plans get the EUR/USD
+proxy) and LunarCrush (`LUNARCRUSH_API_KEY`, hourly social sentiment). Each
+box has a **Test** button; without a key the matching column is NaN and the
+formulas that read it simply do not fire. Nothing else in the app depends on
+them.
 
 Keys are optional and are entered **in the browser**: click **🔑 API keys** in the
 dashboard header, paste, press **Test** (it makes a real authenticated request),
@@ -649,6 +659,58 @@ pair-neutral, mirror leg) with expected bp, σ and P(profit), the best by μ/σ;
 1σ/2σ scenarios; the spread z-score; and the regime read from HSI / HRDD /
 GCDV / SHRP ("hedge working", "weakening", "breaking", "ratio drifting",
 "paths diverging"). It is in `signal.hedge.outcomes` of `/api/signal/current`.
+
+## 9d. The Formula Genesis Engine (v3.0)
+
+A second formula layer that does not replace the 22 named formulas: it
+**generates** them. Ten mathematical domains × ten sub-categories × a
+21-variant grid (7 look-backs × 3 normalisations, plus each sub-category's own
+axes) = **2,100 template formulas**, each with its definition and a reading
+guide (`/api/genesis/domains`):
+
+| D | domain | examples of what is computed |
+| --- | --- | --- |
+| 1 | rough-path signatures | level-2 signature, **Lévy area** ½(∫x dy − ∫y dx), log-signature, signature kernel |
+| 2 | persistent homology | Vietoris–Rips **Betti-1 = E − V + C** (Euler formula), barcodes via MST, landscapes |
+| 3 | information geometry | **Fisher–Rao distance** √2·arccosh(1 + (Δμ² + 2Δσ²)/4σ₁σ₂), natural gradient, α-divergences |
+| 4 | optimal transport | **W₁ = Σ|F_p − F_q|Δx** between bid and ask depth, Sinkhorn, barycenters, trade-flow transport |
+| 5 | fractional calculus | Hurst, **Malliavin finite perturbation**, Grünwald–Letnikov D^α, rough vol |
+| 6 | tropical geometry | **max-plus polynomial** ⊕ᵢ(aᵢ ⊙ xⁱ), tropical roots, Newton polygon, max-plus eigenvalue |
+| 7 | quantum probability | **3-state density matrix** ρ, **von Neumann entropy** −tr ρ ln ρ, interference, quantum walk |
+| 8 | p-adic analysis | **p-adic valuation** v_p of tick moves, ultrametric trees, p-adic Haar, Volkenborn |
+| 9 | category theory | **natural transformations** between timeframe functors, **sheaf consistency**, limits/colimits |
+| 10 | algorithmic information | **Lempel–Ziv 76** complexity, block entropy, K(price|volume), logical depth |
+
+**Life of a formula.** `BIRTH → CANDIDATE → ACTIVE → DECAYING → DEAD →
+AUTOPSY`. Every 100 closed candles the whole pool is re-scored on the last
+1,500 minutes with seven metrics (hit rate, Spearman IC, Sharpe, profit factor
+after 1 bp per unit turnover, drawdown, worst-regime IC, block consistency),
+an overfit penalty (in-sample − out-of-sample gap) and a dead-time penalty.
+The top 200 by fitness, greedily pruned at |ρ| > 0.7, become ACTIVE. An
+autopsy of each dead formula reports the regimes it lost in; one that was
+profitable in some regimes is resurrected with a regime gate (two lives max).
+Every 4 hours a **genesis** breeds 50 children by crossover / mutation of
+expression trees over frame columns and the survivors' signals (no `eval`).
+
+**Every minute.** The regime (trending / mean-reverting / high-vol / low-vol /
+cascade, from Hurst, vol percentile and 3-minute σ-moves) gates the active
+set to 80 / 70 / 60 / 50 / 40 formulas, preferring the domains the spec names
+for that regime. Layer-4 formulas (homology, algorithmic) run every fifth
+candle and hold in between. The fitness-weighted composite votes in fusion as
+`genesis` (`GENESIS_WEIGHT`, default 0.25; `0` disables), is a ledger source
+(`genesis:composite`) and is shown in the 🧬 card (regime, firing/gated/active,
+per-domain means, the top contributors, the mathematics drawer).
+
+**Compute, honestly.** Everything is NumPy on one background worker thread:
+a Codespace has no GPU and no Rust toolchain, so heavy domains are vectorised
+and strided instead of compiled. A full re-score of 2,100 formulas on 1,500
+minutes takes about a minute and never blocks the lock. Minute history is
+bootstrapped from Kraken (720 min) or Gemini (1,440 min) at start, so the
+first scoring happens within seconds of a fresh Codespace instead of after
+four hours of tape.
+
+Endpoints: `/api/genesis/current`, `/live`, `/status`, `/formulas?state=&domain=`,
+`/formulas/{id}`, `/domains`, `/graveyard`, `POST /rescore`, `POST /breed`.
 
 ## 10. Documentation
 

@@ -16,6 +16,8 @@ import math
 
 import numpy as np
 
+from backend.genesis import ops
+
 GRID_BPS = 60
 GRID = np.arange(GRID_BPS + 1, dtype=np.float64)
 
@@ -47,6 +49,10 @@ _U = (np.arange(64) + 0.5) / 64.0
 
 
 def w_p(p1: np.ndarray, p2: np.ndarray, p: int = 1) -> float:
+    """W_p between two depth pmfs on the bps grid.  p = 1 is the exact CDF
+    form of the specification, W₁ = Σ|F_p − F_q|·Δx; p = 2 via quantiles."""
+    if p == 1:
+        return ops.wasserstein1_cdf(p1, p2, GRID)
     q1, q2 = quantiles(p1, _U), quantiles(p2, _U)
     return float(np.mean(np.abs(q1 - q2) ** p) ** (1.0 / p))
 

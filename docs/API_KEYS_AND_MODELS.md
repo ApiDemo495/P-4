@@ -283,8 +283,41 @@ feed. No signup anywhere.
   (sign up → *Create Demo API key*); the app does not currently require it,
   so you can ignore this unless you see `429` from CoinGecko in
   `server.log`.
-* `MARKET_DATA_MODE=auto` picks the best reachable source; set `binance` or
-  `coingecko` to force one; `simulator` for offline demos.
+* `MARKET_DATA_MODE=auto` picks the best reachable source; set `binance`,
+  `gemini`, `kraken` or `coingecko` to force one; `simulator` for offline demos.
+* **Gemini exchange** public WebSocket (`api.gemini.com/v1/marketdata`,
+  Round AL) needs **no key** - not to be confused with the Gemini *AI* key.
+
+---
+
+## 6b. Keyed providers for the Formula Genesis Engine (optional)
+
+None of these is required; each feed runs **only while its key is saved**
+(`/settings` → "Keyed providers", every box has a Test button). Without the
+key the matching frame column is NaN and the formulas that read it do not fire.
+
+| Provider | Variable | What it feeds | Where to get it |
+| --- | --- | --- | --- |
+| Glassnode | `GLASSNODE_API_KEY` | BTC exchange net-flow, hourly (`exch_flow`) | https://studio.glassnode.com/settings/api |
+| Twelve Data | `TWELVEDATA_API_KEY` | dollar index 1-minute closes (`dxy`; free plans fall back to 100 / EUR-USD) | https://twelvedata.com/account/api-keys |
+| LunarCrush | `LUNARCRUSH_API_KEY` | hourly social sentiment / galaxy score (`social`) | https://lunarcrush.com/developers/api |
+
+Add to `.env` (or tick *persist* in Settings):
+
+```
+GLASSNODE_API_KEY=...
+```
+
+```
+TWELVEDATA_API_KEY=...
+```
+
+```
+LUNARCRUSH_API_KEY=...
+```
+
+`/api/genesis/status` → `providers` shows rows fetched and the last error per
+provider; the 🧬 card's footer lists which keyed providers are live.
 
 ---
 
@@ -368,7 +401,11 @@ If you are not approved yet, leave it empty: the row shows
 | `RSS_FEEDS` | any RSS URL | free | news, no key |
 | `NEUPRINT_APPLICATION_CREDENTIALS` | neuprint.janelia.org → Account | free | live hemibrain |
 | `CAVE_TOKEN` | global.daf-apis.com/auth/api/v1/create_token | free (approval) | FlyWire |
-| Binance / CoinGecko | — | free | market data, no key |
+| Binance / Gemini / Kraken / CoinGecko | — | free | market data, no key |
+| `GLASSNODE_API_KEY` | studio.glassnode.com → Settings → API | optional | genesis engine: exchange net-flow |
+| `TWELVEDATA_API_KEY` | twelvedata.com → API keys | optional | genesis engine: dollar index |
+| `LUNARCRUSH_API_KEY` | lunarcrush.com/developers | optional | genesis engine: social sentiment |
+| `GENESIS_WEIGHT` | — | default `0.25` | fusion weight of the genesis engine (0 disables) |
 
 ---
 

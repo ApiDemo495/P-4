@@ -232,13 +232,6 @@ class CandleStore:
         self.closed_minutes += 1
         return row
 
-    def flush(self) -> None:
-        """Source switch: the minute being built belongs to the old tape."""
-        with self._lock:
-            self._cur = None
-            self.books.clear()
-
-    # --------------------------------------------------------------- views
     def rows(self, limit: int | None = None, include_open: bool = True) -> np.ndarray:
         """Chronological copy; the forming minute is appended when requested."""
         with self._lock:
@@ -252,24 +245,6 @@ class CandleStore:
     def __len__(self) -> int:
         with self._lock:
             return int(len(self._rows))
-
-    def last_close(self) -> float:
-        with self._lock:
-            if self._cur is not None:
-                return float(self._cur.close)
-            return float(self._rows[-1, 4]) if len(self._rows) else 0.0
-
-    def book_pair(self, seconds_apart: float) -> tuple[np.ndarray, np.ndarray] | None:
-        """(book now, book ~``seconds_apart`` ago) from the snapshot history."""
-        with self._lock:
-            if len(self.books) < 2:
-                return None
-            now_t, now_b = self.books[-1]
-            target = now_t - seconds_apart
-            best = min(self.books, key=lambda tb: abs(tb[0] - target))
-            if abs(best[0] - target) > max(BOOK_SNAPSHOT_EVERY_S * 1.5, seconds_apart * 0.5):
-                return None
-            return now_b, best[1]
 
     def recent_books(self, n: int) -> list[np.ndarray]:
         with self._lock:

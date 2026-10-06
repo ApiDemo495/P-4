@@ -1664,3 +1664,61 @@ full suite 274; dead-code 0; assets `v=2.22.0`.
 - Codespace open time: the hooks stamp container age at start
   (`.run/hook-timing.log`, `--status`) to separate GitHub's VM/image time from
   ours; README section 0 documents the Codespaces prebuild setup.
+
+## AL — Formula Genesis Engine v3.0
+
+**Decisions.** New layer beside the 22 formulas (not a replacement); NumPy
+only (no GPU / Rust in a Codespace - stated in the UI and `/api/genesis/status`);
+Gemini public feed added as a first-class tape; Glassnode / Twelve Data /
+LunarCrush as keyed providers that activate only with a key.
+
+**Data.** `backend/data/gemini_ws.py` (trades + L2 + candle REST), hub
+priority Binance → Gemini → Kraken WS → Kraken REST → CoinGecko → simulator;
+`hub.listeners` hook. `backend/genesis/candles.py`: per-asset minute store
+(OHLCV, trades, taker buy/sell, depth, spread, imbalance, VWAP + per-minute
+order-book transport columns), bootstrapped from Kraken/Gemini history,
+persisted in `.run/genesis/`. `backend/data/keyed_providers.py`: `MacroFeed`
+polls configured providers; columns `exch_flow`, `dxy`, `social` (+ `_ret`)
+reach the frame as NaN when absent.
+
+**Pool.** `backend/genesis/domains/d01..d10` - 10 × 10 × 21 = 2,100 specs,
+`FormulaSpec(fid, kernel, params, layer, definition, interpretation)`; the
+spec's named mathematics implemented exactly (`test_round_al.py` checks Lévy
+area of a unit loop = 1, Betti-1 of a 4-cycle = 1, Fisher–Rao closed form,
+W₁ via CDF = shift of a point mass, max-plus eigenvalue = max cycle mean,
+von Neumann entropy 0 / ln 3, v₂(8) = 3, LZ76). Layers: D2, D10 = 4 (every
+fifth candle live), D4, D6, D7 = 3, rest 2.
+
+**Fitness** (`fitness.py`): seven metrics on the out-of-sample 30 % and the
+in-sample head, unit-mapped and weighted (ic .25, sharpe .20, hit .15, pf /
+dd / regime / steady .10), `fitness = 0.6·oos + 0.4·ins − 1.5·overfit −
+dead-time`; `select()` greedy at |ρ| ≤ 0.70 over the last 500 signals.
+
+**Lifecycle** (`lifecycle.py`): floors 0.40 (candidate) / 0.45 (active); 2
+strikes to decay, 3 to die; a newborn gets three looks; `autopsy()` gives
+per-regime IC/P&L, the cause (overfit / everywhere / regime-specific /
+decayed) and resurrects regime-specific formulas with `spec.gates` (2 lives).
+
+**Regime** (`regime.py`): Hurst(64), 15-min RV percentile over 500, 3-min
+move in σ, taker-flow one-sidedness → trending / mean_reverting / high_vol /
+low_vol / cascade; gates 80/70/60/50/40 with preferred domains.
+
+**Breeding** (`symbolic.py`): nested-tuple trees, depth ≤ 4, leaves = frame
+columns (incl. keyed macro columns) / survivor signals / constants; 40 %
+crossover, 40 % mutation, 20 % random; children scored on the same history.
+
+**Engine** (`engine.py`): one worker thread; first scoring at 240 candles,
+re-score every 100, genesis every 4 h (bred population capped at 400);
+composite = Σ(fitness − 0.3)·signal / Σ weights, confidence from |vote| ×
+agreement × coverage; persisted `genesis_{asset}.json` so a restart votes
+immediately with the saved ACTIVE set.
+
+**Fusion.** voter `genesis` (`GENESIS_WEIGHT` 0.25, scaled by firing share,
+silent while warming or < 5 firing), `lock_weights.BACKERS["genesis"] =
+("genesis:composite",)`, ledger vote `genesis:composite`, `FusionResult.genesis`
+travels with the lock → `cycle_manager.genesis_payload()` in
+`/api/signal/current`, `routes_genesis.py`, dashboard card `#genesis-card` +
+`renderGenesis` (one timer rule intact), Settings → keyed providers.
+
+**Verification.** `test_round_al.py` (20), `tools/dev/genesis_bench.py`
+(full pool ≈ 32 s on a 620-minute synthetic tape), dead-code 0, assets `v=2.23.0`.

@@ -130,10 +130,6 @@ def normalize(x: np.ndarray, how: str, n: int = 55, scale: float = 1.0) -> np.nd
         return np.tanh(x / (scale + EPS))
 
 
-def clip1(x: np.ndarray) -> np.ndarray:
-    return np.clip(x, -1.0, 1.0)
-
-
 def sign(x: np.ndarray) -> np.ndarray:
     return np.sign(np.nan_to_num(x))
 
@@ -191,17 +187,6 @@ def lz76(seq) -> int:
             else:
                 k = 1
     return c
-
-
-def rolling_lz(sym: np.ndarray, n: int, alphabet: int = 2) -> np.ndarray:
-    """Normalised LZ complexity c · log_a(n) / n over trailing windows."""
-    out = nan(len(sym))
-    if len(sym) < n:
-        return out
-    norm = math.log(n, alphabet) / n
-    for t in range(n - 1, len(sym)):
-        out[t] = lz76(sym[t - n + 1: t + 1]) * norm
-    return out
 
 
 def padic_valuation(k: np.ndarray, p: int) -> np.ndarray:

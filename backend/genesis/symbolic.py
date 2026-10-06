@@ -194,6 +194,3 @@ def breed(rng: random.Random, parents: list[FormulaSpec], sig_ids: list[str], ge
         out.append(spec)
     return out
 
-
-def seed_trees(rng: random.Random, sig_ids: list[str], n: int) -> list:
-    return [random_tree(rng, sig_ids) for _ in range(n)]
