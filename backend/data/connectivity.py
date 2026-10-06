@@ -22,6 +22,7 @@ log = logging.getLogger("drosophila.connectivity")
 PROBES: dict[str, tuple[str, str]] = {
     "binance_vision": ("https://data-api.binance.vision/api/v3/ping", "Binance market-data mirror (WS tape + book)"),
     "binance": ("https://api.binance.com/api/v3/ping", "Binance (WS tape + book)"),
+    "gemini": ("https://api.gemini.com/v1/symbols", "Gemini (WS tape + full book, 1 m candles)"),
     "kraken": ("https://api.kraken.com/0/public/Time", "Kraken (WS tape + book, REST tape + book)"),
     "coingecko": ("https://api.coingecko.com/api/v3/ping", "CoinGecko (10 s prices)"),
     "news_rss": ("https://feeds.bbci.co.uk/news/world/rss.xml", "world news wire (RSS)"),
@@ -61,6 +62,7 @@ async def probe(names: tuple[str, ...] | None = None, timeout: float = TIMEOUT_S
     out["internet"] = any(h["ok"] for h in hosts.values())
     out["binance_reachable"] = bool(hosts.get("binance_vision", {}).get("ok") or hosts.get("binance", {}).get("ok"))
     out["kraken_reachable"] = bool(hosts.get("kraken", {}).get("ok"))
+    out["gemini_reachable"] = bool(hosts.get("gemini", {}).get("ok"))
     out["coingecko_reachable"] = bool(hosts.get("coingecko", {}).get("ok"))
     out["summary"] = summarize(out)
     log.info("connectivity: %s", out["summary"])

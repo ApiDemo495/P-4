@@ -1285,7 +1285,7 @@ function renderTape() {
     // Round AA: say WHY - the last error of every real feed, so "offline"
     // never stands alone.
     const f = (t.feeds && t.feeds.feeds) || t.feeds || {};
-    const why = ["binance", "kraken", "krakenrest"].map((n) => {
+    const why = ["binance", "gemini", "kraken", "krakenrest"].map((n) => {
       const r = f[n] || {};
       if (!r.enabled) return null;
       if (r.connected) return `${n}: connected, waiting for data`;

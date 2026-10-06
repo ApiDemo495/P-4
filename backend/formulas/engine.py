@@ -107,7 +107,7 @@ CATEGORY_FEEDS: dict[str, tuple[str, ...]] = {
     "H": ("formulas", "tape", "book", "news"),
 }
 
-REAL_SOURCES = ("binance", "kraken", "krakenrest", "coingecko")
+REAL_SOURCES = ("binance", "gemini", "kraken", "krakenrest", "coingecko")
 
 
 #: Round AF - ``&b`` is a graded COVERAGE, not a binary.  Each feed a formula

@@ -23,6 +23,7 @@ from backend.core.errors import ComponentStatus, DegradationLevel
 from backend.data import cross_asset_sync as sync
 from backend.data.binance_ws import BinanceWebSocket
 from backend.data.coingecko_fallback import CoinGeckoFeed
+from backend.data.gemini_ws import GeminiWebSocket
 from backend.data import connectivity
 from backend.data.kraken_rest import KrakenRest
 from backend.data.kraken_ws import KrakenWebSocket
@@ -54,6 +55,10 @@ class MarketDataHub:
         self.binance: BinanceWebSocket | None = None
         self.coingecko: CoinGeckoFeed | None = None
         self.kraken: KrakenWebSocket | None = None
+        self.gemini: GeminiWebSocket | None = None
+        # Round AK: anyone who wants every accepted tick/book (the genesis
+        # candle store) registers here; listeners never block the feed.
+        self.listeners: list = []
         self.kraken_rest: KrakenRest | None = None
         self.simulator: MarketSimulator | None = None
         self.active_source = "none"
@@ -88,6 +93,13 @@ class MarketDataHub:
             )
             self._tasks.append(asyncio.create_task(self.binance.run(), name="binance-ws"))
             self.active_source = "binance"
+        if mode in ("auto", "gemini"):
+            # Round AK (v3.0): Gemini is the venue the spec trades on - a
+            # first-class tape with a full book, no key, reachable from the US.
+            self.gemini = GeminiWebSocket(functools.partial(self.ingest, "gemini"), self.settings)
+            self._tasks.append(asyncio.create_task(self.gemini.run(), name="gemini-ws"))
+            if mode == "gemini":
+                self.active_source = "gemini"
         if mode in ("auto", "kraken"):
             # Round Z: a second REAL tape with an order book, reachable from
             # the US regions Codespaces run in.  Always connected in auto mode
@@ -134,7 +146,7 @@ class MarketDataHub:
 
     async def stop(self) -> None:
         self._stop.set()
-        for client in (self.binance, self.kraken, self.kraken_rest, self.coingecko):
+        for client in (self.binance, self.gemini, self.kraken, self.kraken_rest, self.coingecko):
             if client is not None:
                 client.stop()
         for task in self._tasks:
@@ -213,6 +225,11 @@ class MarketDataHub:
             self._roll_candle(buf, float(row[1]), float(row[0]))
         if book is not None:
             buf.book.push(book)
+        for listener in self.listeners:
+            try:
+                listener(asset, ticks, book)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("tape listener failed: %s", exc)
 
     def _roll_candle(self, buf: AssetBuffers, price: float, time_ms: float) -> None:
         """Build 1-minute closes from the trade tape.
@@ -287,6 +304,12 @@ class MarketDataHub:
             self._stop_simulator_task()
             self._set_source("binance")
             return
+        # 1a) Gemini healthy?  (the spec's venue; real tape with a full book)
+        if self.gemini is not None and self.gemini.status.healthy():
+            if mode == "gemini" or self.binance is None or not self.binance.status.healthy():
+                self._stop_simulator_task()
+                self._set_source("gemini")
+                return
         # 1b) Kraken healthy?  (second real tape, with a book)
         if self.kraken is not None and self.kraken.status.healthy():
             if mode == "kraken" or self.binance is None or not self.binance.status.healthy():
@@ -314,13 +337,15 @@ class MarketDataHub:
             getattr(self.settings, "real_feed_grace_seconds", 45.0)
         )
         probed = bool(self.connectivity.get("hosts"))
-        sockets_possible = (not probed) or self.connectivity.get("binance_reachable") or self.connectivity.get("kraken_reachable")
-        if waiting and sockets_possible and mode in ("auto", "binance", "kraken") and self.active_source in ("none", "binance", "kraken"):
+        sockets_possible = (not probed) or self.connectivity.get("binance_reachable") or self.connectivity.get(
+            "kraken_reachable") or self.connectivity.get("gemini_reachable")
+        if waiting and sockets_possible and mode in ("auto", "binance", "kraken", "gemini") and self.active_source in ("none", "binance", "kraken", "gemini"):
             self._set_source("none")
             return
 
         # 1c) Both sockets failing -> Kraken over HTTPS (real tape + book).
         sockets_down = ((self.binance is None or self.binance.status.consecutive_failures >= 2) and (
+            self.gemini is None or self.gemini.status.consecutive_failures >= 2) and (
             self.kraken is None or self.kraken.status.consecutive_failures >= 2)) or (
             probed and not sockets_possible)
         if self.kraken_rest is not None and mode in ("auto", "krakenrest") and (sockets_down or mode == "krakenrest"):
@@ -337,6 +362,7 @@ class MarketDataHub:
         # 2) Binance unhealthy -> CoinGecko?
         if mode in ("auto", "coingecko") and self.coingecko is not None:
             real_down = (self.binance is None or self.binance.status.consecutive_failures >= 3) and (
+                self.gemini is None or self.gemini.status.consecutive_failures >= 3) and (
                 self.kraken is None or self.kraken.status.consecutive_failures >= 3)
             if mode == "coingecko" or real_down:
                 if self.coingecko.connected:
@@ -508,7 +534,7 @@ class MarketDataHub:
                                       "hosts": {k: {"ok": v.get("ok"), "status": v.get("status"), "ms": v.get("ms"),
                                                     "error": v.get("error")}
                                                 for k, v in (self.connectivity.get("hosts") or {}).items()}}}
-        for name, client in (("binance", self.binance), ("kraken", self.kraken)):
+        for name, client in (("binance", self.binance), ("gemini", self.gemini), ("kraken", self.kraken)):
             if client is None:
                 out["feeds"][name] = {"enabled": False}
                 continue
@@ -556,6 +582,7 @@ class MarketDataHub:
         src = self.active_source
         details = {
             "binance": "aggTrade + depth20@100ms",
+            "gemini": "Gemini v1 market data - every trade + full book (btcusd, paxgusd)",
             "kraken": "trade + book depth 25 (Kraken v2, USD pairs)",
             "krakenrest": "Kraken REST polling - real trades + book over HTTPS (2 s)",
             "none": "connecting to a live feed - no tape yet",
