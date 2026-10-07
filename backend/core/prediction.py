@@ -1,0 +1,725 @@
+"""The prediction block: side, levels, freshness and the reasoning behind it.
+
+Every payload the dashboard renders carries a
+``prediction`` object.  It exists because a number on its own ("SELL") is not
+actionable: the user asked for three things and this module is all three:
+
+1.  **Freshness.**  ``age_seconds`` / ``stale`` / ``expires_at`` say exactly how
+    old the prediction is.  A prediction may never be older than
+    ``PREDICTION_MAX_AGE_SECONDS`` (15 s by default): the engine recomputes it
+    every window, and the API refuses to serve a stale one without saying so.
+2.  **Reasoning.**  ``reasoning.summary`` plus a list of bullets - which
+    formulas back the side, which argue against it, what the brain read out,
+    how the hedge and the news look, where the levels come from.
+3.  **Risk.**  The take-profit / stop-loss pair (target = rr_target x stop), in price and in bps.
+
+The module is deliberately pure: it takes plain dictionaries and returns plain
+dictionaries, so it can be unit-tested without an engine.
+"""
+
+from __future__ import annotations
+
+import math
+import time
+
+from backend.core.timebase import now_us, us_to_iso
+
+#: The forecast window the specification asks for: every prediction covers the
+#: 60 seconds that follow its release.  ``Settings(time_scale=...)`` can compress
+#: that for tests; this constant is the *intended* window and is always published.
+BASE_HORIZON_SECONDS = 60.0
+
+#: How a prediction is labelled once its age passes the contract.
+LIVE = "LIVE"
+STALE = "STALE"
+
+#: Category weights for the formula consensus.  Microstructure and order-book
+#: formulas see the tape itself, so they lead; news and the brain read-out carry
+#: less on their own because both are already part of the fusion score.
+CATEGORY_WEIGHTS = {
+    "A": 1.0,
+    "B": 1.0,
+    "C": 0.9,
+    "D": 0.8,
+    "E": 0.8,
+    "F": 0.9,
+    "G": 0.7,
+    "H": 1.0,
+}
+
+
+def _iso(timestamp: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp))
+
+
+def consensus(formula_values: dict, directional: dict[str, str] | None = None) -> dict:
+    """Weighted agreement of the directional formulas with each other.
+
+    Returns ``score`` (in [-1, 1]), the number of formulas that voted, how many
+    of them lean each way, and the names of the strongest supporters of each
+    side - everything the reasoning bullets need.
+    """
+    directional = directional or {}
+    total = 0.0
+    weighted = 0.0
+    up: list[tuple[float, str]] = []
+    down: list[tuple[float, str]] = []
+    for name, raw in (formula_values or {}).items():
+        category = directional.get(name)
+        if not category:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if value == 0.0:
+            # A formula that produced nothing this window (or is exactly
+            # neutral) is not evidence; scoring it as a zero vote would dilute
+            # the consensus toward the noise floor.
+            continue
+        weight = CATEGORY_WEIGHTS.get(category, 0.8)
+        total += weight
+        weighted += weight * max(-1.0, min(1.0, value))
+        (up if value > 0 else down).append((abs(value), name))
+    if total <= 0:
+        return {
+            "score": 0.0,
+            "voters": 0,
+            "up": 0,
+            "down": 0,
+            "up_names": [],
+            "down_names": [],
+        }
+    up.sort(reverse=True)
+    down.sort(reverse=True)
+    return {
+        "score": weighted / total,
+        "voters": len(up) + len(down),
+        "up": len(up),
+        "down": len(down),
+        "up_names": [name for _, name in up[:4]],
+        "down_names": [name for _, name in down[:4]],
+    }
+
+
+def freshness(computed_wall: float, max_age: float, now: float | None = None) -> dict:
+    """Age of the prediction against the staleness contract.
+
+    Reported in microseconds as well as seconds: the engine decides inside a
+    60-second window but it *computes* in tens of microseconds, so rounding the
+    age to 0.1 s would hide the resolution the system actually runs at.
+    """
+    now = time.time() if now is None else now
+    computed = float(computed_wall or 0.0)
+    if computed <= 0:
+        return {
+            "state": STALE,
+            "computed_at": "",
+            "computed_at_us": 0,
+            "now_us": now_us(),
+            "age_seconds": None,
+            "age_microseconds": None,
+            "age_label": "—",
+            "max_age_seconds": round(float(max_age), 1),
+            "seconds_until_stale": 0.0,
+            "expires_at": "",
+            "on_time": False,
+        }
+    age = max(0.0, now - computed)
+    remaining = max(0.0, float(max_age) - age)
+    return {
+        "state": LIVE if age <= float(max_age) else STALE,
+        "computed_at": _iso(computed),
+        "computed_at_us": int(round(computed * 1e6)),
+        "computed_at_precise": us_to_iso(computed * 1e6),
+        "now_us": int(round(now * 1e6)),
+        "age_seconds": round(age, 1),
+        # The resolution the engine works at: whole microseconds, not seconds.
+        "age_microseconds": int(round(age * 1e6)),
+        "age_label": _age_label(age),
+        "max_age_seconds": round(float(max_age), 1),
+        "seconds_until_stale": round(remaining, 1),
+        "expires_at": _iso(computed + float(max_age)),
+        "on_time": age <= float(max_age),
+    }
+
+
+def _age_label(age_seconds: float) -> str:
+    """'812 µs', '4.31 ms', '12.004 s' - never a rounded-away zero."""
+    micro = age_seconds * 1e6
+    if micro < 1000:
+        return f"{micro:.0f} µs"
+    if micro < 1_000_000:
+        return f"{micro / 1000:.2f} ms"
+    return f"{age_seconds:.3f} s"
+
+
+def _fmt(value: float, digits: int = 2) -> str:
+    try:
+        return f"{float(value):+.{digits}f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def build_reasoning(
+    side: str,
+    confidence: float,
+    conviction: str,
+    fusion: dict | None = None,
+    formula_values: dict | None = None,
+    directional: dict[str, str] | None = None,
+    hedge: dict | None = None,
+    news: dict | None = None,
+    risk: dict | None = None,
+    brain: dict | None = None,
+    accuracy: dict | None = None,
+    window_seconds: float = 15.0,
+    extra_against: list[str] | None = None,
+    crowd: dict | None = None,
+) -> dict:
+    """Compose the plain-English case for (and against) the side.
+
+    The bullets are ordered the way the decision was actually made: the brain
+    read-out, the formula consensus, the contributors on each side, the hedge,
+    the news, the risk levels, then the measured accuracy of recent windows.
+    """
+    fusion = fusion or {}
+    formula_values = formula_values or {}
+    hedge = hedge or {}
+    news = news or {}
+    risk = risk or {}
+    brain = brain or {}
+    accuracy = accuracy or {}
+
+    agreement = consensus(formula_values, directional)
+    score = agreement["score"]
+    supporters = agreement["up_names"] if side == "BUY" else agreement["down_names"]
+    dissenters = agreement["down_names"] if side == "BUY" else agreement["up_names"]
+
+    bullets: list[dict] = []
+
+    # 1. The brain -----------------------------------------------------------------
+    ccs = fusion.get("contributions", {}).get("drosophila", {}).get("value")
+    if ccs is None:
+        ccs = brain.get("ccs")
+    if ccs is not None:
+        weight = float(fusion.get("weights_used", {}).get("drosophila", 0.40))
+        lean = "up" if float(ccs) >= 0 else "down"
+        solo = weight >= 0.99
+        bullets.append({
+            "kind": "brain",
+            "weight": round(weight, 2),
+            "supports": (lean == "up") == (side == "BUY"),
+            "text": (
+                f"Drosophila read-out: CCSv2 {_fmt(ccs)} — the mushroom-body output "
+                f"leans {lean}"
+                + (
+                    " and was the whole fusion this window (no AI agent answered)."
+                    if solo
+                    else f" and carries {weight:.0%} of the fusion weight."
+                )
+            ),
+        })
+
+    # 2. Formula consensus ---------------------------------------------------------
+    if agreement["voters"]:
+        same = agreement["up"] if side == "BUY" else agreement["down"]
+        other = agreement["down"] if side == "BUY" else agreement["up"]
+        bullets.append({
+            "kind": "formulas",
+            "weight": None,
+            "supports": same >= other,
+            "text": (
+                f"Formula consensus {_fmt(score)}: {same} of {agreement['voters']} "
+                f"directional formulas lean {side} and {other} lean the other way."
+            ),
+        })
+    if supporters:
+        named = ", ".join(f"{name} {_fmt(formula_values.get(name, 0.0))}" for name in supporters)
+        bullets.append({
+            "kind": "formula-support",
+            "weight": None,
+            "supports": True,
+            "text": f"Backing the {side}: {named}.",
+        })
+    if dissenters:
+        named = ", ".join(f"{name} {_fmt(formula_values.get(name, 0.0))}" for name in dissenters)
+        bullets.append({
+            "kind": "formula-dissent",
+            "weight": None,
+            "supports": False,
+            "text": f"Arguing against: {named}.",
+        })
+
+    # 3. Agents --------------------------------------------------------------------
+    contributions = fusion.get("contributions", {})
+    agents = [
+        f"{name} {contributions[name].get('decision')} "
+        f"({float(contributions[name].get('confidence') or 0.0):.0%})"
+        for name in ("gemini", "local", "github")
+        if name in contributions
+    ]
+    if agents:
+        bullets.append({
+            "kind": "agents",
+            "weight": None,
+            "supports": True,
+            "text": "AI agents: " + ", ".join(agents) + ".",
+        })
+    else:
+        bullets.append({
+            "kind": "agents",
+            "weight": None,
+            "supports": True,
+            "text": "No AI agent answered this window — the fly's read-out and the "
+                    "formula consensus carried the decision alone.",
+        })
+
+    # 4. Hedge ---------------------------------------------------------------------
+    hsi = hedge.get("hsi")
+    if hsi is not None:
+        try:
+            hsi_value = float(hsi)
+            working = hsi_value < 0.80
+            bullets.append({
+                "kind": "hedge",
+                "weight": None,
+                "supports": working,
+                "text": (
+                    f"Hedge stress (HSI) {hsi_value:.2f} — the BTC/PAXG hedge is "
+                    f"{'working' if working else 'breaking down'}"
+                    + ("" if working else "; position size is dampened for it") + "."
+                ),
+            })
+        except (TypeError, ValueError):
+            pass
+    shrp = formula_values.get("SHRP")
+    if shrp is not None:
+        try:
+            shrp_value = float(shrp)
+            if abs(shrp_value) < 0.05:
+                # A reading this close to zero is "no rotation to report"; it
+                # must not be dressed up as risk-on or risk-off.
+                raise ValueError
+            bullets.append({
+                "kind": "rotation",
+                "weight": None,
+                "supports": (shrp_value > 0) == (side == "BUY"),
+                "text": (
+                    f"Safe-haven rotation (SHRP) {_fmt(shrp_value)} — flow is "
+                    f"{'leaving gold for BTC (risk-on)' if shrp_value > 0 else 'leaving BTC for gold (risk-off)'}."
+                ),
+            })
+        except (TypeError, ValueError):
+            pass
+
+    # 5. News ----------------------------------------------------------------------
+    headline = news.get("headline") or news.get("top_headline")
+    sentiment = news.get("sentiment", news.get("smd"))
+    if headline:
+        leans = "supports" if (float(sentiment or 0.0) > 0) == (side == "BUY") else "cuts against"
+        bullets.append({
+            "kind": "news",
+            "weight": None,
+            "supports": leans == "supports",
+            "text": (
+                f"News {_fmt(float(sentiment or 0.0))} — “{str(headline)[:110]}” "
+                f"{leans} the {side} side."
+            ),
+        })
+    elif sentiment is not None:
+        bullets.append({
+            "kind": "news",
+            "weight": None,
+            "supports": True,
+            "text": f"News sentiment {_fmt(float(sentiment or 0.0))} — no headline moved the tape.",
+        })
+
+    # 5b. The crowd -----------------------------------------------------------------
+    # The user's premise: a one-minute market is easily pushed by retail
+    # emotion.  The emotion engine's reading of the frozen tape is therefore
+    # part of the case - it supports the side when the crowd's temperature
+    # leans the same way, and it argues against it when the minute looks
+    # crowded or manipulated.
+    crowd = crowd or {}
+    crowd_top = crowd.get("dominant") or {}
+    if crowd.get("available") and crowd_top.get("label"):
+        tone_bias = float(crowd.get("tone_bias") or 0.0)
+        manipulation = crowd.get("manipulation") or {}
+        score = float(manipulation.get("score") or 0.0)
+        leans_with = (tone_bias >= 0) == (side == "BUY") if abs(tone_bias) >= 0.1 else None
+        text = (
+            f"Crowd: {str(crowd_top.get('label')).lower()} is dominant "
+            f"({float(crowd_top.get('percent') or 0.0):.0f}% on the "
+            f"{crowd_top.get('dominant_timescale') or 'window'} timescale), temperature "
+            f"{_fmt(tone_bias, 2)}"
+        )
+        if score >= 0.45:
+            text += (
+                f" — the minute looks {manipulation.get('kind') or 'crowded'} "
+                f"({score:.0%} manipulation), so the confidence was sized down"
+            )
+            supports = False
+        elif leans_with is None:
+            text += " — the crowd is neither afraid nor chasing"
+            supports = True
+        else:
+            text += f" — the crowd's temperature {'leans with' if leans_with else 'leans against'} the {side} side"
+            supports = bool(leans_with)
+        deep = (crowd.get("deep") or {}).get("posterior") or {}
+        if deep.get("argmax"):
+            regime = ((crowd.get("deep") or {}).get("regime") or {}).get("label")
+            flow = (crowd.get("deep") or {}).get("flow") or {}
+            text += (
+                f"; deep read: Bayesian filter {float(deep.get('argmax_probability') or 0.0):.0%} "
+                f"{str(deep.get('argmax')).capitalize()}"
+                + (f", {regime} regime" if regime else "")
+                + (f", VPIN {float(flow.get('vpin')):.2f}" if flow.get("vpin") is not None else "")
+            )
+        bullets.append({
+            "kind": "crowd",
+            "weight": None,
+            "supports": supports,
+            "text": text + ".",
+        })
+
+    # 5c. The thermodynamic layer (Round T) ---------------------------------------
+    physics = fusion.get("physics") or {}
+    p_contrib = fusion.get("contributions", {}).get("physics") or {}
+    if physics and p_contrib:
+        p_vote = float(physics.get("vote") or 0.0)
+        wts = physics.get("weights") or {}
+        comp = physics.get("composite") or {}
+        active = [m for m in (physics.get("mechanisms") or []) if m.get("direction")]
+        names = ", ".join(f"{m['name'].split(' ')[0]} {'+' if m['direction'] > 0 else '−'}" for m in active[:4])
+        supports = (p_vote >= 0) == (side == "BUY") if abs(p_vote) >= 0.05 else True
+        bullets.append({
+            "kind": "physics",
+            "weight": float(p_contrib.get("weight") or 0.0),
+            "supports": supports,
+            "text": (
+                f"Physics layer {p_contrib.get('decision')} ({_fmt(p_vote, 2)}): "
+                f"tape temperature {float(comp.get('temperature') or 1.0):.2f}, Hawkes n {float(comp.get('hawkes_n') or 0.0):.2f}, "
+                f"Kelly weight {float(wts.get('w_micro') or 0.5):.0%}, net edge {float(comp.get('net_edge_bps') or 0.0):+.2f} bp after spread"
+                + (f"; voting: {names}" if names else "; no mechanism fired")
+                + f"; {int(comp.get('active') or 0)} active mechanisms — "
+                + ("leans with" if supports else "leans against") + f" the {side} side."
+            ),
+        })
+
+    # 6. Levels --------------------------------------------------------------------
+    if risk.get("tradeable") and risk.get("take_profit"):
+        bullets.append({
+            "kind": "levels",
+            "weight": None,
+            "supports": True,
+            "text": (
+                f"Levels: entry {risk.get('entry')}, target {risk.get('take_profit')} and stop "
+                f"{risk.get('stop_loss')} — target {float(risk.get('tp_bps') or 0.0):.0f} bps, stop "
+                f"{float(risk.get('sl_bps') or 0.0):.0f} bps, a {float(risk.get('rr') or 0.0):.1f}:1 reward:risk "
+                f"on {float(risk.get('volatility_bps') or 0.0):.1f} bps realised volatility."
+            ),
+        })
+
+    # 7. Measured accuracy ---------------------------------------------------------
+    if accuracy.get("evaluated"):
+        bullets.append({
+            "kind": "accuracy",
+            "weight": None,
+            "supports": float(accuracy.get("win_rate") or 0.0) >= 0.5,
+            "text": (
+                f"Recent form: {float(accuracy.get('win_rate') or 0.0):.0%} of the last "
+                f"{accuracy.get('evaluated')} evaluated windows closed in the predicted direction."
+            ),
+        })
+
+    for text in extra_against or []:
+        bullets.append({"kind": "caution", "weight": None, "supports": False, "text": text})
+
+    supports = [b["text"] for b in bullets if b["supports"]]
+    against = [b["text"] for b in bullets if not b["supports"]]
+
+    majority = ""
+    if agreement["voters"]:
+        majority = (
+            f"; {max(agreement['up'], agreement['down'])} of {agreement['voters']} directional "
+            f"formulas agree"
+        )
+    summary = (
+        f"{side} at {conviction.lower()} conviction ({confidence:.0%})"
+        f"{majority}."
+    )
+    if against:
+        summary += (
+            f" {len(against)} counterpoint{'s' if len(against) != 1 else ''} below."
+        )
+    summary += (f" Levels are {float(risk.get('rr') or 0.0):.1f}:1 (target {float(risk.get('tp_bps') or 0.0):.0f} / "
+                f"stop {float(risk.get('sl_bps') or 0.0):.0f} bps) on realised "
+                f"{float(risk.get('volatility_bps') or 0.0):.0f} bps volatility.")
+
+    return {
+        "summary": summary,
+        "bullets": bullets,
+        "supports": supports,
+        "against": against,
+        "consensus": agreement,
+        "generated_at": _iso(time.time()),
+        "window_seconds": round(float(window_seconds), 1),
+    }
+
+
+def horizon(
+    *,
+    released_wall: float,
+    seconds: float,
+    scoring_seconds: float | None = None,
+    now: float | None = None,
+) -> dict:
+    """The forecast window: what this prediction is *for*.
+
+    A prediction is released at one instant and covers the 60 seconds that
+    follow.  This block says so explicitly - the instant of release, the instant
+    the forecast targets, and how long is left before it is scored - in whole
+    microseconds and in words.  A reader should never have to guess whether a
+    side applies "now" or "for the next minute": it is the next minute, from the
+    moment it was released.
+    """
+    released = float(released_wall or 0.0)
+    now = time.time() if now is None else now
+    target = released + float(seconds)
+    scoring = released + float(scoring_seconds if scoring_seconds else seconds)
+    return {
+        "seconds": round(float(seconds), 3),
+        #: The specification's window.  Production runs 60-second windows, so
+        #: ``seconds == base_seconds`` there; the accelerated test harness keeps
+        #: ``base_seconds`` at 60 and reports its own compressed window in
+        #: ``seconds``, with ``accelerated`` saying which one is which.
+        "base_seconds": BASE_HORIZON_SECONDS,
+        "accelerated": abs(float(seconds) - BASE_HORIZON_SECONDS) > 1e-9,
+        "label": f"the next {round(float(seconds))} seconds",
+        "released_at": _iso(released) if released else "",
+        "released_at_us": int(round(released * 1e6)) if released else 0,
+        "released_at_precise": us_to_iso(released * 1e6) if released else "",
+        "target_at": _iso(target) if released else "",
+        "target_at_us": int(round(target * 1e6)) if released else 0,
+        "target_at_precise": us_to_iso(target * 1e6) if released else "",
+        "seconds_to_target": round(max(0.0, target - now), 3),
+        "microseconds_to_target": int(round(max(0.0, target - now) * 1e6)),
+        "scored_at": _iso(scoring) if released else "",
+        "scored_at_us": int(round(scoring * 1e6)) if released else 0,
+        "scoring_seconds": round(float(scoring_seconds if scoring_seconds else seconds), 3),
+        "scored_in_seconds": round(max(0.0, scoring - now), 3),
+        "covers": "the window that starts at release",
+    }
+
+
+def detail(
+    *,
+    side: str,
+    category_scores: dict | None = None,
+    supporters: list | None = None,
+    opponents: list | None = None,
+    confidence_parts: dict | None = None,
+    levels: dict | None = None,
+    micro: dict | None = None,
+    stats: dict | None = None,
+    agreement: dict | None = None,
+    agents: dict | None = None,
+    brain: dict | None = None,
+    crowd: dict | None = None,
+    formula_count: int = 0,
+    learned: dict | None = None,
+) -> dict:
+    """Everything behind the side, at the resolution the engine produced it.
+
+    The user's ask was for more detail, so this is deliberately generous: the
+    per-category scores, the strongest supporters *and* opponents with their
+    values and categories, the arithmetic that produced the confidence
+    (base x consensus x calibration x hedge x crowd), the level geometry in bps
+    and in currency, the microsecond picture of the tape, the per-formula
+    statistics of the window, and the emotion reading the crowd term came from.
+    """
+    return {
+        "side": side,
+        "formulas_evaluated": int(formula_count),
+        "category_scores": dict(category_scores or {}),
+        "supporters": list(supporters or []),
+        "opponents": list(opponents or []),
+        "confidence_parts": dict(confidence_parts or {}),
+        "levels": dict(levels or {}),
+        "micro": dict(micro or {}),
+        "formula_stats": dict(stats or {}),
+        "agreement": dict(agreement or {}),
+        "agents": dict(agents or {}),
+        "brain": dict(brain or {}),
+        # What the crowd was feeling when this side was locked, and whether that
+        # feeling was strong enough to dampen the confidence.
+        "crowd": dict(crowd or {}),
+        # Round N: the evidence ledger's verdict - which sources it trusted for
+        # this side, how reliable each has been, and whether it was in charge.
+        "learned": dict(learned or {}),
+    }
+
+
+def _phi(x: float) -> float:
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def _phi_inv(p: float) -> float:
+    """Inverse normal CDF by bisection (p clamped to (0.001, 0.999))."""
+    p = max(0.001, min(0.999, p))
+    lo, hi = -4.0, 4.0
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        if _phi(mid) < p:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+def branches(risk: dict, side: str, confidence: float, horizon_seconds: float) -> dict:
+    """Round Y - the probability branches of the next window.
+
+    The market's next ``horizon_seconds`` are modelled as a drifted Brownian
+    path whose drift is *exactly* the one that makes P(close on the called
+    side) equal the printed confidence - so the fan, the confidence and the
+    levels are one model, not three; volatility = the realised volatility the
+    levels were sized on.  From that one model come, analytically (no random numbers,
+    so the block is byte-stable within a cycle):
+
+    * ``fan``        - the 5/25/50/75/95 % price quantiles every 5 seconds;
+    * ``p_close_for`` - P(the window closes on the called side) = 0.5 + edge/2;
+    * ``p_tp_first``  - P(the target is touched before the stop) given one of
+      them is touched (gambler's-ruin for drifted Brownian motion);
+    * ``branches``    - the three ways the minute can end, with their odds.
+
+    It is a model of the dispersion of outcomes, not a promise about one.
+    """
+    entry = float(risk.get("entry") or 0.0)
+    sigma_bps = float(risk.get("volatility_bps") or 0.0)
+    tp_bps = float(risk.get("tp_bps") or 0.0)
+    sl_bps = float(risk.get("sl_bps") or 0.0)
+    T = max(1.0, float(horizon_seconds or 60.0))
+    if entry <= 0 or sigma_bps <= 0 or side not in ("BUY", "SELL"):
+        return {"available": False, "fan": [], "branches": []}
+    sign = 1.0 if side == "BUY" else -1.0
+    # ``confidence`` is the call's EDGE (2*P(side)-1, the one scale the whole
+    # engine prints); P(side) = 0.5 + confidence/2.
+    p = max(0.5, min(0.975, 0.5 + 0.5 * float(confidence or 0.0)))
+    var = (sigma_bps ** 2) / T                            # bps^2 / s
+    # Drift over the window, in the called direction, chosen so that
+    # P(close on the called side) == confidence: mu_total = sigma_T * PHI^-1(p).
+    mu_total = sign * sigma_bps * _phi_inv(p)             # bps over T
+    mu = mu_total / T                                     # bps / s
+    z = {"5": -1.6449, "25": -0.6745, "50": 0.0, "75": 0.6745, "95": 1.6449}
+    fan = []
+    step = 5.0 if T >= 30 else max(1.0, T / 12.0)
+    t = 0.0
+    while t <= T + 1e-9:
+        sd = math.sqrt(var * t)
+        row = {"t": round(t, 1)}
+        for q, zq in z.items():
+            row["q" + q] = round(entry * (1.0 + (mu * t + zq * sd) / 1e4), 2)
+        fan.append(row)
+        t += step
+    sd_T = math.sqrt(var * T)
+    p_close_for = _phi(sign * mu_total / sd_T) if sd_T > 0 else 0.5
+    # Gambler's ruin: a = distance to the target, b = distance to the stop,
+    # both in the called direction's frame (drift m = sign * mu).
+    a, b, m = tp_bps, sl_bps, sign * mu
+    if abs(m) < 1e-12:
+        p_tp_first = b / (a + b) if (a + b) > 0 else 0.5
+    else:
+        k = 2.0 * m / var
+        try:
+            p_tp_first = (1.0 - math.exp(k * b)) / (math.exp(-k * a) - math.exp(k * b))
+        except OverflowError:
+            p_tp_first = 1.0 if m > 0 else 0.0
+    p_tp_first = max(0.0, min(1.0, p_tp_first))
+    # Probability that the window ends beyond the target / beyond the stop
+    # (lower bounds on "touched", enough to rank the three endings).
+    p_beyond_tp = 1.0 - _phi((a - sign * mu_total) / sd_T) if sd_T > 0 else 0.0
+    p_beyond_sl = _phi((-b - sign * mu_total) / sd_T) if sd_T > 0 else 0.0
+    p_between = max(0.0, 1.0 - p_beyond_tp - p_beyond_sl)
+    ends = [
+        {"name": "target reached", "p": round(p_beyond_tp, 4), "move_bps": round(sign * a, 1)},
+        {"name": "closes between the levels", "p": round(p_between, 4), "move_bps": round(mu_total, 1)},
+        {"name": "stop hit", "p": round(p_beyond_sl, 4), "move_bps": round(-sign * b, 1)},
+    ]
+    return {
+        "available": True,
+        "model": "drifted Brownian path: drift set so P(close on the called side) = confidence, "
+                 "sigma = realised volatility; quantiles are analytic (no sampling)",
+        "entry": entry,
+        "horizon_seconds": T,
+        "drift_bps": round(mu_total, 2),
+        "sigma_bps": round(sigma_bps, 2),
+        "p_close_for": round(p_close_for, 4),
+        "p_tp_first": round(p_tp_first, 4),
+        "branches": ends,
+        "fan": fan,
+    }
+
+
+def build(
+    *,
+    side: str,
+    confidence: float,
+    conviction: str,
+    computed_wall: float,
+    max_age: float,
+    risk: dict,
+    reasoning: dict,
+    accuracy: dict,
+    window_seconds: float,
+    weak: bool = False,
+    emergency: bool = False,
+    now: float | None = None,
+    horizon_seconds: float | None = None,
+    scoring_seconds: float | None = None,
+    detail_block: dict | None = None,
+) -> dict:
+    """The complete prediction object embedded in every payload.
+
+    ``horizon_seconds`` is the forecast window - 60 seconds by default, i.e. the
+    prediction released now covers the next minute.  ``scoring_seconds`` is when
+    its result is measured, which defaults to the same instant.
+    """
+    age = freshness(computed_wall, max_age, now=now)
+    forecast_seconds = float(horizon_seconds or risk.get("horizon_seconds") or window_seconds)
+    forecast = horizon(
+        released_wall=computed_wall,
+        seconds=forecast_seconds,
+        scoring_seconds=scoring_seconds,
+        now=now,
+    )
+    block = dict(detail_block or {})
+    block.setdefault("side", side)
+    block.setdefault("levels", {})
+    return {
+        "side": side,
+        "confidence": round(float(confidence or 0.0), 4),
+        "conviction": conviction,
+        "weak": bool(weak),
+        "emergency": bool(emergency),
+        "entry": risk.get("entry"),
+        "take_profit": risk.get("take_profit"),
+        "stop_loss": risk.get("stop_loss"),
+        "tp_bps": risk.get("tp_bps"),
+        "sl_bps": risk.get("sl_bps"),
+        "rr": risk.get("rr"),
+        "rr_target": risk.get("rr_target", 1.0),
+        "volatility_bps": risk.get("volatility_bps"),
+        "horizon_seconds": forecast_seconds,
+        # The forward-looking contract, in words and in microseconds.
+        "horizon": forecast,
+        "branches": branches(risk, side, confidence, forecast_seconds),
+        "forecast_for": forecast["label"],
+        "target_at": forecast["target_at"],
+        # The reasoning and the numbers behind it.
+        "reasoning": reasoning,
+        "accuracy": accuracy,
+        "detail": block,
+        **age,
+    }

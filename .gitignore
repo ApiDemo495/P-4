@@ -1,0 +1,64 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.so
+*.c
+*.pyd
+.Python
+/build/
+dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+venv311/
+
+# ---- Cython build artifacts (erc.c is generated) ----
+backend/formulas/category_d_regime/erc.c
+
+# ---- Secrets ----
+.env
+.env.local
+*.pem
+*.key
+secrets/
+
+# ---- Uploaded local AI models (never commit model weights) ----
+backend/models/
+*.gguf
+*.onnx
+*.bin
+*.safetensors
+
+# ---- Runtime state ----
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+backend/data_state/
+
+# ---- Editors / OS ----
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
+*.iml
+.DS_Store
+Thumbs.db
+
+# launcher runtime state
+.run/
+server.log
+
+# automatic-startup runtime state (never committed)
+.run/
+node_modules/
+rehearsal-transcript.txt
+
+# ---- Downloaded connectome (FlyWire v783, ~130 MB + built arrays; re-downloaded on demand) ----
+data/connectome/
