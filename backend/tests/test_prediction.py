@@ -241,7 +241,8 @@ def test_the_prediction_detail_explains_the_side(manager: CycleManager):
     assert engine["publish_latency_us"] >= 0
     assert engine["history_samples"] > 0
     assert detail["levels"]["tp_bps"] == pytest.approx(detail["levels"]["sl_bps"] * detail["levels"]["rr"], rel=1e-3)
-    assert cfg.SETTINGS.rr_target <= detail["levels"]["rr"] <= 2.5
+    # Round AN: the target is capped at the measured 95 % minute move, so rr may sit below rr_target (never below RR_FLOOR)
+    assert 1.2 <= detail["levels"]["rr"] <= 2.5
     assert detail["micro"]["available"] is True
     assert detail["micro"]["resolution_us"] > 0
 
@@ -273,7 +274,7 @@ def test_the_live_formula_block_carries_microseconds_and_history(manager: CycleM
 
 def test_the_prediction_exposes_the_levels(manager: CycleManager):
     prediction = manager.signal_payload()["prediction"]
-    assert cfg.SETTINGS.rr_target <= prediction["rr"] <= 2.5
+    assert 1.2 <= prediction["rr"] <= 2.5
     assert prediction["tp_bps"] == pytest.approx(prediction["sl_bps"] * prediction["rr"], rel=1e-3)
     if prediction["entry"]:
         assert prediction["take_profit"] and prediction["stop_loss"]
@@ -293,7 +294,11 @@ def test_the_accuracy_block_measures_recent_windows(manager: CycleManager):
 
     rows = manager.outcomes.array()
     wins = int((rows[:, 0] > 0).sum())
-    assert block["win_rate"] == pytest.approx(wins / rows.shape[0], abs=1e-4)
+    decided = int((rows[:, 0] != 0).sum())   # Round AM: flat windows are not counted
+    if decided:
+        assert block["win_rate"] == pytest.approx(wins / decided, abs=1e-4)
+    else:
+        assert block["win_rate"] is None
 
 
 def test_the_consensus_and_accuracy_dampen_confidence():

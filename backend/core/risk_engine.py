@@ -91,6 +91,7 @@ def size_levels(
     spread_bps: float = 0.0,
     horizon_seconds: float = 60.0,
     settings=None,
+    moves: dict | None = None,
 ) -> RiskLevels:
     """Compute stop / target in bps from realised vol, edge and spread.
 
@@ -109,16 +110,32 @@ def size_levels(
     sigma_t = sigma * math.sqrt(horizon / base_horizon)
 
     spread_floor = SPREAD_MULT * max(float(spread_bps or 0.0), 0.0)
-    raw_stop = max(mae_z * sigma_t, spread_floor)
+    moves = moves or {}
+    measured = int(moves.get("n") or 0) >= 5 and float(moves.get("q80") or 0.0) > 0
+    if measured:
+        # Round AN: the stop is the measured 80 % adverse excursion of the
+        # last windows (what the tape actually did), not a modelled z x sigma.
+        raw_stop = max(float(moves.get("mae80") or moves["q80"]), spread_floor)
+    else:
+        raw_stop = max(mae_z * sigma_t, spread_floor)
     sl = min(max(raw_stop, float(settings.min_sl_bps)), float(settings.max_sl_bps))
 
     rr_target = float(getattr(settings, "rr_target", 1.5) or 1.5)
     rr = min(max(rr_target + RR_EDGE_GAIN * abs(float(edge or 0.0)), RR_FLOOR), RR_CEIL)
     tp = min(max(sl * rr, float(settings.min_tp_bps)), float(settings.max_tp_bps))
+    capped = ""
+    if measured:
+        # a target the minute reaches less than one time in twenty is not a target
+        ceiling = max(float(moves.get("q95") or 0.0), sl * RR_FLOOR, float(settings.min_tp_bps))
+        if tp > ceiling:
+            tp = ceiling
+            capped = f"; target capped at the measured 95 % minute move ({ceiling:.1f} bps)"
+        rr = tp / sl if sl > 0 else rr
     method = (
-        f"stop = {quantile:.0%} quantile of max adverse excursion "
-        f"({mae_z:.2f} x {sigma_t:.0f} bps window sigma"
+        (f"stop = measured 80 % adverse excursion over {moves.get('source')} ({raw_stop:.1f} bps"
+         if measured else
+         f"stop = {quantile:.0%} quantile of max adverse excursion ({mae_z:.2f} x {sigma_t:.0f} bps window sigma")
         + (f", spread floor {spread_floor:.0f} bps" if spread_floor > 0 else "")
-        + f"); target = {rr:.2f} x stop (edge {abs(float(edge or 0.0)):.2f})"
+        + f"); target = {rr:.2f} x stop (edge {abs(float(edge or 0.0)):.2f}){capped}"
     )
     return RiskLevels(sl, tp, tp / sl if sl > 0 else 0.0, sigma_t, mae_z, spread_floor, method)

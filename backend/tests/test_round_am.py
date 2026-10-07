@@ -100,3 +100,35 @@ def test_dashboard_shows_decided_flat_and_the_guard():
     js = (ROOT / "backend/web/app.js").read_text(encoding="utf-8")
     assert 'id="w-guard"' in html and "flat (inside spread)" in html
     assert "decidedRows" in js and "INVERTED" in js
+
+
+# ---------------------------------------------------------------- Round AN
+def test_levels_are_bounded_by_the_measured_minute_moves():
+    import numpy as np
+    from backend.core.risk import minute_move_quantiles, risk_levels
+
+    class Snap:
+        def __init__(self, t, p):
+            self._t, self._p = t, p
+
+        def ticks(self, asset):
+            return np.column_stack([self._t * 1000, self._p])
+
+        def candles(self, asset):
+            return np.zeros(0)
+
+    rng = np.random.default_rng(0)
+    t = np.arange(0, 1800, 0.5)
+    p = 100000 * np.exp(np.cumsum(rng.normal(0, 0.4e-4, t.size)))     # ~4 bps per minute
+    moves = minute_move_quantiles(Snap(t, p), "BTC")
+    assert moves["n"] > 100 and 1 < moves["q50"] < moves["q80"] < moves["q95"] < 15
+    settings = cfg.Settings()
+    # a wildly inflated sigma (one bad print) no longer produces a 40/60 bps plan
+    bad = risk_levels("BTC", "BUY", 100000.0, 45.0, settings, horizon_seconds=60, edge=0.5, spread_bps=0.1, moves=moves)
+    assert bad["sl_bps"] <= moves["mae80"] + 1e-6 and bad["tp_bps"] <= moves["q95"] + 1e-6
+    assert bad["tp_bps"] >= bad["sl_bps"] * 1.2 - 1e-6
+    assert "measured" in bad["note"]
+    unbounded = risk_levels("BTC", "BUY", 100000.0, 45.0, settings, horizon_seconds=60, edge=0.5, spread_bps=0.1)
+    assert unbounded["tp_bps"] > 5 * bad["tp_bps"]
+    # floors are one-minute floors now
+    assert settings.min_tp_bps <= 2.0 and settings.min_sl_bps <= 1.5 and settings.max_tp_bps <= 60

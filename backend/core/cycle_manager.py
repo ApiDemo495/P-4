@@ -51,7 +51,7 @@ from backend.core.frozen_snapshot import FrozenMarketSnapshot
 from backend.core.redis_bus import Store
 from backend.core.timebase import now_us
 from backend.core import window_clock
-from backend.core.risk import realized_volatility_bps, risk_levels, quoted_spread_bps
+from backend.core.risk import realized_volatility_bps, risk_levels, quoted_spread_bps, minute_move_quantiles
 from backend.core.signal_lock import FrozenSignal, LockState, SignalLockController
 from backend.data.market_hub import MarketDataHub
 from backend.data.ring_buffer import OutcomeBuffer
@@ -201,6 +201,7 @@ class CycleManager:
         self.final_freeze_at: float = 0.0
         self.final_freeze_ms: float = 0.0
         self._pending_vol_bps: float = 0.0
+        self._pending_moves: dict = {}
         self._pending_spread_bps: float = 0.0
         self.pending_formula_result: FormulaResult | None = None
         #: Everything the UI shows *about* the current prediction (fusion
@@ -573,6 +574,7 @@ class CycleManager:
             emergency_exit=bool(emergency and exit_side),
             edge=float(getattr(draft, "confidence", 0.0) or 0.0),
             spread_bps=float(self._pending_spread_bps or 0.0),
+            moves=self._pending_moves,
         )
         signal = draft._replace(
             cycle_number=cycle,
@@ -658,6 +660,7 @@ class CycleManager:
         )
         self._pending_vol_bps = realized_volatility_bps(snapshot, self.asset)
         self._pending_spread_bps = quoted_spread_bps(snapshot, self.asset)
+        self._pending_moves = minute_move_quantiles(snapshot, self.asset, self.settings.cycle_period_seconds)
         formula_result = self.formulas.run(snapshot, self.asset)
         self.pending_formula_result = formula_result
         self.last_live_formulas = dict(formula_result.values)
@@ -733,6 +736,7 @@ class CycleManager:
         )
         self._pending_vol_bps = realized_volatility_bps(snapshot, self.asset)
         self._pending_spread_bps = quoted_spread_bps(snapshot, self.asset)
+        self._pending_moves = minute_move_quantiles(snapshot, self.asset, self.settings.cycle_period_seconds)
         formula_result = self.formulas.run(snapshot, self.asset)
         self.pending_formula_result = formula_result
         self.last_live_formulas = dict(formula_result.values)
@@ -867,6 +871,7 @@ class CycleManager:
         signal = self._build_frozen_signal(snapshot, formula_result, agent_results, fusion, context)
         self._pending_vol_bps = realized_volatility_bps(snapshot, self.asset)
         self._pending_spread_bps = quoted_spread_bps(snapshot, self.asset)
+        self._pending_moves = minute_move_quantiles(snapshot, self.asset, self.settings.cycle_period_seconds)
 
         if not self.settings.signal_pipeline:
             # Classic (literal draft) timing: the panel shows "Computing..." for
@@ -2160,6 +2165,7 @@ class CycleManager:
         self.published_compute_us = int(result.total_us)
         self._pending_vol_bps = realized_volatility_bps(snapshot, self.asset)
         self._pending_spread_bps = quoted_spread_bps(snapshot, self.asset)
+        self._pending_moves = minute_move_quantiles(snapshot, self.asset, self.settings.cycle_period_seconds)
         await self.broadcast(
             {
                 "type": "PREDICTION_REFRESH",

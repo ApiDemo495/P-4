@@ -369,10 +369,12 @@ class Settings:
     signal_pipeline: bool = field(default_factory=lambda: _env_bool("SIGNAL_PIPELINE", True))
 
     # --- Risk levels (Section 10.5) -------------------------------------
-    min_tp_bps: float = 4.0
-    max_tp_bps: float = 150.0
-    min_sl_bps: float = 3.0
-    max_sl_bps: float = 120.0
+    # Round AN: one-minute levels.  A quiet BTC minute moves 1-3 bps; the old
+    # floors (4 / 3 bps) and caps (150 / 120 bps) belonged to a longer horizon.
+    min_tp_bps: float = 1.5
+    max_tp_bps: float = 60.0
+    min_sl_bps: float = 1.0
+    max_sl_bps: float = 40.0
     default_volatility_bps: float = 12.0
 
     @property

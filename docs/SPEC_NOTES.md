@@ -1742,3 +1742,21 @@ on the simulator the same scorer prints ~50 %. Two real causes, both fixed:
   the prediction panel ("Edge guard" row, "⇄ INVERTED").
 
 `test_round_am.py` (4); full suite 301; assets `v=2.24.0`.
+
+## AN — levels sized to the measured minute
+
+**Symptom.** "TP/SL 200-500 points when the minute moves 5-10." The stop was
+`1.28 x σ` with σ a *modelled* window volatility (candle std, or a 5 s bucket
+std scaled by √12 - which doubles on bid-ask bounce - or a tick std x √600),
+floored at 3 / 4 bps and capped at 120 / 150 bps: one bad print or a thin tape
+put a target on the minute that the minute never reaches.
+
+**Fix.** `risk.minute_move_quantiles()` lays overlapping 60 s windows every
+5 s over the tick tape (candles as fallback) and measures the signed move and
+the maximum adverse excursion of each, in bps. `size_levels(moves=...)`: stop =
+measured 80 % adverse excursion (≥ 3 x spread), **target ≤ the measured 95 %
+minute move** (rr may fall to `RR_FLOOR` 1.2 and says so), σ replaced by the
+robust q80/1.28 when the model's σ is more than twice it. One-minute floors
+and caps: tp 1.5-60 bps, sl 1-40 bps. `risk.measured_moves` is in every
+signal's risk block. Test: `test_round_am.py::test_levels_are_bounded_by_the_measured_minute_moves`;
+suite 302.

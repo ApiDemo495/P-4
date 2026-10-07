@@ -93,6 +93,62 @@ SIZE_HINT = {
 }
 
 
+def minute_move_quantiles(snapshot, asset: str, horizon_seconds: float = 60.0) -> dict:
+    """Round AN: what the tape has ACTUALLY done over one horizon, measured.
+
+    Overlapping ``horizon_seconds`` windows are laid over the tick tape every
+    5 s; for each the signed close-to-close move and the maximum adverse
+    excursion in both directions are recorded in bps.  The quantiles of the
+    absolute move are what a stop and a target can realistically expect: a
+    target beyond the 95 % quantile of the last hour's minute moves is a
+    target the minute almost never reaches.  Falls back to the 1-minute
+    candle closes when the tick tape is shorter than three horizons.
+    """
+    out = {"n": 0, "q50": 0.0, "q80": 0.0, "q90": 0.0, "q95": 0.0, "mae80": 0.0, "source": "none"}
+    try:
+        ticks = snapshot.ticks(asset)
+    except Exception:  # noqa: BLE001
+        ticks = None
+    moves = np.zeros(0)
+    maes = np.zeros(0)
+    if ticks is not None and len(ticks) >= 20:
+        t = np.asarray(ticks[:, 0], dtype=np.float64) / 1000.0
+        p = np.asarray(ticks[:, 1], dtype=np.float64)
+        ok = np.isfinite(t) & np.isfinite(p) & (p > 0)
+        t, p = t[ok], p[ok]
+        if t.size >= 20 and t[-1] - t[0] >= 3 * horizon_seconds:
+            starts = np.arange(t[0], t[-1] - horizon_seconds, 5.0)
+            i0 = np.searchsorted(t, starts, side="left")
+            i1 = np.searchsorted(t, starts + horizon_seconds, side="right") - 1
+            keep = (i1 > i0) & (i0 < t.size)
+            i0, i1 = i0[keep], i1[keep]
+            if i0.size >= 6:
+                entry = p[i0]
+                moves = (p[i1] / entry - 1.0) * 1e4
+                mae = np.empty(i0.size)
+                for k in range(i0.size):
+                    seg = p[i0[k]: i1[k] + 1] / entry[k] - 1.0
+                    mae[k] = max(float(-seg.min()), float(seg.max())) * 1e4
+                maes = mae
+                out["source"] = f"tick tape, {i0.size} overlapping {int(horizon_seconds)}s windows"
+    if moves.size < 6:
+        closes = np.asarray(snapshot.candles(asset), dtype=np.float64)
+        if closes.size >= 6:
+            rets = np.diff(closes) / np.where(np.abs(closes[:-1]) > EPS, closes[:-1], np.nan)
+            rets = rets[np.isfinite(rets)] * 1e4
+            if rets.size >= 5:
+                moves = rets
+                maes = np.abs(rets)
+                out["source"] = f"{rets.size} one-minute candle closes"
+    if moves.size < 5:
+        return out
+    a = np.abs(moves)
+    out.update(n=int(a.size), q50=float(np.quantile(a, 0.5)), q80=float(np.quantile(a, 0.8)),
+               q90=float(np.quantile(a, 0.9)), q95=float(np.quantile(a, 0.95)),
+               mae80=float(np.quantile(maes, 0.8)) if maes.size else float(np.quantile(a, 0.8)))
+    return out
+
+
 def quoted_spread_bps(snapshot, asset: str) -> float:
     """Latest quoted spread in bps from the frozen spread history (0 if none)."""
     hist = np.asarray(snapshot.spread_history(asset), dtype=np.float64)
@@ -117,6 +173,7 @@ def risk_levels(
     emergency_exit: bool = False,
     edge: float = 0.0,
     spread_bps: float = 0.0,
+    moves: dict | None = None,
 ) -> dict:
     """Build the risk block embedded in every locked signal."""
     settings = settings or cfg.SETTINGS
@@ -124,12 +181,23 @@ def risk_levels(
     sigma = float(volatility_bps)
     if not np.isfinite(sigma) or sigma <= 0:
         sigma = settings.default_volatility_bps
+    # Round AN: the measured minute moves bound the model.  A σ inflated by
+    # one bad print or a thin tape used to put a 200-500 point target on a
+    # minute that moves 5-10 points; now the stop is the 80 % quantile of the
+    # measured adverse excursion and the target can never exceed the 95 %
+    # quantile of the measured minute moves.
+    moves = moves or {}
+    if int(moves.get("n") or 0) >= 5 and float(moves.get("q80") or 0.0) > 0:
+        robust_sigma = float(moves["q80"]) / 1.2816   # q80 of |N(0,σ)| is 1.28σ
+        if sigma > 2.0 * robust_sigma:
+            sigma = robust_sigma
 
     # Round AA - excursion-quantile risk engine (backend/core/risk_engine.py):
     # the stop is the 80% quantile of the maximum adverse excursion over the
     # window, the target reaches further the stronger the edge.
     levels = size_levels(
-        asset, sigma, edge=edge, spread_bps=spread_bps, horizon_seconds=horizon_seconds, settings=settings
+        asset, sigma, edge=edge, spread_bps=spread_bps, horizon_seconds=horizon_seconds, settings=settings,
+        moves=moves,
     )
     rr = float(getattr(settings, "rr_target", 1.5) or 1.5)
     sl_bps = levels.sl_bps
@@ -146,6 +214,7 @@ def risk_levels(
         "rr": round(tp_bps / sl_bps, 3) if sl_bps > 0 else 0.0,
         "rr_target": rr,
         "engine": levels.as_dict(),
+        "measured_moves": {k: (round(v, 2) if isinstance(v, float) else v) for k, v in moves.items()},
         "horizon_seconds": round(horizon_seconds, 1),
         "take_profit": None,
         "stop_loss": None,
