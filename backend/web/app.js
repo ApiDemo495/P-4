@@ -1890,7 +1890,8 @@ function renderHedge(s) {
     $("hedge-best").innerHTML =
       `<b>${escapeHtml(best.action || "")}</b> — ${escapeHtml(best.note || "")} · ` +
       `E <b class="${best.expected_bps >= 0 ? "sig-BUY" : "sig-SELL"}">${fmtSigned(best.expected_bps, 2)} bp</b> ± ${Number(best.sigma_bps).toFixed(2)} · ` +
-      `P(profit) <b>${fmtPct(best.p_profit)}</b> · hedging removes ${fmtPct(o.variance_reduction)} of variance`;
+      `P(profit) <b>${fmtPct(best.p_profit)}</b> · hedging removes ${fmtPct(o.variance_reduction)} of variance` +
+      (o.basis ? ` <span class="muted">· from ${escapeHtml(o.basis)}</span>` : "");
     const j = o.joint || {};
     [["hj-uu", j.btc_up_paxg_up], ["hj-ud", j.btc_up_paxg_down], ["hj-du", j.btc_down_paxg_up], ["hj-dd", j.btc_down_paxg_down]].forEach(([id, v]) => {
       $(id).textContent = fmtPct(v);

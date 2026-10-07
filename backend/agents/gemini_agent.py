@@ -116,6 +116,12 @@ class GeminiAgent:
         self.ring = self.settings.rings["gemini"]
         self.model = self.settings.gemini_model
         self._model_resolved = False
+        #: Round AP: every model id this key may call, best first, and the
+        #: ones that answered 400/404/quota-0 with the reason - the call walks
+        #: down the list instead of failing on the first retired / unfunded id.
+        self._candidates: list[str] = []
+        self._bad_models: dict[str, str] = {}
+        self.last_http_error: str = ""
         self.consecutive_failures = 0
         self.last_result: AgentResult | None = None
         self.last_error = ""
@@ -236,41 +242,78 @@ class GeminiAgent:
             return self.model
         available = await list_models(key)
         chosen = choose_model(available, self.settings.gemini_model)
+        ids = [m.split("/", 1)[-1] for m in available]
+        ranked = sorted((r, i) for i in ids if (r := model_rank(i)) is not None)
+        self._candidates = [chosen] + [i for _, i in reversed(ranked) if i != chosen]
         if chosen != self.model:
             log.info("Gemini model %s -> %s (what this key can use)", self.model, chosen)
         self.model = chosen
         self._model_resolved = True
         return chosen
 
-    async def _call(self, prompt: str, key: str) -> tuple[str | None, float | None, str, str]:
-        await self._resolve_model(key)
-        url = f"{BASE_URL}/{self.model}:generateContent"
-        payload = {
+    @staticmethod
+    def _payload(prompt: str, with_schema: bool) -> dict:
+        config = {"temperature": 0.2, "maxOutputTokens": 512, "responseMimeType": "application/json"}
+        if with_schema:
+            config["responseSchema"] = RESPONSE_SCHEMA
+        return {
             "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.2,
-                "maxOutputTokens": 512,
-                "responseMimeType": "application/json",
-                "responseSchema": RESPONSE_SCHEMA,
-            },
+            "generationConfig": config,
         }
+
+    async def _call(self, prompt: str, key: str) -> tuple[str | None, float | None, str, str]:
+        """One decision from the first model that answers.
+
+        Round AP - the errors the user saw were real and of three kinds, and
+        each is now handled instead of counted as a failed cycle:
+        * HTTP 400 on ``responseSchema`` (some generations reject the schema
+          shape)  -> retried once without the schema, JSON asked for in the
+          prompt;
+        * HTTP 404 (model retired) / 429 with ``limit: 0`` (newest model has
+          no free-tier quota for this key) -> that id is marked bad with the
+          reason and the next ranked model is tried, in the same call;
+        * a genuine 429 (quota used up) -> RateLimited with retry-after, so
+          the ring cools this key and the next key / cycle takes over.
+        ``last_http_error`` keeps the exact server text for /settings."""
+        await self._resolve_model(key)
         headers = {"Content-Type": "application/json", "x-goog-api-key": key}
-        async with httpx.AsyncClient(timeout=self.settings.gemini_timeout_seconds) as client:
-            response = await client.post(url, json=payload, headers=headers)
-        if response.status_code in (401, 403):
-            raise PermissionError("Gemini rejected the API key")
-        if response.status_code == 429:
-            raise RateLimited("Gemini rate limit (HTTP 429)", _retry_after(response))
-        if response.status_code == 404:
-            # the model id was retired under us: re-discover once, retry once
-            self._model_resolved = False
-            await self._resolve_model(key, force=True)
-            url = f"{BASE_URL}/{self.model}:generateContent"
-            async with httpx.AsyncClient(timeout=self.settings.gemini_timeout_seconds) as client:
-                response = await client.post(url, json=payload, headers=headers)
-        if response.status_code >= 400:
-            raise RuntimeError(f"Gemini HTTP {response.status_code}: {response.text[:200]}")
+        candidates = [m for m in (self._candidates or [self.model]) if m not in self._bad_models][:4] or [self.model]
+        response = None
+        for model in candidates:
+            with_schema = True
+            for _attempt in range(2):
+                url = f"{BASE_URL}/{model}:generateContent"
+                async with httpx.AsyncClient(timeout=self.settings.gemini_timeout_seconds) as client:
+                    response = await client.post(url, json=self._payload(prompt, with_schema), headers=headers)
+                code = response.status_code
+                if code < 400:
+                    break
+                body = response.text[:300]
+                self.last_http_error = f"{model}: HTTP {code} {body}"
+                if code in (401, 403):
+                    raise PermissionError(f"Gemini rejected the API key (HTTP {code}: {body[:120]})")
+                if code == 400 and with_schema and "schema" in body.lower():
+                    with_schema = False
+                    continue
+                if code == 404 or (code == 429 and ("limit: 0" in body or "limit:0" in body)):
+                    self._bad_models[model] = f"HTTP {code}: {body[:120]}"
+                    break
+                if code == 429:
+                    raise RateLimited(f"Gemini rate limit (HTTP 429: {body[:120]})", _retry_after(response))
+                if code == 400:
+                    self._bad_models[model] = f"HTTP 400: {body[:120]}"
+                    break
+                raise RuntimeError(f"Gemini HTTP {code} on {model}: {body[:160]}")
+            if response is not None and response.status_code < 400:
+                if model != self.model:
+                    log.info("Gemini model %s -> %s (%s)", self.model, model, self._bad_models.get(self.model, "fallback"))
+                    self.model = model
+                break
+        else:
+            bad = "; ".join(f"{m}: {why}" for m, why in list(self._bad_models.items())[-3:])
+            raise RuntimeError(f"no Gemini model answered for this key ({bad or 'no candidates'})")
+        self.last_http_error = ""
 
         data = response.json()
         candidates = data.get("candidates") or []
@@ -302,10 +345,32 @@ class GeminiAgent:
         if not available:
             return {"valid": False, "error": "key is valid but has no model with generateContent enabled"}
         chosen = choose_model(available, self.settings.gemini_model)
-        if key is None or candidate == (self.api_key or "").strip():
+        own = key is None or candidate == (self.api_key or "").strip()
+        if own:
             self.model, self._model_resolved = chosen, True
-        return {"valid": True, "detail": f"key accepted - {len(available)} models available, using {chosen}",
-                "model": chosen, "models": [m.split("/", 1)[-1] for m in available][:40]}
+        # Round AP: ListModels alone said "valid" while every generateContent
+        # failed.  The test now makes one real decision call (model walk,
+        # schema fallback included) and reports the exact server error.
+        probe_agent = self if own else GeminiAgent(self.settings)
+        if not own:
+            probe_agent._candidates = [chosen]
+            probe_agent.model, probe_agent._model_resolved = chosen, True
+        try:
+            decision, confidence, _reasoning, _raw = await asyncio.wait_for(
+                probe_agent._call(build_cycle_prompt({"asset": "BTC", "price": 0.0, "formulas": {}}), candidate),
+                timeout=max(8.0, float(self.settings.gemini_timeout_seconds)))
+        except RateLimited as exc:
+            return {"valid": True, "detail": f"key accepted; {len(available)} models; {exc} - the engine retries after the cooldown",
+                    "model": probe_agent.model, "models": [m.split("/", 1)[-1] for m in available][:40]}
+        except Exception as exc:  # noqa: BLE001
+            return {"valid": False, "error": f"key accepted by ListModels but generateContent failed: {exc}",
+                    "model": probe_agent.model, "models": [m.split("/", 1)[-1] for m in available][:40],
+                    "bad_models": dict(probe_agent._bad_models)}
+        return {"valid": True,
+                "detail": f"key accepted - {len(available)} models available, {probe_agent.model} answered "
+                          f"({decision or 'no decision'}{f' {confidence:.2f}' if confidence is not None else ''})",
+                "model": probe_agent.model, "models": [m.split("/", 1)[-1] for m in available][:40],
+                "bad_models": dict(probe_agent._bad_models)}
 
     def health(self) -> AgentHealth:
         status = self.status()
@@ -322,7 +387,7 @@ class GeminiAgent:
             status=status,
             detail=detail,
             model=self.model,
-            extra={"calls": self.calls, "last_error": self.last_error,
+            extra={"calls": self.calls, "last_error": self.last_error, "last_http_error": self.last_http_error, "bad_models": dict(self._bad_models),
                    "last_failover": self.last_failover, "keys": self.ring.status()},
         )
 

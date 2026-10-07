@@ -98,18 +98,42 @@ def build(snapshot, formulas: dict, side: str, confidence: float, asset: str = "
             "horizon_s": horizon_s, "regime": regime,
             "formulas": {"hsi": round(hsi, 4), "hrdd": round(hrdd, 4), "shrp": round(shrp, 4), "gcdv": round(gcdv, 4)}}
     synced = getattr(snapshot, "synced", None)
-    if synced is None or not getattr(synced, "valid", False):
-        base["reason"] = (getattr(synced, "reason", "") or "BTC/PAXG grid not available yet")
-        return base
-    rb = np.asarray(synced.btc_returns, dtype=float)
-    rp = np.asarray(synced.paxg_returns, dtype=float)
-    ok = np.isfinite(rb) & np.isfinite(rp)
-    rb, rp = rb[ok], rp[ok]
+    rb = rp = np.zeros(0)
+    window = 60.0
+    basis = ""
+    if synced is not None and getattr(synced, "valid", False):
+        rb = np.asarray(synced.btc_returns, dtype=float)
+        rp = np.asarray(synced.paxg_returns, dtype=float)
+        ok = np.isfinite(rb) & np.isfinite(rp)
+        rb, rp = rb[ok], rp[ok]
+        window = float(getattr(synced, "window_seconds", 60) or 60)
+        basis = f"{rb.size} tick-grid returns"
+    if rb.size < 10 or rb.std() <= 0 or rp.std() <= 0:
+        # Round AP: the hedge maths must always run.  When the tick grid is
+        # thin (PAXG prints rarely), the joint distribution is estimated from
+        # the last 120 one-minute closes of both legs (seeded from public
+        # history at start), aligned on count - the same covariance model,
+        # a coarser clock, and the report says so.
+        try:
+            cb = np.asarray(snapshot.candles("BTC"), dtype=float)
+            cp = np.asarray(snapshot.candles("PAXG"), dtype=float)
+        except Exception:  # noqa: BLE001
+            cb = cp = np.zeros(0)
+        m = min(cb.size, cp.size, 121)
+        if m >= 11:
+            cb, cp = cb[-m:], cp[-m:]
+            rb = np.diff(cb) / cb[:-1]
+            rp = np.diff(cp) / cp[:-1]
+            ok = np.isfinite(rb) & np.isfinite(rp)
+            rb, rp = rb[ok], rp[ok]
+            window = 60.0 * max(1, rb.size)
+            basis = f"{rb.size} one-minute candle returns (tick grid thin)"
     n = int(rb.size)
-    window = float(getattr(synced, "window_seconds", 60) or 60)
     if n < 10 or rb.std() <= 0 or rp.std() <= 0:
-        base["reason"] = f"{n} grid returns - need 10 with movement on both legs"
+        base["reason"] = ((getattr(synced, "reason", "") if synced is not None else "") or
+                          f"{n} joint returns - need 10 with movement on both legs (tick grid and candles)")
         return base
+    base["basis"] = basis
     step = window / max(1, n)                       # seconds per grid step
     scale = math.sqrt(horizon_s / max(step, 1e-9))  # grid-step sigma → horizon sigma
     s_b = float(rb.std()) * scale
@@ -161,13 +185,22 @@ def build(snapshot, formulas: dict, side: str, confidence: float, asset: str = "
                               "then": f"PAXG {beta_p_on_b * shock * 1e4:+.1f} bp expected",
                               "best_action_pnl_bps": round(pnl * 1e4, 1)})
     ratio_now = float(snapshot.last_price("BTC")) / max(1e-9, float(snapshot.last_price("PAXG")))
-    bp = np.asarray(synced.btc_prices, dtype=float)
-    pp = np.asarray(synced.paxg_prices, dtype=float)
+    if synced is not None and getattr(synced, "valid", False) and basis.endswith("tick-grid returns"):
+        bp = np.asarray(synced.btc_prices, dtype=float)
+        pp = np.asarray(synced.paxg_prices, dtype=float)
+    else:
+        try:
+            bp = np.asarray(snapshot.candles("BTC"), dtype=float)[-121:]
+            pp = np.asarray(snapshot.candles("PAXG"), dtype=float)[-121:]
+            m = min(bp.size, pp.size)
+            bp, pp = bp[-m:], pp[-m:]
+        except Exception:  # noqa: BLE001
+            bp = pp = np.zeros(0)
     okp = np.isfinite(bp) & np.isfinite(pp) & (pp > 0)
     spread = np.log(bp[okp] / pp[okp]) if okp.sum() >= 5 else np.zeros(0)
     spread_z = float((spread[-1] - spread.mean()) / spread.std()) if spread.size >= 5 and spread.std() > 0 else 0.0
     logic = [
-        f"grid {window:.0f} s, {n} returns; σ_BTC({horizon_s:.0f} s) = {s_b * 1e4:.1f} bp, σ_PAXG = {s_p * 1e4:.1f} bp, ρ = {rho:+.3f}",
+        f"{basis}; σ_BTC({horizon_s:.0f} s) = {s_b * 1e4:.1f} bp, σ_PAXG = {s_p * 1e4:.1f} bp, ρ = {rho:+.3f}",
         f"β(BTC on PAXG) = ρ·σ_B/σ_P = {beta_b_on_p:+.3f}; β(PAXG on BTC) = {beta_p_on_b:+.3f}; hedging removes ρ² = {rho * rho:.0%} of variance",
         f"lock {side} {asset}, conviction {float(confidence):.0%} ⇒ P(side) = ½ + 0.45·conviction = {p_side:.0%} ⇒ μ_{asset} = Φ⁻¹({p_side:.2f})·σ = {(mu_b if asset.upper() == 'BTC' else mu_p) * 1e4:+.1f} bp; "
         f"other leg = β·μ + ¼·rotation(SHRP {shrp:+.2f})·σ",
