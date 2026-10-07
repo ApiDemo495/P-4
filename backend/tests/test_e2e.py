@@ -382,7 +382,8 @@ def test_e06_only_trusted_critical_headlines_break_the_lock(manager: CycleManage
 
 async def test_e07_brain_uses_the_committed_fallback_matrix(manager: CycleManager):
     brain = manager.brain
-    assert brain.status.value in ("LIVE", "FALLBACK_CSV", "CACHED")
+    # Round AQ: LIVE_FLYWIRE when the real connectome arrays are on disk
+    assert brain.status.value in ("LIVE", "FALLBACK_CSV", "CACHED", "LIVE_FLYWIRE")
     assert brain.matrix.shape == (80, 80)
     assert brain.matrix.max() <= 1.0 + 1e-9
 
@@ -403,7 +404,7 @@ async def test_e07_brain_uses_the_committed_fallback_matrix(manager: CycleManage
     status = brain.status_dict()
     assert status["matrix"]["checksum"]
     assert len(status["matrix"]["shape"]) == 2
-    assert status["status"] in ("LIVE", "FALLBACK_CSV", "CACHED")
+    assert status["status"] in ("LIVE", "FALLBACK_CSV", "CACHED", "LIVE_FLYWIRE")
     assert set(status["node_layout"]) == {"pn", "kenyon_cells", "dans", "mbons", "lateral_horn"}
 
 

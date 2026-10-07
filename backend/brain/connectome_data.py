@@ -34,7 +34,6 @@ published annotation.  The only modelling choices are in ``whole_brain.py``.
 from __future__ import annotations
 
 import csv
-import hashlib
 import logging
 import os
 import threading
@@ -109,14 +108,6 @@ class DataStatus:
             "files": dict(self.files),
             "data_dir": str(DATA_DIR),
         }
-
-
-def _sha(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()[:16]
 
 
 def artifacts_ready(data_dir: Path = DATA_DIR) -> bool:

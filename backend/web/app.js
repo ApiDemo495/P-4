@@ -2140,7 +2140,7 @@ function renderWholeBrain(whole, c) {
   const host = $("brain-whole");
   if (!host) return;
   if (!c || !c.loaded) {
-    host.innerHTML = `<span class="muted">whole brain: ${c && c.phase === "downloading" ? `downloading the connectome (${c.percent || 0}%)` :
+    host.innerHTML = `<span class="muted">whole brain: ${c && c.phase === "downloading" ? `downloading the connectome: ${c.percent || 0}% done` :
       c && c.phase === "building" ? "building the connectome arrays" : c && c.phase === "failed" ? "download failed - retrying" : "not loaded yet"}</span>`;
     return;
   }

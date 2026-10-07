@@ -613,10 +613,19 @@ tail -f server.log
   exception is a *critical* news event, which can only force HOLD.
 * **22 formulas, 8 categories.** Each one is isolated: an exception zeroes that
   formula, records the error, and the other 21 still run. 11 zeros ⇒ forced HOLD.
-* **Real connectome, real fallback.** neuPrint/FlyWire are queried with explicit
-  timeouts through a 5-step verification that never raises; if the network is
-  unavailable the committed 80×80 matrix (285 excitatory / 71 inhibitory edges,
-  calibrated gain 3.2802) takes over seamlessly.
+* **The real fly brain (Round AQ).** On first start the engine downloads the
+  FlyWire FAFB v783 connectome from GitHub (no account, ~130 MB: 138 639
+  proofread neurons, 15.09 M connections carrying 54.5 M synapses with their
+  neurotransmitter sign, plus the Schlegel et al. 2024 cell-type annotations)
+  into `data/connectome/` and builds two sparse graphs. The **mushroom body +
+  lateral horn** (8 353 neurons, 841 k connections: every real projection
+  neuron, Kenyon cell, DAN, MBON, APL and LH neuron) runs on **every formula
+  pass** in ~7 ms and is what CCSv2 / KCAE read. The **whole brain** runs on a
+  worker thread every 2 s (~250 ms) and its MBON verdict and descending-neuron
+  share are blended into the brain's vote at the lock. The committed 80×80
+  matrix remains only as the fallback until the download completes.
+  `GET /api/brain/connectome` has the full read-out; the brain card shows which
+  circuit answered.
 * **News engine.** CryptoPanic every 30 s, NewsAPI/RSS every 60 s, an offline
   headline pack so the panel is never blank, and a critical-event detector that
   only trusts Tier ≤2 sources for lock-breaking events.
@@ -743,10 +752,18 @@ preview:
 https://<your-codespace>-8000.app.github.dev/readme
 ```
 
-The Drosophila circuit itself - every named neuron, its hemibrain cell type,
-compartment, transmitter, cell count and every synaptic connection with its
-synapse count and sign - is on `/matrix` ("Neurons & synapses") and at
+The real connectome - 138 639 FlyWire v783 neurons with cell class, cell type,
+transmitter and side, and the 15.09 M signed connections between them - is what
+the brain runs on (`GET /api/brain/connectome` for populations and the latest
+whole-brain read-out). The 80×80 fallback circuit is still on `/matrix` and at
 `GET /api/brain/neurons`.
+
+To pre-seed the connectome without waiting for the first start (optional - the
+engine does this itself):
+
+```
+.venv/bin/python -c "from backend.brain.connectome_data import ConnectomeData; print(ConnectomeData().ensure())"
+```
 
 * [`docs/SPECIFICATION_v2.md`](docs/SPECIFICATION_v2.md) — the full specification
   (every formula, every threshold, the API, Appendices A–F).

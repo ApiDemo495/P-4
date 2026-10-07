@@ -55,6 +55,7 @@ from backend.brain import graph_convolution as gc
 
 N_FORMULAS = len(gc.PN_NAMES)
 KC_SPARSITY = 0.05
+VALENCE_HOPS = 3   # PN -> KC -> MBON -> LH: where the valence is read
 EPS = 1e-9
 
 #: MBON valence by neurotransmitter (Aso et al. 2014)
@@ -179,6 +180,7 @@ class ConnectomeGraph:
         total = h.copy()
         hop_active = [int(np.count_nonzero(h))]
         kc_drive = None
+        early = None   # activity accumulated through the valence hops (PN -> KC -> MBON -> LH)
         # dopamine: PAM potentiates approach-MBON input for reward, PPL1 the avoid side
         g_app = 1.0 + 0.5 * max(0.0, float(drg))
         g_avo = 1.0 + 0.5 * max(0.0, -float(drg))
@@ -199,22 +201,27 @@ class ConnectomeGraph:
                     h[self.kc] = kc
             total += h
             hop_active.append(int(np.count_nonzero(h)))
+            if hop == VALENCE_HOPS - 1:
+                early = total.copy()
         if kc_drive is None:
             kc_drive = np.zeros(0, dtype=np.float32)
-        return total, kc_drive, hop_active, h
+        return total, kc_drive, hop_active, (early if early is not None else total)
 
     def propagate(self, vector: np.ndarray, drg: float = 0.0, hsi: float = 0.0, detail: bool = True) -> Readout:
         t0 = time.perf_counter()
         vec = np.asarray(vector, dtype=np.float32).ravel()
-        tot, kc_drive, hop_active, _ = self._one_pass(vec, drg, hsi)
-        mir, mir_drive, _, _ = self._one_pass(-vec, drg, hsi)
+        tot, kc_drive, hop_active, val = self._one_pass(vec, drg, hsi)
+        mir, mir_drive, _, mir_val = self._one_pass(-vec, drg, hsi)
 
         def mbon_sum(total: np.ndarray, idx: np.ndarray) -> float:
             return float(total[idx].sum()) if idx.size else 0.0
 
-        approach = 0.5 * (mbon_sum(tot, self.mbon_approach) + mbon_sum(mir, self.mbon_avoid))
-        avoid = 0.5 * (mbon_sum(tot, self.mbon_avoid) + mbon_sum(mir, self.mbon_approach))
-        neutral = 0.5 * (mbon_sum(tot, self.mbon_other) + mbon_sum(mir, self.mbon_other))
+        # The valence is read on the MBONs after the valence hops (PN -> KC ->
+        # MBON -> LH); the later hops of the whole brain tell where the verdict
+        # travels (descending share, activity per super-class), not what it is.
+        approach = 0.5 * (mbon_sum(val, self.mbon_approach) + mbon_sum(mir_val, self.mbon_avoid))
+        avoid = 0.5 * (mbon_sum(val, self.mbon_avoid) + mbon_sum(mir_val, self.mbon_approach))
+        neutral = 0.5 * (mbon_sum(val, self.mbon_other) + mbon_sum(mir_val, self.mbon_other))
         denom = abs(approach) + abs(avoid) + EPS
         # odd read-out in [-1, 1]: the share of MBON drive on the approach side
         balance = float(np.tanh(2.0 * (approach - avoid) / denom)) if denom > 1e-6 else 0.0
@@ -232,7 +239,10 @@ class ConnectomeGraph:
             computed_at=time.time(),
         )
         if self.descending.size:
-            out.descending = float(tot[self.descending].mean())
+            # share of the brain's odd response that reached the descending
+            # neurons - how much of the verdict makes it to the motor command
+            net_abs = np.abs(tot - mir)
+            out.descending = float(net_abs[self.descending].sum() / (net_abs.sum() + EPS))
         if detail:
             net = tot - mir  # odd activity: what the sign of the input changed
             classes = np.asarray(cd.SUPER_CLASSES)

@@ -108,10 +108,13 @@ def prepare(snapshot, asset: str, state: State, params: dict, ctx: dict) -> gc.A
             ensemble_drive = np.asarray(trace.kc_activations, dtype=np.float64)
             kcae_value = kcae_formula.from_activations(ensemble_drive) if ensemble_drive.size else 0.0
             trace.kcae = kcae_value
-            confidence = kcae_value * float(readout.confidence)
+            # confidence = geometric mean of "how decided" (|balance|, the
+            # calibrated MBON margin) and "how specific the code" (KCAE):
+            # both must be present for the brain to be sure.
+            confidence = float(np.sqrt(max(0.0, abs(float(readout.balance))) * max(0.0, kcae_value)))
             trace.confidence = confidence
             trace.diagnostics.update({
-                "confidence_spec": confidence, "decisiveness": float(readout.confidence),
+                "confidence_spec": kcae_value * float(readout.confidence), "decisiveness": abs(float(readout.balance)),
                 "neutral_share": abs(readout.neutral) / (abs(readout.approach) + abs(readout.avoid) + abs(readout.neutral) + EPS),
                 "resting_balance": 0.0, "balance_used": float(readout.balance),
             })

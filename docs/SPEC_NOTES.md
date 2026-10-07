@@ -1823,3 +1823,38 @@ suite 302.
   the news wire tagged `social`; `social_buzz` / `social_sentiment` features drive
   FOMO / EUPHORIA (positive buzz) and FEAR / PANIC (negative buzz) on the news band.
 * Tests follow one-minute sizing (`test_round_aa/am/v`, `test_prediction`); suite 304.
+
+## AQ - the real fly brain
+
+* **Why.** "I don't like that 80×80 brain system, I need full brain." The 80
+  nodes were a hand-built stand-in for the mushroom body. The real thing is
+  public: FlyWire FAFB v783 (Dorkenwald et al. 2024; Schlegel et al. 2024).
+* **Data** (`backend/brain/connectome_data.py`): `Connectivity_783.parquet`
+  (philshiu/Drosophila_brain_model - the Shiu et al. 2024 simulation table:
+  15 091 983 pre→post connections, 54 492 920 synapses, sign from the
+  neurotransmitter prediction) and `Supplemental_file1_neuron_annotations.tsv`
+  (flyconnectome/flywire_annotations). Both from GitHub (raw and
+  api.github.com mirrors), ~130 MB, cached in `data/connectome/` (gitignored),
+  built once into `flywire_783_whole.npz` / `flywire_783_mushroom_body.npz`
+  (3 s). `CONNECTOME_AUTODOWNLOAD=0` disables (tests set it).
+* **Graphs** (`backend/brain/whole_brain.py::ConnectomeGraph`): CSR
+  `W[post, pre]` = sign × synapses / total input of the post neuron.
+  Populations from the annotations: 685 ALPN, 5 177 KC, 96 MBON (71 ACh/GABA
+  approach, 25 Glu avoid - Aso et al. 2014), 331 DAN (PAM / PPL1), LH, 1 299
+  descending. Whole brain 138 639 neurons; MB sub-circuit 8 353.
+* **Model.** 20 directional formulas → 40 glomerular ALPN groups (ON for
+  positive, OFF for negative values: two discriminable odours per formula).
+  `h ← ReLU(W h)` per hop, KCs top-5 % sparse (APL), DRG as dopamine gain on
+  approach (PAM) / avoid (PPL1) MBON input, HSI as octopamine input gain.
+  Valence read on the MBONs after 3 hops; push-pull with the mirrored input so
+  f(−x) = −f(x) and a flat tape is exactly 0. `balance = tanh(2(app−avo)/(|app|+|avo|))`.
+  Whole brain: 6 hops; later hops report activity per super-class and the
+  descending share of the odd response.
+* **Where it runs.** `Brain.mushroom_body_pass` on every formula pass (CCSv2 =
+  balance, KCAE = sparseness of the real KC code, confidence = √(|balance|·KCAE));
+  `Brain._connectome_loop` runs the whole brain every 2 s on a thread and
+  `_fuse` blends `0.6·MB + 0.4·whole` into the brain's vote (`fusion.whole_brain`).
+  Status `LIVE_FLYWIRE`; `_apply` never demotes a loaded connectome.
+* **UI / API.** Brain card: real populations, hops, pass time, whole-brain line
+  (`#brain-whole`); `/api/brain/connectome`; settings brain line shows download
+  progress. Tests `test_round_aq.py` (synthetic connectome + real when present).
