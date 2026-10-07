@@ -117,38 +117,67 @@ def artifacts_ready(data_dir: Path = DATA_DIR) -> bool:
 # ---------------------------------------------------------------------------
 # download
 # ---------------------------------------------------------------------------
-def _download(name: str, dest: Path, status: DataStatus, timeout: float = 600.0) -> None:
+def _stream_httpx(url: str, headers: dict, tmp: Path, status: DataStatus, timeout: float) -> None:
     import httpx
 
+    with httpx.stream("GET", url, headers=headers, follow_redirects=True, timeout=timeout) as r:
+        if r.status_code != 200:
+            raise RuntimeError(f"HTTP {r.status_code}")
+        status.bytes_total = int(r.headers.get("content-length") or 0)
+        with tmp.open("wb") as fh:
+            for chunk in r.iter_bytes(1 << 20):
+                fh.write(chunk)
+                status.bytes_done += len(chunk)
+
+
+def _stream_urllib(url: str, headers: dict, tmp: Path, status: DataStatus, timeout: float) -> None:
+    """Same download through the standard library and the *system* trust
+    store (corporate / sandbox proxies often sign with a CA that certifi -
+    which httpx uses - does not carry)."""
+    import ssl
+    import urllib.request
+
+    ctx = ssl.create_default_context()
+    try:
+        ctx.load_default_certs()
+    except Exception:  # noqa: BLE001
+        pass
+    req = urllib.request.Request(url, headers={**headers, "User-Agent": "drosophila-trader"})
+    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+        if getattr(r, "status", 200) != 200:
+            raise RuntimeError(f"HTTP {getattr(r, 'status', '?')}")
+        status.bytes_total = int(r.headers.get("content-length") or 0)
+        with tmp.open("wb") as fh:
+            while True:
+                chunk = r.read(1 << 20)
+                if not chunk:
+                    break
+                fh.write(chunk)
+                status.bytes_done += len(chunk)
+
+
+def _download(name: str, dest: Path, status: DataStatus, timeout: float = 600.0) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
     errors = []
+    token = os.environ.get("GITHUB_TOKEN") or getattr(cfg.SETTINGS, "github_models_token", "")
     for url in SOURCES[name]:
+        host = url.split("/")[2]
         headers = {"Accept": _RAW} if "api.github.com" in url else {}
-        token = os.environ.get("GITHUB_TOKEN") or getattr(cfg.SETTINGS, "github_models_token", "")
         if token and "api.github.com" in url:
             headers["Authorization"] = f"Bearer {token}"
-        try:
-            status.file, status.bytes_done, status.bytes_total = name, 0, 0
-            with httpx.stream("GET", url, headers=headers, follow_redirects=True, timeout=timeout) as r:
-                if r.status_code != 200:
-                    errors.append(f"{url.split('/')[2]}: HTTP {r.status_code}")
-                    continue
-                status.bytes_total = int(r.headers.get("content-length") or 0)
-                with tmp.open("wb") as fh:
-                    for chunk in r.iter_bytes(1 << 20):
-                        fh.write(chunk)
-                        status.bytes_done += len(chunk)
-            if tmp.stat().st_size < EXPECTED_MIN_BYTES.get(name, 1):
-                errors.append(f"{url.split('/')[2]}: only {tmp.stat().st_size} bytes")
+        for label, streamer in (("httpx", _stream_httpx), ("urllib", _stream_urllib)):
+            try:
+                status.file, status.bytes_done, status.bytes_total = name, 0, 0
+                streamer(url, headers, tmp, status, timeout)
+                if tmp.stat().st_size < EXPECTED_MIN_BYTES.get(name, 1):
+                    raise RuntimeError(f"only {tmp.stat().st_size} bytes")
+                tmp.replace(dest)
+                status.files[name] = {"bytes": dest.stat().st_size, "from": f"{host} ({label})"}
+                return
+            except Exception as exc:  # noqa: BLE001 - try the next transport / mirror
+                errors.append(f"{host}/{label}: {type(exc).__name__}: {exc}"[:160])
                 tmp.unlink(missing_ok=True)
-                continue
-            tmp.replace(dest)
-            status.files[name] = {"bytes": dest.stat().st_size, "from": url.split("/")[2]}
-            return
-        except Exception as exc:  # noqa: BLE001 - try the next mirror
-            errors.append(f"{url.split('/')[2]}: {type(exc).__name__}: {exc}"[:160])
-            tmp.unlink(missing_ok=True)
     raise RuntimeError(f"{name}: " + " | ".join(errors))
 
 
