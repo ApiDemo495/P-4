@@ -6,7 +6,7 @@
 <title>Drosophila Trader v2.0</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" />
-<link rel="stylesheet" href="/static/styles.css?v=2.26.0" />
+<link rel="stylesheet" href="/static/styles.css?v=2.27.0" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪰</text></svg>" />
 </head>
 <body>
@@ -206,6 +206,7 @@
           <div class="kv-item"><span>Evaluated after</span><b id="w-horizon">—</b></div>
           <div class="kv-item wide"><span>Edge guard (raw side vs tape)</span><b id="w-guard" class="muted">arming</b></div>
           <div class="kv-item wide"><span>Tape veto (last 30 s vs recipe)</span><b id="w-veto" class="muted">—</b></div>
+          <div class="kv-item wide"><span>Three minds (human · AI · data)</span><b id="w-triune" class="muted">—</b></div>
           <div class="kv-item wide"><span>Engine</span><b id="w-engine" class="muted">—</b></div>
         </div>
       </div>
@@ -312,6 +313,8 @@
         <div class="timescale-strip" id="emotion-timescales"></div>
         <div class="cell-label" style="margin-top:12px">AT LOCK TIME <span class="muted">what shaped this signal</span></div>
         <div class="emotion-locked" id="emotion-locked">—</div>
+        <div class="cell-label" style="margin-top:12px">THE BRAIN'S OWN DOPAMINE <span class="muted">reward prediction error on wins and losses</span></div>
+        <div class="brain-mood" id="brain-mood">—</div>
       </div>
     </div>
     <!-- Round K: the deep microstructure reasoning behind the reading -->
@@ -594,6 +597,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=2.26.0"></script>
+<script src="/static/app.js?v=2.27.0"></script>
 </body>
 </html>

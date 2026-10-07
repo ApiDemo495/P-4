@@ -834,6 +834,7 @@ function adoptEmotions(data) {
   const block = data?.emotions;
   if (!block || typeof block !== "object") return;
   state.emotions = block;
+  if (block.brain_mood) state.brainMood = block.brain_mood;   // Round AR: rides on PULSE / snapshots only
   // The deep block is heavy, so the stream carries it on every fourth sample
   // only; the bars and the read-out still move twice a second.  The last deep
   // block is kept and repainted only when a new one arrives.
@@ -852,6 +853,27 @@ function toneClass(tone) {
 
 function emotionTimescaleLabel(key) {
   return { micro: "µs", seconds: "sec", window: "60 s", minutes: "min", news: "news" }[key] || key;
+}
+
+/* Round AR: the brain's own dopamine - how it felt the last scored window
+   (Schultz reward prediction error, loss aversion, mood) and the guards it
+   applies to itself (over-confidence after wins, tilt after losses). */
+function renderBrainMood(d) {
+  const host = $("brain-mood");
+  if (!host) return;
+  if (!d || !d.available) {
+    host.innerHTML = `<span class="muted">${escapeHtml(d?.reading || "no scored window yet - the first outcome is pure surprise")}</span>`;
+    return;
+  }
+  const tone = d.tonic > 0.1 ? "pos" : d.tonic < -0.1 ? "neg" : "";
+  const burst = d.phasic > 0.05 ? `▲ burst ${fmtSigned(d.phasic, 2)}` : d.phasic < -0.05 ? `▼ dip ${fmtSigned(d.phasic, 2)}` : "no transient";
+  host.innerHTML =
+    `<b class="${tone}">${escapeHtml(d.mood_label)}</b> <span class="muted">(${escapeHtml(d.mood_meaning)})</span> · ${burst}` +
+    ` · <span class="muted">expects ${fmtSigned(d.expectation_bps, 1)} bp/window · last ${fmtSigned(d.last.pnl_bps, 1)} bp felt ${fmtSigned(d.last.subjective_bps, 1)} bp → δ ${fmtSigned(d.last.delta_bps, 1)} bp` +
+    ` · streak ${d.win_streak ? `${d.win_streak}W` : d.loss_streak ? `${d.loss_streak}L` : "—"} · PAM/PPL1 gain ${fmtSigned(d.brain_gain, 2)}</span>` +
+    (d.appetite < 0.999 ? `<br><span class="neg">size × ${d.appetite.toFixed(2)} — ${escapeHtml((d.guard || []).join("; "))} (a human would be sizing up here)</span>` :
+      `<br><span class="muted">appetite 1.00× — no over-confidence (${(d.overconfidence * 100).toFixed(0)}%) or tilt (${(d.tilt * 100).toFixed(0)}%) to guard against</span>`);
+  host.title = (d.equations || []).join("\n");
 }
 
 function renderEmotions() {
@@ -953,6 +975,8 @@ function renderEmotions() {
       `manipulation ${fmtPct(Number(locked.manipulation?.score || 0))} (${escapeHtml(String(locked.manipulation?.kind || "none"))})` +
       `<span class="muted">${escapeHtml(String(state.emotionDampening?.note || "no crowd dampening on this signal"))}</span>`
     : `<span class="muted">the first locked window will record the crowd's mood</span>`;
+
+  renderBrainMood(state.brainMood || e.brain_mood);
 
   /* inline line in the prediction cell: the crowd *at the lock*, which does
      not move during the window - the live reading is the card above. */
@@ -1723,6 +1747,17 @@ function renderWidgetPanel() {
           ? `not fired · tape ${fmtSigned(veto.move_30s_bps, 1)} bp in 30 s vs ${veto.recipe_side} (needs ${Number(veto.threshold_bps).toFixed(1)} bp against, confidence < 62 %)`
           : "—");
     $("w-veto").className = veto.fired ? "neg" : "muted";
+  }
+  const tri = (state.prediction && state.prediction.fusion && state.prediction.fusion.triune) || (s && s.fusion && s.fusion.triune) || null;
+  if ($("w-triune")) {
+    if (tri) {
+      const ap = tri.applied || {};
+      $("w-triune").textContent = `${tri.story}` + (ap.share ? ` · applied ${(ap.share * 100).toFixed(0)}% of the score${ap.flipped ? " (FLIPPED the side)" : ""}, confidence × ${ap.confidence_multiplier}` : " · learning (weights are priors until 30 windows)");
+      $("w-triune").className = ap.flipped ? "neg" : tri.corroboration === 1 ? "pos" : "muted";
+      $("w-triune").title = (tri.notes || []).join("\n") || "human = crowd tone + social + news; AI = agents; data = fly brain + formulas + physics";
+    } else {
+      $("w-triune").textContent = "—";
+    }
   }
   $("w-streak").textContent = streak === 0 ? "—" : (streak > 0 ? `${streak} win${streak > 1 ? "s" : ""}` : `${-streak} loss${streak < -1 ? "es" : ""}`);
   $("w-streak").className = streak > 0 ? "pos" : streak < 0 ? "neg" : "muted";

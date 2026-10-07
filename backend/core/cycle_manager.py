@@ -49,6 +49,8 @@ from backend.core.prediction import detail as prediction_detail
 from backend.core.prediction import build_reasoning, consensus
 from backend.core import edge_guard
 from backend.core.calibration import EvidenceLedger
+from backend.core.dopamine import DopamineBrain
+from backend.core.triune import TriuneAnalyst
 from backend.core.frozen_snapshot import FrozenMarketSnapshot
 from backend.core.redis_bus import Store
 from backend.core.timebase import now_us
@@ -142,6 +144,12 @@ class CycleManager:
         self.genesis.attach(self.market)
         self.last_genesis: dict | None = None
         self.last_whole_brain: dict | None = None   # Round AQ: whole-brain verdict blended at the last fuse
+        # Round AR: the brain's own dopamine (how it feels wins and losses)
+        # and the three-minds analyst (human / AI / data, correlated).
+        self.dopamine = DopamineBrain()
+        self.triune = TriuneAnalyst()
+        self.last_triune: dict | None = None
+        self._last_minds: dict = {}
         self.last_news_impact: dict = {}
         self.lock = SignalLockController()
 
@@ -613,6 +621,16 @@ class CycleManager:
             spread_bps=float(self._pending_spread_bps or 0.0),
             moves=self._pending_moves,
         )
+        # Round AR: the brain's dopamine appetite can only *reduce* size - the
+        # over-confidence / tilt guard a human trader rarely applies to himself.
+        try:
+            appetite = float(self.dopamine.appetite)
+            risk["size_multiplier"] = round(appetite, 3)
+            risk["brain_mood"] = self.dopamine.mood
+            if appetite < 0.999:
+                risk["note"] = f"{risk.get('note', '')} · size × {appetite:.2f} ({'; '.join(self.dopamine.to_dict()['guard'])})".strip(" ·")
+        except Exception:  # noqa: BLE001
+            pass
         signal = draft._replace(
             cycle_number=cycle,
             asset=self.asset,
@@ -1338,6 +1356,7 @@ class CycleManager:
             "note": (self.last_fusion or {}).get("crowd_note", ""),
         }
         payload["asset"] = self.asset
+        payload["brain_mood"] = self.dopamine.to_dict()
         return payload
 
     # ==================================================================
@@ -1423,6 +1442,13 @@ class CycleManager:
         if self._last_votes:
             self.ledger.remember(signal.asset, signal.cycle_number, self._last_votes,
                                  float((self._last_learned or {}).get("p_up") or 0.5))
+        # Round AR: the analyst remembers the three opinions; the dopamine
+        # transient of the previous window fades as a new one starts.
+        if self._last_minds:
+            self.triune.remember(signal.cycle_number, signal.asset, self._last_minds,
+                                 str((self.emotion_locked or {}).get("dominant", {}).get("name") or ""), signal.signal)
+        self.dopamine.tick_window()
+        self.brain.dopamine_phasic = self.dopamine.brain_gain()
         if ((self.last_fusion or {}).get("edge_guard") or {}).get("inverted"):
             self._inverted_cycles.add(int(signal.cycle_number))
             if len(self._inverted_cycles) > 400:
@@ -1494,6 +1520,14 @@ class CycleManager:
                      learned_update["sources_right"], learned_update["sources_wrong"])
         if not flat:
             self._side_outcomes.append((signal.signal, outcome))
+        # Round AR: the brain feels the outcome (reward prediction error) and
+        # the analyst scores the three minds.
+        try:
+            self.dopamine.observe(pnl_bps, outcome, float(getattr(signal, "confidence", 0.5) or 0.5))
+            self.brain.dopamine_phasic = self.dopamine.brain_gain()
+            self.triune.score(signal.cycle_number, None if flat else exit_price > entry, change_bps)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("dopamine/triune scoring skipped: %s", exc)
         log.info(
             "outcome %s on %s: %+.1f bps (%s)%s",
             signal.signal,
@@ -1903,6 +1937,19 @@ class CycleManager:
         learned = self.ledger.evaluate(self.asset, votes)
         self._last_votes = votes
         self._last_learned = learned
+        # Round AR: the three minds for this window and the analyst's verdict
+        try:
+            feats = (crowd or {}).get("features") or {}
+            minds = TriuneAnalyst.minds_from(
+                crowd_tone=crowd_tone, social_sentiment=float(feats.get("social_sentiment") or 0.0),
+                news_niv=niv, agents=agent_results, ccs_value=ccs_value,
+                formula_consensus=float(agreement["score"] or 0.0),
+                physics_vote=float((physics_report or {}).get("vote") or 0.0))
+            self._last_minds = minds
+            self.last_triune = self.triune.analyse(minds, emotion=str(((crowd or {}).get("dominant") or {}).get("name") or ""))
+        except Exception as exc:  # noqa: BLE001 - the analyst must never break a window
+            log.debug("triune analysis skipped: %s", exc)
+            self.last_triune = None
         if not learned.get("active"):
             spec.learned = {"active": False, "scored": learned.get("scored", 0),
                             "min_samples": learned.get("min_samples"), "p_up": learned.get("p_up"),
@@ -1917,7 +1964,37 @@ class CycleManager:
 
     def _tape_veto(self, fusion, snapshot):
         fusion.whole_brain = self.last_whole_brain
+        fusion = self._apply_triune(fusion)
         return self._tape_veto_inner(fusion, snapshot)
+
+    #: the analyst's share of the score once her record is mature (30 decided windows)
+    TRIUNE_SHARE = 0.25
+
+    def _apply_triune(self, fusion):
+        """Round AR: the three-minds analyst adjusts the fused call - a share of
+        the score proportional to her record, and a confidence multiplier for
+        corroboration / split.  Everything is printed in ``fusion.triune``."""
+        analysis = self.last_triune
+        if fusion is None or not analysis:
+            return fusion
+        try:
+            lam = float(analysis.get("maturity") or 0.0) * self.TRIUNE_SHARE
+            before = float(fusion.score)
+            composite = float(analysis.get("composite") or 0.0)
+            new_score = (1.0 - lam) * before + lam * composite
+            mult = 1.0 + (float(analysis.get("confidence_multiplier") or 1.0) - 1.0) * float(analysis.get("maturity") or 0.0)
+            applied = {"share": round(lam, 3), "score_before": round(before, 4), "score_after": round(new_score, 4),
+                       "confidence_multiplier": round(mult, 3), "flipped": False}
+            fusion.score = new_score
+            fusion.confidence = float(min(0.95, max(0.0, float(fusion.confidence) * mult)))
+            if fusion.decision in ("BUY", "SELL") and new_score != 0 and (new_score > 0) != (fusion.decision == "BUY") and abs(composite) > 0.2:
+                fusion.decision = "BUY" if new_score > 0 else "SELL"
+                applied["flipped"] = True
+                fusion.reasoning = (f"three-minds analyst flipped the side: {analysis.get('story', '')} | " + (fusion.reasoning or ""))[:600]
+            fusion.triune = {**analysis, "applied": applied}
+        except Exception as exc:  # noqa: BLE001
+            log.debug("triune apply skipped: %s", exc)
+        return fusion
 
     def _tape_veto_inner(self, fusion, snapshot):
         """Round AP: "the app gives the same BUY while the market is falling".

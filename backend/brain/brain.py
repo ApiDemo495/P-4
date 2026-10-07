@@ -54,6 +54,9 @@ class Brain:
         self.mb_passes: int = 0
         self.mb_last_us: int = 0
         self.last_input: tuple | None = None   # (vector, drg, hsi) of the latest formula pass
+        # Round AR: the brain's own dopamine transient (reward prediction error
+        # of the last scored window) - added to the DRG gate on PAM / PPL1.
+        self.dopamine_phasic: float = 0.0
         self._whole_busy = False
         self.connectome_loaded_at: float = 0.0
         self.connectome_error: str = ""
@@ -147,8 +150,12 @@ class Brain:
         loaded, else None (the caller falls back to the 80x80 convolution)."""
         if self.mb is None:
             return None
-        self.last_input = (np.asarray(vector, dtype=np.float32).copy(), float(drg), float(hsi))
-        readout = self.mb.propagate(vector, drg=drg, hsi=hsi, detail=True)
+        drg_eff = float(np.clip(float(drg) + 0.5 * float(self.dopamine_phasic), -1.0, 1.0))
+        self.last_input = (np.asarray(vector, dtype=np.float32).copy(), drg_eff, float(hsi))
+        readout = self.mb.propagate(vector, drg=drg_eff, hsi=hsi, detail=True)
+        readout.dan["drg_formula"] = float(drg)
+        readout.dan["brain_phasic"] = float(self.dopamine_phasic)
+        readout.dan["drg_effective"] = drg_eff
         self.mb_passes += 1
         self.mb_last_us = readout.elapsed_us
         return readout

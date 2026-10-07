@@ -26,6 +26,22 @@ async def brain_connectome() -> dict:
     return payload
 
 
+@router.get("/api/brain/dopamine")
+async def brain_dopamine() -> dict:
+    """Round AR: the brain's own dopamine - reward prediction error, mood,
+    over-confidence / tilt guards and the size appetite."""
+    manager = get_manager()
+    return {"dopamine": manager.dopamine.to_dict(), "brain_phasic_applied": manager.brain.dopamine_phasic}
+
+
+@router.get("/api/triune")
+async def triune() -> dict:
+    """Round AR: the three-minds analyst - human / AI / data votes, their
+    records, agreements and the verdict applied to the current window."""
+    manager = get_manager()
+    return {"current": manager.last_triune, "report": manager.triune.report()}
+
+
 @router.get("/api/brain/matrix")
 async def brain_matrix(limit: int = Query(0, ge=0, le=2000)) -> dict:
     """The 80x80 adjacency matrix as an edge list (for matrix_viewer)."""

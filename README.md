@@ -626,6 +626,22 @@ tail -f server.log
   matrix remains only as the fallback until the download completes.
   `GET /api/brain/connectome` has the full read-out; the brain card shows which
   circuit answered.
+* **The brain's own dopamine and the three minds (Round AR).** Every scored
+  window is fed back as a *reward prediction error*, not as P&L: a loss hurts
+  2.25× a win (Kahneman–Tversky), a confident miss hurts more than a doubtful
+  one, an expected win barely registers (Schultz), and the expectation itself
+  learns at a Pearce–Hall rate that rises after surprises. The resulting
+  phasic burst/dip modulates the real PAM/PPL1 dopamine neurons in the
+  mushroom-body pass, the tonic level is the brain's **mood** (shown on the
+  emotion card), and two guards a human rarely applies to himself —
+  over-confidence after a streak, tilt after losses — can only ever *reduce*
+  position size (`risk.size_multiplier`). Alongside it a **three-minds
+  analyst** splits every window's evidence into a human mind (crowd tone,
+  social, news), an AI mind (the agents) and a data mind (fly brain, formulas,
+  physics), keeps each one's hit rate per emotion regime, inverts a mind that
+  is reliably wrong (Wilson lower bound over ≥15 windows) and raises/lowers
+  confidence on corroboration/split. `GET /api/brain/dopamine`,
+  `GET /api/triune`.
 * **News engine.** CryptoPanic every 30 s, NewsAPI/RSS every 60 s, an offline
   headline pack so the panel is never blank, and a critical-event detector that
   only trusts Tier ≤2 sources for lock-breaking events.

@@ -70,6 +70,8 @@ class FusionResult:
     tape_veto: dict = field(default_factory=dict)
     #: Round AQ: the whole-brain verdict blended into the brain's vote (or None)
     whole_brain: dict | None = None
+    #: Round AR: the three-minds analyst (human / AI / data) and what she applied
+    triune: dict | None = None
 
     # -- binary direction fields (HOLD was removed) ----------------------
     @property
@@ -114,6 +116,7 @@ class FusionResult:
             "edge_guard": self.edge_guard,
             "tape_veto": self.tape_veto,
             "whole_brain": self.whole_brain,
+            "triune": self.triune,
         }
         # Kept for the two clients: "lean" now always equals the decision,
         # because there is no third state to lean away from.

@@ -1858,3 +1858,52 @@ suite 302.
 * **UI / API.** Brain card: real populations, hops, pass time, whole-brain line
   (`#brain-whole`); `/api/brain/connectome`; settings brain line shows download
   progress. Tests `test_round_aq.py` (synthetic connectome + real when present).
+
+## AR - the brain's own dopamine and the three minds
+
+**Why.** Through AQ the fly brain was wired with real synapses but *felt*
+nothing: outcomes went to the calibration ledger and the formula weights, never
+to the dopamine neurons themselves. A fly learns odour valence by PAM/PPL1 DAN
+firing on reward prediction error; a human trader's discipline fails on the
+same signal (hot hand after a streak, tilt after losses). Round AR gives the
+engine the first and guards against the second.
+
+**`backend/core/dopamine.py` - `DopamineBrain`.**
+* Subjective utility `u = pnl_bps` if ≥0 else `λ·pnl_bps`, λ = 2.25
+  (Tversky–Kahneman loss aversion).
+* Reward prediction error `δ = u − V` (Schultz 1997); `V` is a
+  Rescorla–Wagner expectation updated with a Pearce–Hall associability
+  `α ∈ [0.10, 0.50]` that grows with |δ| and shrinks when the world is
+  predictable.
+* Phasic dopamine `= tanh(δ/scale) × w(confidence)`: a confident loss is
+  weighted up, a confident (expected) win is weighted down. Decays ×0.6 per
+  window (`tick_window`) so a burst never outlives the next decision.
+* Tonic mood = EMA(0.85) of the phasic trace → ELATED / CONTENT / NEUTRAL /
+  DISAPPOINTED / FRUSTRATED.
+* `overconfidence` (win streak × elation) and `tilt` (loss streak ×
+  frustration) → `appetite ∈ [0.5, 1]` which only ever *reduces* size; the
+  frozen signal carries `risk.size_multiplier` + `risk.brain_mood` and the
+  note explains the cut.
+* `brain_gain()` → `brain.dopamine_phasic`; `mushroom_body_pass` uses
+  `drg_eff = clip(drg + 0.5·phasic)` and records `drg_formula / brain_phasic /
+  drg_effective` in the DAN read-out so the explain endpoints show it.
+
+**`backend/core/triune.py` - `TriuneAnalyst`.** Human mind = 0.6 crowd tone +
+0.2 social sentiment + 0.2 news NIV; AI mind = mean signed agent confidence;
+data mind = 0.5 CCSv2 + 0.3 formula consensus + 0.2 physics. Per cycle
+`remember()` at the lock and `score()` on the outcome; `analyse()` returns
+shrunk hit rates (prior 0.5, k = 10), per-emotion regime trust, pairwise and
+triad agreement records, a Wilson lower-bound contrarian inversion (n ≥ 15,
+upper bound < 0.5), a composite with `corroboration ∈ {0, ½, 1}` and a
+confidence multiplier 0.85 / 1.00 / 1.10. `_apply_triune` in the cycle
+manager blends `0.25 × maturity` of the composite into the fused score
+(maturity = n/30), applies the multiplier, and flips the side only when the
+composite exceeds |0.2| against the recipe. `fusion.triune` carries it; the
+prediction card shows the "Three minds" line.
+
+**Wiring.** `_fuse` builds the minds after the ledger evaluation;
+`_schedule_outcome` → `triune.remember` + `dopamine.tick_window()`;
+`_evaluate_outcome` → `dopamine.observe(pnl_bps, outcome, confidence)` +
+`triune.score`. `emotions_payload` adds `brain_mood` (PULSE / snapshots; the
+200 ms emotion stream does not carry it, the client keeps the last). Endpoints
+`/api/brain/dopamine`, `/api/triune`. Tests `backend/tests/test_round_ar.py`.
