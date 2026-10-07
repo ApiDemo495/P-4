@@ -1760,3 +1760,29 @@ robust q80/1.28 when the model's σ is more than twice it. One-minute floors
 and caps: tp 1.5-60 bps, sl 1-40 bps. `risk.measured_moves` is in every
 signal's risk block. Test: `test_round_am.py::test_levels_are_bounded_by_the_measured_minute_moves`;
 suite 302.
+
+## AO - keys that actually do something (and survive)
+
+* **Why "nothing changed"**: the `/settings` persist box was *off* by default, so
+  a saved key lived only in the running process; the self-updater's engine restart
+  and every fresh Codespace started without it, and the page bounced to `/` before
+  the user could see any effect. The connectome message then said "when a token
+  is set" even though one was.
+* `KeyPayload.persist` / `KeysPayload.persist` default **True**; the checkbox is
+  checked. Save now applies immediately: brain `reconnect` for neuPrint/CAVE, a
+  forced news poll for NewsAPI/CryptoPanic, a key test for Gemini/GitHub, then
+  the page stays and shows the result.
+* `GET /api/settings/effects`: per key - configured, status, and a plain-words
+  `effect` ("voting in fusion (n calls, model …)", "headlines flowing into the
+  news wire", "live connectome (hemibrain:v1.2.1) drives the 80x80 matrix", or
+  the exact reason it is not contributing) plus `_persistence` (.env path / exists /
+  fresh-Codespace note). Rendered on `/settings` as "What each key is doing right now".
+* neuPrint: `/api/version` may be gone after the platform migration (as
+  `/api/databaseInfo` was). `HttpNeuprintClient.fetch_version` falls through to
+  `/api/dbmeta/datasets` on 404; only 401/403 or a network error is a failure.
+  `connect_neuprint` falls back to the HTTP client when `neuprint-python` fails
+  for any non-auth reason. Step 1 probes `dbmeta/datasets` first.
+* `_fallback_reason`: the FALLBACK_CSV message names the failed step when a
+  token is present (unreachable / refused / query failed).
+* Fresh-Codespace path documented (README, API_KEYS_AND_MODELS): repository
+  Codespace secrets with the exact env names; env wins over `.env` (setdefault).

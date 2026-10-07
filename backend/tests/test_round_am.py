@@ -132,3 +132,58 @@ def test_levels_are_bounded_by_the_measured_minute_moves():
     assert unbounded["tp_bps"] > 5 * bad["tp_bps"]
     # floors are one-minute floors now
     assert settings.min_tp_bps <= 2.0 and settings.min_sl_bps <= 1.5 and settings.max_tp_bps <= 60
+
+
+# ---------------------------------------------------------------- Round AO
+def test_saved_keys_persist_by_default_and_report_their_effect():
+    """Keys were a show piece: the persist box was off by default, so every
+    engine restart / self-update / fresh Codespace lost them, and the page
+    bounced to the dashboard before anything could be seen.  Now persist is
+    the default, the save applies the key immediately (brain re-verify, news
+    poll, agent test) and /api/settings/effects says what each key is doing."""
+    import re
+    from pathlib import Path
+
+    from backend.api import routes_agents
+
+    root = Path(__file__).resolve().parents[2]
+    html = (root / "backend/web/settings.html").read_text()
+    js = (root / "backend/web/settings.js").read_text()
+    assert re.search(r'id="persist"[^>]*checked', html)
+    assert 'id="effects-table"' in html and "Codespaces" in html
+    assert routes_agents.KeyPayload().persist is True
+    assert routes_agents.KeysPayload().persist is True
+    assert "/api/settings/effects" in js and "function refreshEffects" in js
+    assert '/api/news/poll' in js and '/api/brain/reconnect' in js
+    assert 'location.href = "/"' not in js.split("save-keys")[1].split("};")[0]
+
+
+def test_neuprint_connection_survives_a_missing_version_route():
+    """neuPrint's platform migration removed /api/version the same way it
+    removed /api/databaseInfo; a 404 there must fall through to the dbmeta
+    route instead of reporting the token as unusable."""
+    import httpx
+
+    from backend.brain.query_circuits import HttpNeuprintClient
+
+    def handler(request):
+        if request.url.path == "/api/version":
+            return httpx.Response(404)
+        if request.url.path == "/api/dbmeta/datasets":
+            assert request.headers["authorization"] == "Bearer tok"
+            return httpx.Response(200, json={"hemibrain:v1.2.1": {}, "male-cns:v0.9": {}})
+        return httpx.Response(500)
+
+    client = HttpNeuprintClient("https://neuprint.test", "hemibrain:v1.2.1", "tok")
+    client._client = httpx.Client(base_url="https://neuprint.test", transport=httpx.MockTransport(handler),
+                                  headers={"Authorization": "Bearer tok"})
+    assert "hemibrain" in client.fetch_version()
+
+    def rejected(request):
+        return httpx.Response(401)
+
+    client._client = httpx.Client(base_url="https://neuprint.test", transport=httpx.MockTransport(rejected))
+    import pytest
+
+    with pytest.raises(PermissionError):
+        client.fetch_version()

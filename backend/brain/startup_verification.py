@@ -138,7 +138,9 @@ async def run_verification(
         # ---- Step 1: connectivity --------------------------------------
         t0 = time.perf_counter()
         reachable = await _step1_connectivity(settings)
-        record("1-connectivity", reachable, "neuPrint version endpoint", time.perf_counter() - t0)
+        record("1-connectivity", reachable,
+               "neuPrint reachable" if reachable else f"{settings.neuprint_server} unreachable from this machine",
+               time.perf_counter() - t0)
         if reachable:
             # ---- Step 2: authentication --------------------------------
             t0 = time.perf_counter()
@@ -207,8 +209,7 @@ async def run_verification(
         return VerificationResult(
             status=BrainStatus.FALLBACK_CSV,
             matrix=matrix,
-            message="Offline connectome: named hemibrain neurons and synapses coded in "
-            "(backend/brain/connectome.py); live neuPrint counts replace them when a token is set",
+            message=_fallback_reason(settings, steps),
             dataset="fallback",
             steps=steps,
             elapsed_seconds=time.perf_counter() - started,
@@ -229,6 +230,22 @@ async def run_verification(
         )
 
 
+def _fallback_reason(settings, steps: list[dict]) -> str:
+    """Round AO: say WHY the connectome is offline.  "…when a token is set"
+    while a token *is* set was the message that made the keys look fake."""
+    failed = {s["step"]: s["detail"] for s in steps if s.get("state") == "fail"}
+    if settings.neuprint_token:
+        if "1-connectivity" in failed:
+            return f"Offline connectome: token is set but {failed['1-connectivity']} - check network / NEUPRINT_SERVER"
+        if "2-auth" in failed:
+            return f"Offline connectome: token is set but neuPrint refused it ({failed['2-auth']}) - rotate the token on neuprint.janelia.org"
+        if "3-query" in failed:
+            return f"Offline connectome: token accepted but the hemibrain query failed ({failed['3-query']})"
+        return "Offline connectome: token is set but live verification did not complete - press Rebuild connectome"
+    return ("Offline connectome: named hemibrain neurons and synapses coded in "
+            "(backend/brain/connectome.py); live neuPrint counts replace them when a token is set")
+
+
 # ---------------------------------------------------------------------------
 # Steps
 # ---------------------------------------------------------------------------
@@ -237,11 +254,14 @@ async def run_verification(
 async def _step1_connectivity(settings) -> bool:
     import httpx
 
-    url = f"{settings.neuprint_server.rstrip('/')}/api/version"
+    base = settings.neuprint_server.rstrip('/')
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(url)
-            return response.status_code < 500
+            for path in ("/api/dbmeta/datasets", "/api/version"):
+                response = await client.get(base + path)
+                if response.status_code < 400 or response.status_code in (401, 403):
+                    return True
+            return False
     except Exception as exc:  # noqa: BLE001
         log.info("neuPrint unreachable: %s", exc)
         return False

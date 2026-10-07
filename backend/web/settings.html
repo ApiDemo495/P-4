@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Settings · Drosophila Trader v2.0</title>
-<link rel="stylesheet" href="/static/styles.css?v=2.14.0" />
+<link rel="stylesheet" href="/static/styles.css?v=2.25.0" />
 </head>
 <body>
 <header class="topbar">
@@ -161,12 +161,18 @@
       <button class="btn" id="save-keys">Save &amp; Return</button>
     </div>
     <div class="status-line" id="keys-note">
-      Keys are held in memory for this session. Tick “persist” to also write them to your local
-      <code>.env</code> (git-ignored) as <code>GEMINI_API_KEY</code>, <code>GEMINI_API_KEY_2</code>,
-      <code>GEMINI_API_KEY_3</code> and so on.
+      Saving applies the key to the running engine immediately <b>and</b> writes it to the local
+      <code>.env</code> (git-ignored) as <code>GEMINI_API_KEY</code>, <code>NEWSAPI_API_KEY</code>,
+      <code>NEUPRINT_APPLICATION_CREDENTIALS</code> … so it survives restarts and self-updates.
       <label style="display:inline;margin-left:8px">
-        <input type="checkbox" id="persist" style="width:auto" /> persist to .env
+        <input type="checkbox" id="persist" style="width:auto" checked /> persist to .env
       </label>
+      <br /><b>Fresh Codespace?</b> <code>.env</code> is not carried over. Put the same names in
+      GitHub → Settings → Codespaces → <b>Secrets</b> for this repository and every new Codespace starts with them.
+    </div>
+    <div class="field">
+      <label>What each key is doing right now <button class="btn tiny ghost" id="effects-refresh">refresh</button></label>
+      <table class="physics-table" id="effects-table"><tbody></tbody></table>
     </div>
   </section>
 
@@ -260,6 +266,6 @@
   </div>
 </main>
 
-<script src="/static/settings.js?v=2.14.0"></script>
+<script src="/static/settings.js?v=2.25.0"></script>
 </body>
 </html>

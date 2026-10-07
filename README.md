@@ -139,6 +139,17 @@ the snapshot GitHub keeps for you.
 Also pick the smallest machine type (2-core) on the creation page; a bigger VM
 takes longer to allocate and the engine does not need it.
 
+### API keys that survive a fresh Codespace
+
+`/settings` saves every key to the running engine **and** to `.env` (default on).
+A brand-new Codespace has no `.env`, so put the same names in
+**GitHub → Settings → Codespaces → Secrets** (repository access: this repo):
+`GEMINI_API_KEY`, `NEWSAPI_API_KEY`, `CRYPTOPANIC_API_KEY`, `GITHUB_MODELS_TOKEN`,
+`NEUPRINT_APPLICATION_CREDENTIALS`, `CAVE_TOKEN`. The `/settings` page's
+"What each key is doing right now" table (and `/api/settings/effects`) proves
+each key is contributing - voting in fusion, headlines on the wire, live
+connectome - or says exactly why it is not. Details: `docs/API_KEYS_AND_MODELS.md`.
+
 ### Switches (all optional - set them as Codespace secrets or in `.env`)
 
 | Variable | Default | Meaning |

@@ -65,6 +65,27 @@ curl -s localhost:8000/api/brain/status | python3 -m json.tool
 curl -s localhost:8000/api/news/status | python3 -m json.tool
 ```
 
+### Keys and a *fresh* Codespace (Round AO - read this first)
+
+Saving a key on `/settings` applies it to the running engine at once (brain
+re-verified, news polled, agent tested) **and** writes it to `.env` by default,
+so it survives restarts and self-updates of *that* Codespace. `.env` is
+git-ignored, so a **new** Codespace starts without it. If you create a fresh
+Codespace every time, store the keys once as **repository Codespace secrets**
+and every new Codespace boots with them already active:
+
+1. GitHub → your avatar → **Settings** → **Codespaces** → **Secrets** → *New secret*.
+2. Name exactly: `GEMINI_API_KEY`, `NEWSAPI_API_KEY`, `CRYPTOPANIC_API_KEY`,
+   `GITHUB_MODELS_TOKEN`, `NEUPRINT_APPLICATION_CREDENTIALS`, `CAVE_TOKEN`,
+   `GLASSNODE_API_KEY`, `TWELVEDATA_API_KEY`, `LUNARCRUSH_API_KEY` (only the ones you have).
+3. *Repository access*: tick `ApiDemo495/P-4`. Save.
+4. Create the next Codespace. `/settings` → "What each key is doing right now"
+   shows every key green with its live effect; `/api/settings/effects` is the
+   same table as JSON.
+
+A secret added to an *existing* Codespace needs one restart of the engine
+(Codespace → *Rebuild*, or `bash run.sh --stop` then `bash run.sh --bg`) to be read.
+
 ### Security rules
 
 * Never paste a key into a GitHub issue, a commit, a screenshot or a chat.

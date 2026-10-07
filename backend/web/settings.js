@@ -89,6 +89,31 @@ document.querySelectorAll("input[data-provider]").forEach((input) => {
   input.addEventListener("input", () => { input.dataset.touched = "1"; });
 });
 
+/* Round AO: proof that a key is contributing - not just stored. */
+async function refreshEffects() {
+  const res = await getJSON("/api/settings/effects");
+  const body = document.querySelector("#effects-table tbody");
+  if (!body) return;
+  if (res.error) { body.innerHTML = `<tr><td class="err">${escapeHtml(res.error)}</td></tr>`; return; }
+  body.innerHTML = "";
+  Object.entries(res).forEach(([name, row]) => {
+    if (name.startsWith("_")) return;
+    const ok = row.configured && /voting|flowing|live|feeding/.test(String(row.effect || ""));
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${ok ? "🟢" : row.configured ? "🟠" : "⚪"}</td><td><b>${escapeHtml(name)}</b></td>` +
+      `<td>${escapeHtml(String(row.effect || ""))}</td>` +
+      `<td class="muted">${escapeHtml([row.status, row.model, row.detail].filter(Boolean).join(" · "))}</td>`;
+    body.appendChild(tr);
+  });
+  const p = res._persistence || {};
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td>${p.env_exists ? "💾" : "⚠️"}</td><td><b>persistence</b></td><td colspan="2" class="muted">${escapeHtml((p.env_exists ? ".env present · " : ".env not written yet · ") + (p.note || ""))}</td>`;
+  body.appendChild(tr);
+}
+const effectsBtn = $("effects-refresh");
+if (effectsBtn) effectsBtn.onclick = refreshEffects;
+refreshEffects();
+
 $("save-keys").onclick = async () => {
   const persist = $("persist").checked;
   const saved = [];
@@ -117,15 +142,24 @@ $("save-keys").onclick = async () => {
     });
     if (!res.error) saved.push(slot);
   }
-  line("keys-note", saved.length ? `saved: ${saved.join(", ")}` : "nothing to save", "ok");
-  // A brain token only matters once the 5-step verification runs again.
+  line("keys-note", saved.length ? `saved: ${saved.join(", ")} · applying…` : "nothing to save", "ok");
+  // Round AO: a saved key must DO something now, not at some later poll.
   if (saved.includes("neuprint") || saved.includes("cave")) {
-    line("keys-note", `saved: ${saved.join(", ")} · re-verifying the brain…`, "ok");
+    line("keys-note", `saved: ${saved.join(", ")} · re-verifying the brain with the new token…`, "ok");
     await getJSON("/api/brain/reconnect", { method: "POST" });
     await refreshBrain();
   }
+  if (saved.some((s) => s.startsWith("newsapi") || s.startsWith("cryptopanic"))) {
+    await getJSON("/api/news/poll", { method: "POST" });
+  }
+  for (const provider of ["gemini", "github"]) {
+    if (saved.some((s) => s.startsWith(provider))) await getJSON(`/api/agents/${provider}/test`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: "" }) });
+  }
   await refreshRings();
-  setTimeout(() => { location.href = "/"; }, 900);
+  await refreshEffects();
+  line("keys-note", saved.length
+    ? `saved: ${saved.join(", ")} · ${persist ? "written to .env" : "memory only (persist was off)"} · see "What each key is doing right now" below; the dashboard is at /`
+    : "nothing to save", "ok");
 };
 
 /* --------------------------------------------------------- local models */

@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from backend.agents import keyring
 from backend.api.state import get_manager
+from backend.core import config as cfg
 
 log = logging.getLogger("drosophila.api.agents")
 
@@ -28,7 +29,7 @@ MAX_UPLOAD_BYTES = 16 * 1024 * 1024 * 1024  # 16 GB - sanity ceiling, not a prom
 
 class KeyPayload(BaseModel):
     key: str = ""
-    persist: bool = False
+    persist: bool = True
     #: 1 = primary (always preferred), 2-3 = temporary stand-ins used only
     #: while the primary is rejected / rate limited / erroring.
     slot: int = 1
@@ -37,7 +38,7 @@ class KeyPayload(BaseModel):
 class KeysPayload(BaseModel):
     """All three boxes at once; an empty string clears a slot."""
     keys: list[str] = []
-    persist: bool = False
+    persist: bool = True
 
 
 class TestPayload(BaseModel):
@@ -116,6 +117,69 @@ async def test_agent(name: str, payload: TestPayload | None = None) -> dict:
             )
         return result
     raise HTTPException(status_code=404, detail=f"unknown agent {name!r}")
+
+
+@router.get("/api/settings/effects")
+async def key_effects() -> dict:
+    """Round AO: what every key is DOING in this process right now - not just
+    whether it is stored.  A key that is set but not contributing shows up
+    here with the reason, so a saved key can never be a show piece."""
+    manager = get_manager()
+    settings = manager.settings
+    out: dict[str, dict] = {}
+
+    def agent_row(name, agent, ring):
+        health = agent.health().to_dict() if agent is not None else {}
+        out[name] = {
+            "configured": bool(ring.configured) if ring is not None else bool(agent and agent.configured),
+            "status": health.get("status"), "detail": health.get("detail"), "model": health.get("model"),
+            "calls": health.get("calls"), "last_error": health.get("last_error"),
+            "weight": float(getattr(settings, f"weight_{name}", 0.0) or 0.0),
+            "effect": ((f"voting in fusion ({health.get('calls')} calls, model {health.get('model') or '-'})" if health.get("calls")
+                        else "key active · first vote on the next 60 s cycle") if health.get("status") == "ACTIVE" else
+                       "no key" if not (ring and ring.configured) else f"not voting: {health.get('status')} - {health.get('last_error') or health.get('detail') or ''}"),
+        }
+    agent_row("gemini", getattr(manager.agents, "gemini", None), settings.rings.get("gemini"))
+    agent_row("github", getattr(manager.agents, "github", None), settings.rings.get("github"))
+
+    news_status = manager.news.status.to_dict()
+    providers = dict(manager.news.cache.providers)
+    for name in ("newsapi", "cryptopanic"):
+        ring = settings.rings.get(name)
+        configured = bool(ring and ring.configured)
+        state = news_status.get(name)
+        out[name] = {"configured": configured, "status": state, "detail": providers.get(name, ""),
+                     "items_cached": len(manager.news.cache.all()),
+                     "effect": ("no key" if not configured else
+                                "headlines flowing into the news wire" if state == "ok" else
+                                "polling soon (first poll after save)" if state in (None, "not_configured") else
+                                f"not contributing: {providers.get(name) or state}")}
+
+    brain = manager.brain
+    steps = {s.get("step"): s for s in (brain.steps or [])}
+    auth = steps.get("2-auth") or {}
+    out["neuprint"] = {"configured": bool(settings.neuprint_token), "status": brain.status.value,
+                       "dataset": brain.dataset, "detail": brain.message, "auth_step": auth.get("detail"),
+                       "effect": ("no token" if not settings.neuprint_token else
+                                  f"live connectome ({brain.dataset}) drives the 80x80 matrix" if brain.is_live else
+                                  f"not live: {auth.get('detail') or brain.message} - press Rebuild connectome / check the token")}
+    out["cave"] = {"configured": bool(settings.cave_token), "status": brain.status.value,
+                   "effect": "no token" if not settings.cave_token else
+                   ("live FlyWire" if brain.status.value == "LIVE_FLYWIRE" else (steps.get("4-flywire") or {}).get("detail", "not used"))}
+    macro = getattr(manager, "macro", None)
+    for name, st in (macro.status() if macro else {}).items():
+        out[name] = {"configured": st.get("configured"), "rows": st.get("rows"), "last_error": st.get("error"),
+                     "effect": ("no key" if not st.get("configured") else
+                                f"{st.get('rows')} rows feeding column {st.get('column')}" if st.get("rows") else
+                                f"not contributing: {st.get('error') or 'first poll pending'}")}
+    env_path = cfg.REPO_ROOT / ".env"
+    out["_persistence"] = {
+        "env_file": str(env_path), "env_exists": env_path.exists(),
+        "note": ("Keys saved with 'persist' are in .env and survive an engine restart / self-update. "
+                 "A FRESH Codespace does not carry .env: add the same names as Codespace secrets "
+                 "(GitHub -> Settings -> Codespaces -> Secrets) so every new Codespace starts with them."),
+    }
+    return out
 
 
 @router.get("/api/settings/keys")

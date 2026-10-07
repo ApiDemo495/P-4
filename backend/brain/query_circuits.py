@@ -124,11 +124,25 @@ class HttpNeuprintClient:
         )
 
     def fetch_version(self) -> str:
-        response = self._client.get("/api/version")
-        if response.status_code in (401, 403):
-            raise PermissionError("neuPrint rejected the token")
-        response.raise_for_status()
-        return str((response.json() or {}).get("Version", ""))
+        """Prove the server answers this token.  ``/api/version`` disappeared
+        in the neuPrint platform migration (Round AK found ``/api/databaseInfo``
+        gone the same way), so a 404 there is not a failure: the public
+        ``/api/dbmeta/datasets`` route is tried next, and only 401/403 or a
+        network error means the token / server is not usable."""
+        last = ""
+        for path in ("/api/version", "/api/dbmeta/datasets"):
+            response = self._client.get(path)
+            if response.status_code in (401, 403):
+                raise PermissionError("neuPrint rejected the token")
+            if response.status_code == 404:
+                last = f"{path} not found"
+                continue
+            response.raise_for_status()
+            data = response.json() or {}
+            if path == "/api/version":
+                return str(data.get("Version", ""))
+            return "datasets: " + ", ".join(sorted(data)) if isinstance(data, dict) else "reachable"
+        raise RuntimeError(f"neuPrint answered 404 on every probe ({last})")
 
     def fetch_custom(self, cypher: str, params: dict | None = None) -> list[dict]:
         payload = {"cypher": cypher, "dataset": self.dataset}
@@ -156,9 +170,14 @@ def connect_neuprint(token: str, server: str, dataset: str):
         client.fetch_version()
         return client
     except ImportError:
-        client = HttpNeuprintClient(server, dataset, token)
-        client.fetch_version()
-        return client
+        pass
+    except PermissionError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the library probes a route that may be gone
+        log.info("neuprint-python could not connect (%s); using the HTTP client", exc)
+    client = HttpNeuprintClient(server, dataset, token)
+    client.fetch_version()
+    return client
 
 
 def fetch_circuit(client, dataset: str = "") -> CircuitQuery:
