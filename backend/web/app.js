@@ -2054,9 +2054,17 @@ function renderBrainPipeline() {
   if (!host || !state.wiring) return;
   const stages = state.wiring.stages || [];
   const e = state.explain && state.explain.available ? state.explain : null;
-  const live = [
+  const real = !!(e && e.kenyon_cells && e.kenyon_cells.connectome);
+  const kcOf = e?.kenyon_cells?.of ?? 50;
+  const live = real ? [
+    `${Object.keys(e.all_inputs || {}).length}/20 formulas → 40 glomerular ALPN groups (ON/OFF channels, 685 real projection neurons)`,
+    `${(e.kenyon_cells?.active ?? 0).toLocaleString()} of ${kcOf.toLocaleString()} real Kenyon cells fired (APL top-5 % sparsity)`,
+    `DRG ${fmtSigned(e.dopamine?.drg ?? 0)} → PAM ×${(e.dopamine?.pam_gain ?? 1).toFixed(2)} / PPL1 ×${(e.dopamine?.ppl1_gain ?? 1).toFixed(2)} on the real DANs · HSI ${fmtSigned(e.dopamine?.hsi ?? 0)} → octopamine gain`,
+    `96 real MBONs: approach (ACh+GABA) ${fmtSigned(e.mbons?.approach ?? 0, 3)} · avoid (Glu) ${fmtSigned(e.mbons?.avoid ?? 0, 3)} · decisiveness ${fmtPct(e.mbons?.confidence ?? 0)}`,
+    `CCSv2 ${fmtSigned(e.ccs_value)} @ ${fmtPct(e.ccs_confidence)}` + (e.whole_brain ? ` · whole brain ${fmtSigned(e.whole_brain.balance)} → blended ${fmtSigned(e.whole_brain.ccs_blended)}` : "") + ` → 40% of fusion`,
+  ] : [
     e ? `${Object.keys(e.all_inputs || {}).length}/20 formulas written onto PNs` : "20 formulas → PNs 0-19",
-    e ? `${e.kenyon_cells?.active ?? 0}/${e.kenyon_cells?.of ?? 50} KC clusters active (top 10%)` : "50 KC clusters, ReLU + top-10 % sparsity",
+    e ? `${e.kenyon_cells?.active ?? 0}/${kcOf} KC clusters active (top 10%)` : "50 KC clusters, ReLU + top-10 % sparsity",
     e ? `DRG ${fmtSigned(e.dopamine?.drg ?? 0)} → PAM · HSI ${fmtSigned(e.dopamine?.hsi ?? 0)} → OA` : "DRG → PAM/PPL1 · HSI → OA",
     e ? `approach ${fmtSigned(e.mbons?.approach ?? 0)} · avoid ${fmtSigned(e.mbons?.avoid ?? 0)} · conf ${fmtPct(e.mbons?.confidence ?? 0)}` : "4 MBONs, 3 conv layers, gain 3.2802",
     e ? `CCSv2 ${fmtSigned(e.ccs_value)} @ ${fmtPct(e.ccs_confidence)} → 40% of fusion` : "CCSv2 + KCAE → fusion (0.40 weight)",
@@ -2101,7 +2109,7 @@ function renderBrainExplain(data) {
   $("brain-verdict").textContent = data.verdict;
   $("b-dominant").textContent = (data.dominant_inputs || [])
     .slice(0, 4).map((d) => `${d.formula} ${fmtSigned(d.value, 3)}`).join(" · ") || "—";
-  $("b-kc").textContent = `${data.kenyon_cells?.active ?? "—"} / ${data.kenyon_cells?.of ?? 50} (KCAE ${fmtSigned(data.kenyon_cells?.kcae ?? 0, 3)})`;
+  $("b-kc").textContent = `${(data.kenyon_cells?.active ?? 0).toLocaleString()} / ${(data.kenyon_cells?.of ?? 50).toLocaleString()} (KCAE ${fmtSigned(data.kenyon_cells?.kcae ?? 0, 3)})`;
   $("b-mbon").textContent = `${fmtSigned(data.mbons?.approach ?? 0)} / ${fmtSigned(data.mbons?.avoid ?? 0)}`;
   $("b-lh").textContent = `appr ${fmtSigned(data.lateral_horn?.approach ?? 0)} · avoid ${fmtSigned(data.lateral_horn?.avoid ?? 0)}`;
   const dan = data.dopamine || {};
@@ -2112,9 +2120,39 @@ function renderBrainExplain(data) {
     (data.weights?.share_of_score !== null && data.weights?.share_of_score !== undefined
       ? ` (${fmtSigned(data.weights.share_of_score)} of the score)`
       : "");
-  $("b-source").textContent = `${data.source?.status || "—"} · ${data.source?.message || ""}` +
-    ` · checksum ${data.source?.checksum || "—"} · gain ${data.source?.gain ?? "—"}`;
+  const c = data.connectome || {};
+  $("b-source").textContent = c.loaded
+    ? `FlyWire v783 · ${Number(c.neurons).toLocaleString()} neurons · ${Number(c.connections).toLocaleString()} connections · ${Number(c.synapses).toLocaleString()} synapses · ` +
+      `mushroom body ${Number(c.mb_neurons).toLocaleString()} neurons / pass (${fmtUs(c.mb_last_us || 0)}) · whole brain ${c.whole_passes} passes (${fmtUs(c.whole_last_us || 0)})`
+    : `${data.source?.status || "—"} · ${data.source?.message || ""} · connectome ${c.phase || "idle"}${c.percent ? ` ${c.percent}%` : ""} (80×80 fallback until loaded)`;
+  const head = document.querySelector('[data-panel="brain"] .card-head .muted');
+  if (head) head.textContent = c.loaded
+    ? `real connectome · ${Number(c.neurons).toLocaleString()} neurons · 40% of the fusion`
+    : `80-neuron fallback · connectome ${c.phase || "idle"}${c.percent ? ` ${c.percent}%` : ""} · 40% of the fusion`;
   renderBrainPipeline();
+  renderWholeBrain(data.whole_brain, c);
+}
+
+/* Round AQ: the whole brain - what the 138 639 neurons did with the mushroom
+   body's verdict in the last 2-second pass.  Rendered from the explain
+   payload (no extra timer); the full read-out is at /api/brain/connectome. */
+function renderWholeBrain(whole, c) {
+  const host = $("brain-whole");
+  if (!host) return;
+  if (!c || !c.loaded) {
+    host.innerHTML = `<span class="muted">whole brain: ${c && c.phase === "downloading" ? `downloading the connectome (${c.percent || 0}%)` :
+      c && c.phase === "building" ? "building the connectome arrays" : c && c.phase === "failed" ? "download failed - retrying" : "not loaded yet"}</span>`;
+    return;
+  }
+  if (!whole) {
+    host.innerHTML = `<span class="muted">whole brain: ${Number(c.neurons).toLocaleString()} neurons loaded · ${c.whole_passes || 0} passes · first read-out joins the next lock</span>`;
+    return;
+  }
+  const bal = Number(whole.balance || 0);
+  host.innerHTML =
+    `<span class="${bal > 0.02 ? "pos" : bal < -0.02 ? "neg" : ""}"><b>whole brain ${fmtSigned(bal, 3)}</b> (${bal >= 0 ? "approach" : "avoid"})</span>` +
+    ` <span class="muted">· decisiveness ${fmtPct(whole.confidence || 0)} · descending-neuron drive ${Number(whole.descending || 0).toExponential(2)} · ` +
+    `${(whole.elapsed_us / 1000).toFixed(0)} ms over ${Number(c.neurons).toLocaleString()} neurons · ${whole.age_s}s old · ${escapeHtml(whole.blend || "")} → ${fmtSigned(whole.ccs_blended || 0, 3)}</span>`;
 }
 
 /* The physics layer (Round T, rebuilt in Round AJ): the report locked with the

@@ -240,10 +240,13 @@ async function refreshBrain() {
   const res = await getJSON("/api/brain/status");
   if (res.error) return line("brain-status", res.error, "err");
   const h = res.health || {};
+  const c = res.connectome || {};
   line("brain-status",
     `${res.is_live ? "🟢" : "🟡"} ${res.status} · ${res.message}` +
-    (res.matrix ? ` · matrix ${res.matrix.shape.join("×")} · checksum ${res.matrix.checksum}` : "") +
-    (res.gain ? ` · gain ${res.gain}` : ""),
+    (c.loaded
+      ? ` · FlyWire v783 ${Number(c.neurons).toLocaleString()} neurons / ${Number(c.connections).toLocaleString()} connections · mushroom body ${c.mb_passes} passes · whole brain ${c.whole_passes} passes`
+      : ` · connectome ${c.phase || "idle"}${c.percent ? ` ${c.percent}%` : ""} (downloads ~130 MB from GitHub on first start; 80×80 fallback meanwhile)`) +
+    (res.matrix && !c.loaded ? ` · fallback matrix ${res.matrix.shape.join("×")} · checksum ${res.matrix.checksum}` : ""),
     res.is_live ? "ok" : "warn");
 
   const steps = $("brain-steps");

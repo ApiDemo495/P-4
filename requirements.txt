@@ -24,6 +24,8 @@ msgpack>=1.0
 pydantic>=2.7
 python-dotenv>=1.0
 markdown>=3.5
+# Round AQ: reads the FlyWire v783 connectome (Connectivity_783.parquet, 15 M rows)
+pyarrow>=15.0
 
 # -----------------------------------------------------------------------------
 # Optional - uncomment / install as needed

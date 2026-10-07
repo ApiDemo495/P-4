@@ -151,12 +151,25 @@ def explain(manager) -> dict:
         if (lh.get("approach", 0) or 0) > (lh.get("avoid", 0) or 0)
         else "SELL (avoid)"
     )
-    verdict = (
-        f"LH approach {lh.get('approach', 0):+.3f} vs avoid {lh.get('avoid', 0):+.3f} "
-        f"→ {lean}; the sparse KC code was {kcs.get('active', 0)}/{kcs.get('of', 50)} "
-        f"clusters (KCAE {trace.get('kcae', 0):.2f}) → CCSv2 "
-        f"{trace.get('ccs', 0):+.3f} at {trace.get('confidence', 0) * 100:.0f}% confidence."
-    )
+    diag = trace.get("diagnostics") or {}
+    whole = getattr(manager, "last_whole_brain", None)
+    if diag.get("connectome"):
+        verdict = (
+            f"Real mushroom body ({int(diag.get('neurons', 0)):,} neurons, {int(diag.get('connections', 0)):,} connections): "
+            f"approach MBONs {lh.get('approach', 0):+.3f} vs avoid MBONs {lh.get('avoid', 0):+.3f} → {lean}; "
+            f"{kcs.get('active', 0):,} of {kcs.get('of', 0):,} Kenyon cells fired (KCAE {trace.get('kcae', 0):.2f}) "
+            f"in {int(diag.get('elapsed_us', 0)) / 1000:.1f} ms → CCSv2 {trace.get('ccs', 0):+.3f}"
+            + (f"; whole brain ({whole.get('balance', 0):+.3f}, {whole.get('elapsed_us', 0) / 1000:.0f} ms) blended → {whole.get('ccs_blended', 0):+.3f}"
+               if whole else "")
+            + f" at {trace.get('confidence', 0) * 100:.0f}% confidence."
+        )
+    else:
+        verdict = (
+            f"LH approach {lh.get('approach', 0):+.3f} vs avoid {lh.get('avoid', 0):+.3f} "
+            f"→ {lean}; the sparse KC code was {kcs.get('active', 0)}/{kcs.get('of', 50)} "
+            f"clusters (KCAE {trace.get('kcae', 0):.2f}) → CCSv2 "
+            f"{trace.get('ccs', 0):+.3f} at {trace.get('confidence', 0) * 100:.0f}% confidence (80x80 fallback)."
+        )
 
     status = manager.brain.status_dict()
     return {
@@ -189,6 +202,8 @@ def explain(manager) -> dict:
             ),
         },
         "verdict": verdict,
+        "whole_brain": whole,
+        "connectome": status.get("connectome"),
         "source": {
             "status": status.get("status"),
             "message": status.get("message"),

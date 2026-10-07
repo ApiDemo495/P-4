@@ -119,10 +119,12 @@ class ActivationTrace:
             "dominant_pns": self.dominant_pns(),
             "kenyon_cells": {
                 "active": self.active_kcs,
-                "of": N_KC,
-                "sparsity": SPARSITY,
-                "top": self.top_kcs(),
+                # Round AQ: the real circuit carries 5 177 Kenyon cells
+                "of": int(self.kc_activations.size) if self.kc_activations is not None and self.kc_activations.size > N_KC else N_KC,
+                "sparsity": SPARSITY if "connectome" not in self.diagnostics else 0.05,
+                "top": self.top_kcs() if "connectome" not in self.diagnostics else [],
                 "kcae": round(self.kcae, 4),
+                "connectome": self.diagnostics.get("connectome"),
             },
             "mbons": {k: round(float(v), 4) for k, v in self.mbon.items()},
             "lateral_horn": {
@@ -130,7 +132,7 @@ class ActivationTrace:
                 "avoid": round(self.lh_avoid, 4),
                 "neutral": round(self.lh_neutral, 4),
             },
-            "dan": {k: round(float(v), 4) for k, v in self.dan.items()},
+            "dan": {k: round(float(v), 4) for k, v in self.dan.items() if isinstance(v, (int, float))},
         }
 
 

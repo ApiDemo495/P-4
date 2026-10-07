@@ -141,6 +141,7 @@ class CycleManager:
         self.genesis.macro_provider = self.macro.series
         self.genesis.attach(self.market)
         self.last_genesis: dict | None = None
+        self.last_whole_brain: dict | None = None   # Round AQ: whole-brain verdict blended at the last fuse
         self.last_news_impact: dict = {}
         self.lock = SignalLockController()
 
@@ -1833,10 +1834,28 @@ class CycleManager:
             except Exception as exc:  # noqa: BLE001
                 log.warning("genesis layer failed this pass: %s", exc)
                 warnings.append(f"genesis layer skipped: {exc}")
+        # Round AQ: the whole brain's verdict (138 639 neurons, computed on a
+        # worker thread within the last 10 s) joins the mushroom body's.  The
+        # mushroom body is the fly's valence centre, so it keeps the larger
+        # share; the whole brain adds what the rest of the circuit - lateral
+        # horn, central complex, descending neurons - does with that verdict.
+        ccs_value = float(formula_result.values.get("CCSv2", 0.0))
+        ccs_confidence = float(formula_result.ccs_confidence)
+        whole = self.brain.whole_brain_fresh(10.0) if self.brain.connectome_ready else None
+        self.last_whole_brain = None
+        if whole is not None:
+            ccs_value = 0.6 * ccs_value + 0.4 * float(whole.balance)
+            ccs_confidence = 0.6 * ccs_confidence + 0.4 * float(whole.confidence) * float(formula_result.values.get("KCAE", 0.0) or 0.0)
+            self.last_whole_brain = {
+                "balance": round(float(whole.balance), 4), "confidence": round(float(whole.confidence), 4),
+                "descending": round(float(whole.descending), 6), "elapsed_us": whole.elapsed_us,
+                "age_s": round(time.time() - whole.computed_at, 1), "blend": "0.6 x mushroom body + 0.4 x whole brain",
+                "ccs_blended": round(ccs_value, 4),
+            }
         common = dict(
             agents=agent_results,
-            ccs_value=float(formula_result.values.get("CCSv2", 0.0)),
-            ccs_confidence=formula_result.ccs_confidence,
+            ccs_value=ccs_value,
+            ccs_confidence=ccs_confidence,
             hsi=float(formula_result.values.get("HSI", 0.0)),
             settings=self.settings,
             warnings=warnings,
@@ -1869,7 +1888,7 @@ class CycleManager:
         votes = EvidenceLedger.votes_from(
             formula_values=formula_result.values,
             directional=self._directional_map(),
-            ccs_value=float(formula_result.values.get("CCSv2", 0.0)),
+            ccs_value=ccs_value,
             agents=agent_results,
             spec_score=spec.score,
             niv=niv,
@@ -1897,6 +1916,10 @@ class CycleManager:
     TAPE_VETO_MAX_CONF = 0.62
 
     def _tape_veto(self, fusion, snapshot):
+        fusion.whole_brain = self.last_whole_brain
+        return self._tape_veto_inner(fusion, snapshot)
+
+    def _tape_veto_inner(self, fusion, snapshot):
         """Round AP: "the app gives the same BUY while the market is falling".
 
         The recipe is frozen a few seconds before the boundary; when the tape

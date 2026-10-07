@@ -75,7 +75,7 @@ VENV="$REPO_ROOT/.venv"
 RUN_DIR="$REPO_ROOT/.run"
 PIDFILE="$RUN_DIR/supervisor.pid"
 SERVER_LOG="$REPO_ROOT/server.log"
-REQUIRED_MODULES="fastapi uvicorn numpy scipy httpx feedparser websockets pydantic dotenv redis ntplib msgpack multipart pytest"
+REQUIRED_MODULES="fastapi uvicorn numpy scipy httpx feedparser websockets pydantic dotenv redis ntplib msgpack multipart pytest pyarrow"
 PY=""
 
 py_ok() { "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' 2>/dev/null; }

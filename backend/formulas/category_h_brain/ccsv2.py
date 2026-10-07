@@ -83,15 +83,53 @@ def prepare(snapshot, asset: str, state: State, params: dict, ctx: dict) -> gc.A
     """Run the graph convolution and hand the KC activations to Formula 21."""
     brain = ctx.get("_brain")
     conv = getattr(brain, "conv", None)
-    if conv is None:
-        state.ready = False
-        return None
-
     drg = float(ctx.get("_drg", 0.0))
     hsi = float(ctx.get("HSI", 0.0))
     state.drg, state.hsi = drg, hsi
-
     vector = _vector_from_ctx(ctx)
+
+    # --- Round AQ: the real mushroom body ---------------------------------
+    # When the FlyWire v783 connectome is loaded, the pass runs through the
+    # 8 353-neuron mushroom-body / lateral-horn circuit (every synapse real;
+    # push-pull and dopamine gating inside ``whole_brain.ConnectomeGraph``).
+    # The 80x80 convolution below is only the fallback until it is.
+    mb_pass = getattr(brain, "mushroom_body_pass", None)
+    if callable(mb_pass):
+        readout = mb_pass(vector, drg, hsi)
+        if readout is not None:
+            trace = brain.mb.to_activation_trace(readout)
+            trace.diagnostics["balance"] = float(readout.balance)
+            # KCAE on the real Kenyon-cell *code*: the rectified, APL-sparsened
+            # activity over all 5 177 cells.  With ON/OFF glomerular channels a
+            # bearish reading excites its own KCs, so - unlike the 80-node
+            # stand-in - the rectified code is never empty for a SELL and the
+            # drive work-around is not needed.  1 - H/log N is the sparseness
+            # of the code: ~0.3 for a ~5 % ensemble, 0 on a silent tape.
+            ensemble_drive = np.asarray(trace.kc_activations, dtype=np.float64)
+            kcae_value = kcae_formula.from_activations(ensemble_drive) if ensemble_drive.size else 0.0
+            trace.kcae = kcae_value
+            confidence = kcae_value * float(readout.confidence)
+            trace.confidence = confidence
+            trace.diagnostics.update({
+                "confidence_spec": confidence, "decisiveness": float(readout.confidence),
+                "neutral_share": abs(readout.neutral) / (abs(readout.approach) + abs(readout.avoid) + abs(readout.neutral) + EPS),
+                "resting_balance": 0.0, "balance_used": float(readout.balance),
+            })
+            trace.resting_balance = 0.0
+            state.trace = trace
+            state.kcae = kcae_value
+            state.confidence = confidence
+            state.ready = True
+            ctx["_kc_activations"] = trace.kc_activations
+            ctx["_kc_drive"] = ensemble_drive          # Formula 21 scores the ensemble that fired
+            ctx["KCAE"] = kcae_value
+            ctx["_ccsv2_confidence"] = confidence
+            ctx["_brain_trace"] = trace.to_dict()
+            return trace
+
+    if conv is None:
+        state.ready = False
+        return None
     trace = conv.propagate(vector, drg=drg, hsi=hsi)
 
     # --- push-pull read-out (Deviation 22-D, SPEC_NOTES.md) --------------
@@ -168,12 +206,25 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     trace = state.trace
     if trace is None:
         return 0.0
-    balance = float(trace.lh_approach - trace.lh_avoid) - float(trace.resting_balance)
-    score = np.tanh(balance)
-    trace_row(ctx, "LH approach drive", float(trace.lh_approach), "lateral horn")
-    trace_row(ctx, "LH avoid drive", float(trace.lh_avoid), "lateral horn")
-    trace_row(ctx, "resting balance", float(trace.resting_balance), "subtracted baseline")
-    trace_row(ctx, "net balance", balance, "approach - avoid - resting")
+    diag = trace.diagnostics or {}
+    if "connectome" in diag:
+        # real circuit: the odd MBON read-out is already in [-1, 1]
+        balance = float(diag.get("balance", 0.0))
+        score = balance
+        trace_row(ctx, "connectome", str(diag.get("connectome")), f"{int(diag.get('neurons', 0)):,} neurons · {int(diag.get('connections', 0)):,} connections")
+        trace_row(ctx, "approach MBON drive (ACh + GABA)", float(trace.lh_approach), "summed over hops, push-pull")
+        trace_row(ctx, "avoid MBON drive (Glu)", float(trace.lh_avoid), "summed over hops, push-pull")
+        trace_row(ctx, "active Kenyon cells", int(trace.active_kcs), "of the real KC population (APL-sparse)")
+        trace_row(ctx, "hops · active neurons", " → ".join(str(x) for x in diag.get("hop_active", [])), "per hop")
+        trace_row(ctx, "pass time", int(diag.get("elapsed_us", 0)), "µs")
+        trace_row(ctx, "balance = tanh(2·(approach − avoid)/(|approach|+|avoid|))", balance, "-1..1")
+    else:
+        balance = float(trace.lh_approach - trace.lh_avoid) - float(trace.resting_balance)
+        score = np.tanh(balance)
+        trace_row(ctx, "LH approach drive", float(trace.lh_approach), "lateral horn")
+        trace_row(ctx, "LH avoid drive", float(trace.lh_avoid), "lateral horn")
+        trace_row(ctx, "resting balance", float(trace.resting_balance), "subtracted baseline")
+        trace_row(ctx, "net balance", balance, "approach - avoid - resting")
     # The score is computed here rather than in ``prepare``, so publish it on the
     # trace as well: /api/brain/trace and the matrix viewer must show the same
     # CCSv2 value the signal was built from.
@@ -186,11 +237,17 @@ def confidence(state: State) -> float:
     return float(state.confidence)
 
 
-DOUBLE_CHECK = "value = tanh(LH approach - LH avoid - resting balance), push-pull read-out"
+DOUBLE_CHECK = ("value = tanh(2·(approach − avoid)/(|approach|+|avoid|)) over the real MBONs "
+                "(fallback: tanh(LH approach - LH avoid - resting balance)), push-pull read-out")
 
 
 def double_check(t: dict, asset: str) -> float:
     """Independent re-derivation of the output from the traced intermediates."""
+    if "approach MBON drive (ACh + GABA)" in t and "avoid MBON drive (Glu)" in t:
+        app = float(t["approach MBON drive (ACh + GABA)"])
+        avo = float(t["avoid MBON drive (Glu)"])
+        denom = abs(app) + abs(avo)
+        return float(np.tanh(2.0 * (app - avo) / denom)) if denom > 1e-6 else 0.0
     if "net balance" not in t:
         return 0.0
     return float(np.tanh(float(t["net balance"])))

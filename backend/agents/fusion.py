@@ -68,6 +68,8 @@ class FusionResult:
     edge_guard: dict = field(default_factory=dict)
     #: Round AP: the tape veto, when it fired (see CycleManager._tape_veto)
     tape_veto: dict = field(default_factory=dict)
+    #: Round AQ: the whole-brain verdict blended into the brain's vote (or None)
+    whole_brain: dict | None = None
 
     # -- binary direction fields (HOLD was removed) ----------------------
     @property
@@ -111,6 +113,7 @@ class FusionResult:
             "genesis": self.genesis,
             "edge_guard": self.edge_guard,
             "tape_veto": self.tape_veto,
+            "whole_brain": self.whole_brain,
         }
         # Kept for the two clients: "lean" now always equals the decision,
         # because there is no third state to lean away from.

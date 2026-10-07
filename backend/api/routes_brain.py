@@ -15,6 +15,17 @@ async def brain_status() -> dict:
     return get_manager().brain_payload()
 
 
+@router.get("/api/brain/connectome")
+async def brain_connectome() -> dict:
+    """Round AQ: the real FlyWire v783 connectome - download/build state, the
+    mushroom-body and whole-brain populations, and the latest whole-brain
+    read-out (balance, descending drive, activity per super-class, top MBONs)."""
+    manager = get_manager()
+    payload = manager.brain.connectome_payload()
+    payload["last_fuse"] = manager.last_whole_brain
+    return payload
+
+
 @router.get("/api/brain/matrix")
 async def brain_matrix(limit: int = Query(0, ge=0, le=2000)) -> dict:
     """The 80x80 adjacency matrix as an edge list (for matrix_viewer)."""

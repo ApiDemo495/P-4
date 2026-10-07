@@ -59,3 +59,6 @@ server.log
 .run/
 node_modules/
 rehearsal-transcript.txt
+
+# ---- Downloaded connectome (FlyWire v783, ~130 MB + built arrays; re-downloaded on demand) ----
+data/connectome/

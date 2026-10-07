@@ -398,7 +398,7 @@
   <section class="card brain-card" data-panel="brain">
     <div class="card-head">
       <h2>🪰 Where the fly brain is used</h2>
-      <span class="muted">80-neuron mushroom body · 40% of the fusion</span>
+      <span class="muted">connectome loading · 40% of the fusion</span>
     </div>
     <div class="brain-grid">
       <div class="brain-pipeline" id="brain-pipeline"></div>
@@ -412,9 +412,11 @@
           <div class="kv-item"><span>Dopamine gates</span><b id="b-dan">—</b></div>
           <div class="kv-item"><span>CCSv2 → fusion</span><b id="b-ccs">—</b></div>
           <div class="kv-item wide"><span>Connectome</span><b id="b-source" class="muted">—</b></div>
+          <div class="kv-item wide" id="brain-whole"><span class="muted">whole brain: waiting</span></div>
         </div>
         <div class="row" style="margin-top:12px">
-          <a class="btn ghost" href="/matrix" style="text-decoration:none">Open the 80×80 matrix</a>
+          <a class="btn ghost" href="/matrix" style="text-decoration:none">Open the fallback 80×80 matrix</a>
+          <a class="btn ghost" href="/api/brain/connectome" style="text-decoration:none" target="_blank" rel="noopener">Whole-brain read-out (JSON)</a>
           <button class="btn tiny ghost" id="brain-toggle">Show the wiring diagram</button>
         </div>
       </div>

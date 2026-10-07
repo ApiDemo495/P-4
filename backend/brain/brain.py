@@ -13,8 +13,8 @@ import time
 
 import numpy as np
 
-from backend.brain import graph_convolution as gc
-from backend.brain import health_check, startup_verification
+from backend.brain import connectome_data, graph_convolution as gc
+from backend.brain import health_check, startup_verification, whole_brain
 from backend.brain.matrix_builder import checksum, stats
 from backend.brain.startup_verification import BrainStatus
 from backend.core import config as cfg
@@ -23,7 +23,8 @@ log = logging.getLogger("drosophila.brain")
 
 
 class Brain:
-    """Owns the 80x80 mushroom-body adjacency matrix and its convolution."""
+    """Owns the brain: the FlyWire v783 connectome (mushroom body per pass,
+    whole brain every 2 s) and, until it is loaded, the 80x80 fallback."""
 
     def __init__(self, settings=None, cache=None) -> None:
         self.settings = settings or cfg.SETTINGS
@@ -39,6 +40,23 @@ class Brain:
         self.verification: startup_verification.VerificationResult | None = None
         self.last_health: health_check.BrainHealth | None = None
         self._tasks: list[asyncio.Task] = []
+        # --- Round AQ: the real brain -------------------------------------
+        # The 80x80 matrix above is now only the last-resort fallback.  Once
+        # the FlyWire v783 connectome is on disk the mushroom body (8 353
+        # neurons) runs on every formula pass and the whole brain (138 639
+        # neurons, 15.09 M connections) on a worker thread every 2 s.
+        self.data = connectome_data.ConnectomeData()
+        self.mb: whole_brain.ConnectomeGraph | None = None
+        self.whole: whole_brain.ConnectomeGraph | None = None
+        self.whole_readout: whole_brain.Readout | None = None
+        self.whole_error: str = ""
+        self.whole_passes: int = 0
+        self.mb_passes: int = 0
+        self.mb_last_us: int = 0
+        self.last_input: tuple | None = None   # (vector, drg, hsi) of the latest formula pass
+        self._whole_busy = False
+        self.connectome_loaded_at: float = 0.0
+        self.connectome_error: str = ""
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -64,7 +82,102 @@ class Brain:
         self._tasks.append(
             asyncio.create_task(self._refresh_loop(), name="brain-refresh")
         )
+        self._tasks.append(
+            asyncio.create_task(self._connectome_loop(), name="brain-connectome")
+        )
         return self.status
+
+    # ------------------------------------------------------------------
+    # Round AQ: the real connectome
+    # ------------------------------------------------------------------
+    @property
+    def connectome_ready(self) -> bool:
+        return self.mb is not None
+
+    def _load_graphs(self) -> None:
+        """Worker thread: make sure the data is there, then load both graphs."""
+        if not self.data.ensure():
+            return
+        mb = whole_brain.load_mushroom_body(self.data.data_dir)
+        whole = whole_brain.load_whole_brain(self.data.data_dir)
+        self.mb, self.whole = mb, whole
+        self.connectome_loaded_at = time.time()
+
+    async def _connectome_loop(self) -> None:
+        """Load (downloading first if needed, retrying on failure), then run
+        the whole brain on the latest formula pass every 2 s."""
+        backoff = 30.0
+        while self.mb is None:
+            try:
+                await asyncio.to_thread(self._load_graphs)
+            except Exception as exc:  # noqa: BLE001
+                self.connectome_error = f"{type(exc).__name__}: {exc}"[:300]
+                log.warning("connectome load failed: %s", self.connectome_error)
+            if self.mb is not None:
+                self.status = BrainStatus.LIVE_FLYWIRE
+                self.dataset = connectome_data.DATASET
+                self.message = (f"{connectome_data.DATASET}: {self.whole.n:,} neurons, "
+                                f"{self.whole.connections:,} connections ({self.whole.synapses_total:,} synapses); "
+                                f"mushroom body {self.mb.n:,} neurons on every pass, whole brain every 2 s")
+                log.info("Drosophila brain: %s", self.message)
+                break
+            if not self.data.enabled:
+                return
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 600.0)
+        while True:
+            await asyncio.sleep(2.0)
+            if self.whole is None or self.last_input is None or self._whole_busy:
+                continue
+            vector, drg, hsi = self.last_input
+            self._whole_busy = True
+            try:
+                self.whole_readout = await asyncio.to_thread(self.whole.propagate, vector, drg, hsi, True)
+                self.whole_passes += 1
+                self.whole_error = ""
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                self.whole_error = f"{type(exc).__name__}: {exc}"[:300]
+            finally:
+                self._whole_busy = False
+
+    def mushroom_body_pass(self, vector, drg: float, hsi: float):
+        """The per-pass circuit for CCSv2 / KCAE: the real mushroom body when
+        loaded, else None (the caller falls back to the 80x80 convolution)."""
+        if self.mb is None:
+            return None
+        self.last_input = (np.asarray(vector, dtype=np.float32).copy(), float(drg), float(hsi))
+        readout = self.mb.propagate(vector, drg=drg, hsi=hsi, detail=True)
+        self.mb_passes += 1
+        self.mb_last_us = readout.elapsed_us
+        return readout
+
+    def whole_brain_fresh(self, max_age: float = 10.0) -> whole_brain.Readout | None:
+        r = self.whole_readout
+        if r is None or time.time() - r.computed_at > max_age:
+            return None
+        return r
+
+    def connectome_payload(self) -> dict:
+        out = {
+            "data": self.data.to_dict(),
+            "loaded": self.connectome_ready,
+            "loaded_at": self.connectome_loaded_at,
+            "error": self.connectome_error,
+            "fallback_in_use": not self.connectome_ready,
+            "fallback": "80x80 mushroom-body stand-in (used only until the connectome is loaded)",
+        }
+        if self.mb is not None:
+            out["mushroom_body"] = {**self.mb.populations(), "passes": self.mb_passes, "last_pass_us": self.mb_last_us,
+                                    "hops": self.mb.hops, "name": self.mb.name}
+        if self.whole is not None:
+            pops = self.whole.populations()
+            pops.pop("formula_groups", None)
+            out["whole_brain"] = {**pops, "passes": self.whole_passes, "hops": self.whole.hops, "name": self.whole.name,
+                                  "error": self.whole_error, "busy": self._whole_busy,
+                                  "readout": self.whole_readout.to_dict() if self.whole_readout else None}
+        return out
 
     async def stop(self) -> None:
         for task in self._tasks:
@@ -75,6 +188,11 @@ class Brain:
     def _apply(self, result: startup_verification.VerificationResult) -> None:
         self.matrix = result.matrix
         self.conv = gc.GraphConvolution(result.matrix)
+        if self.connectome_ready:
+            # the real connectome outranks whatever the 80x80 verification found
+            self.steps = result.steps
+            self.verification = result
+            return
         self.status = result.status
         self.message = result.message
         self.dataset = result.dataset
@@ -162,6 +280,20 @@ class Brain:
         }
         if self.matrix is not None:
             payload["matrix"] = stats(self.matrix)
+        payload["connectome"] = {
+            "loaded": self.connectome_ready,
+            "phase": self.data.status.phase,
+            "percent": self.data.to_dict().get("percent", 0.0),
+            "neurons": self.whole.n if self.whole else 0,
+            "connections": self.whole.connections if self.whole else 0,
+            "synapses": self.whole.synapses_total if self.whole else 0,
+            "mb_neurons": self.mb.n if self.mb else 0,
+            "whole_passes": self.whole_passes,
+            "mb_passes": self.mb_passes,
+            "mb_last_us": self.mb_last_us,
+            "whole_last_us": self.whole_readout.elapsed_us if self.whole_readout else 0,
+            "whole_balance": round(self.whole_readout.balance, 4) if self.whole_readout else None,
+        }
         return payload
 
     def matrix_payload(self, limit: int | None = None) -> dict:

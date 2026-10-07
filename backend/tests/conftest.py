@@ -20,6 +20,9 @@ import os
 
 os.environ.setdefault("TIME_SCALE", "20")
 os.environ.setdefault("MARKET_DATA_MODE", "simulator")
+# Round AQ: never download the 130 MB connectome inside the test run (if the
+# arrays are already on disk the real brain loads and is exercised).
+os.environ.setdefault("CONNECTOME_AUTODOWNLOAD", "0")
 os.environ.setdefault("MARKET_ALLOW_SIMULATOR", "1")
 os.environ.setdefault("LOCAL_AGENT_STUB", "1")
 os.environ.setdefault("LOG_LEVEL", "warning")
