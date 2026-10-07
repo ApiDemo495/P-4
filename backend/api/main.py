@@ -338,6 +338,16 @@ async def autostart_status(lines: int = 60):
     return mod.status(lines=max(5, min(int(lines), 400)))
 
 
+@app.get("/api/system/health")
+async def system_health():
+    """Round AP: every subsystem - tape, emotions, physics, formulas, genesis,
+    news, brain, websocket, event loop - running / waiting / failing, with
+    the last error text.  The SYSTEM strip on the dashboard renders this."""
+    from backend.api.state import get_manager
+
+    return get_manager().health_payload()
+
+
 def main() -> None:
     """``python -m backend.api.main``"""
     import uvicorn

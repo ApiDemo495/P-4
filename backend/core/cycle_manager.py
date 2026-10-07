@@ -162,6 +162,13 @@ class CycleManager:
 
         self.asset = "BTC"
         self.pending_asset: str | None = None
+        #: Round AP observability - every background loop records its last
+        #: failure so "never starts" always has a visible reason.
+        self.ws_dropped = 0
+        self.loop_lag_ms = 0.0
+        self.loop_lag_max_ms = 0.0
+        self.last_errors: dict[str, str] = {}
+        self.loop_stats: dict[str, dict] = {}
         self.degradation = DegradationLevel.FULL
         self.warnings: list[str] = []
         self.last_snapshot: FrozenMarketSnapshot | None = None
@@ -277,6 +284,7 @@ class CycleManager:
             asyncio.create_task(self.clock.run(), name="clock"),
             asyncio.create_task(self._flash_watch(), name="flash-watch"),
             asyncio.create_task(self._emotion_loop(), name="emotions"),
+            asyncio.create_task(self._loop_lag_monitor(), name="loop-lag"),
         ]
         log.info(
             "Cycle manager running: period=%.1fs, world_clock=%s",
@@ -342,14 +350,27 @@ class CycleManager:
         self._subscribers.discard(queue)
 
     async def broadcast(self, message: dict) -> None:
-        dead: list[asyncio.Queue] = []
-        for queue in self._subscribers:
+        """Fan one message out to every socket.
+
+        Round AP: a full queue used to *discard the subscriber* - the socket
+        stayed open but silent forever (the pump awaited a queue nobody fed),
+        which is exactly the "panel is just there, nothing moves" the user
+        saw behind a slow Codespace proxy.  Now the oldest queued message is
+        dropped instead (the stream is state, every message supersedes the
+        previous of its type) and the drop is counted for /api/system/health."""
+        for queue in list(self._subscribers):
             try:
                 queue.put_nowait(message)
             except asyncio.QueueFull:
-                dead.append(queue)
-        for queue in dead:
-            self._subscribers.discard(queue)
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                try:
+                    queue.put_nowait(message)
+                    self.ws_dropped += 1
+                except asyncio.QueueFull:
+                    self._subscribers.discard(queue)
 
     # ==================================================================
     # The cycle
@@ -1152,7 +1173,10 @@ class CycleManager:
         sample_no = 0
         while not self._stop.is_set():
             try:
-                if self.market.tick_count(self.asset) >= 15:
+                have = self.market.tick_count(self.asset)
+                self.loop_stats["emotions"] = {"ticks": have, "samples": self.emotions.samples,
+                                               "errors": self.emotions.errors, "at": time.time()}
+                if have >= 4:
                     sample_no += 1
                     full = sample_no % 4 == 1
                     if full:
@@ -1167,7 +1191,8 @@ class CycleManager:
                                 k: round(v, 6) for k, v in result.values.items()
                             }
                         except Exception as exc:  # noqa: BLE001 - keep the crowd loop alive
-                            log.debug("live formula refresh failed: %s", exc)
+                            self.last_errors["formulas"] = f"{type(exc).__name__}: {exc}"[:300]
+                            log.warning("live formula refresh failed: %s", exc)
                     reading = self.emotions.sample()
                     streamed = compact_emotions(reading)
                     if not full:
@@ -1200,11 +1225,79 @@ class CycleManager:
                 raise
             except Exception as exc:  # noqa: BLE001 - never take the engine down
                 self.emotions.errors += 1
-                log.debug("emotion sample failed: %s", exc)
+                self.last_errors["emotions"] = f"{type(exc).__name__}: {exc}"[:300]
+                log.warning("emotion sample failed: %s", exc)
             try:
                 await asyncio.sleep(interval)
             except asyncio.CancelledError:
                 raise
+
+    async def _loop_lag_monitor(self) -> None:
+        """How late the event loop wakes a 0.5 s timer - the number that says
+        whether the genesis worker / formula passes are starving the sockets
+        and the countdown on a 2-core Codespace."""
+        while not self._stop.is_set():
+            t0 = time.perf_counter()
+            try:
+                await asyncio.sleep(0.5)
+            except asyncio.CancelledError:
+                raise
+            lag = max(0.0, (time.perf_counter() - t0 - 0.5) * 1000.0)
+            self.loop_lag_ms = round(0.7 * self.loop_lag_ms + 0.3 * lag, 1)
+            self.loop_lag_max_ms = round(max(self.loop_lag_max_ms * 0.995, lag), 1)
+
+    def health_payload(self) -> dict:
+        """Round AP: one honest table of every subsystem - running / idle /
+        failing - with the reason.  This is what `/api/system/health` and
+        the SYSTEM strip on the dashboard render."""
+        now = time.time()
+        em = self.loop_stats.get("emotions", {})
+        emotion_payload = self.emotions.payload()
+        physics = self.last_physics or {}
+        genesis = self.genesis_payload() if hasattr(self, "genesis_payload") else {}
+        gst = (genesis.get("status") or {}) if isinstance(genesis, dict) else {}
+        rows = []
+
+        def row(name, ok, state, detail):
+            rows.append({"name": name, "ok": bool(ok), "state": state, "detail": str(detail or "")[:300]})
+
+        src = self.market.active_source
+        btc, paxg = self.market.tick_count("BTC"), self.market.tick_count("PAXG")
+        row("tape", src not in ("none", "simulator") and btc > 0,
+            src, f"BTC {btc} ticks · PAXG {paxg} ticks · source for {now - self.market.source_changed_at:.0f}s"
+            + (" · SIMULATED" if self.market.tape_is_simulated else ""))
+        row("emotions", bool(emotion_payload.get("available")),
+            "live" if emotion_payload.get("available") else "waiting",
+            f"{em.get('samples', 0)} samples · {em.get('errors', 0)} errors · {em.get('ticks', 0)} ticks on {self.asset}"
+            + (f" · last error: {self.last_errors['emotions']}" if self.last_errors.get("emotions") else "")
+            + ("" if emotion_payload.get("available") else f" · {emotion_payload.get('reason', '')}"))
+        active = len(physics.get("active") or []) if isinstance(physics.get("active"), (list, dict)) else physics.get("active", 0)
+        inactive = physics.get("inactive") or []
+        row("physics", bool(physics) and not self.last_errors.get("physics"),
+            "live" if physics else "waiting",
+            (f"{active} active · {len(inactive)} inactive" if physics else "no report yet")
+            + (f" · last error: {self.last_errors['physics']}" if self.last_errors.get("physics") else ""))
+        row("formulas", bool(self.last_live_formulas) and not self.last_errors.get("formulas"),
+            "live" if self.last_live_formulas else "waiting",
+            (f"{sum(1 for v in (self.last_live_formulas or {}).values() if abs(v) > 1e-12)}/{len(self.last_live_formulas or {})} non-zero")
+            + (f" · last error: {self.last_errors['formulas']}" if self.last_errors.get("formulas") else ""))
+        gnote = str((gst.get("latest") or {}).get("note") or "")
+        gc = gst.get("candles") or {}
+        row("genesis", bool(gst.get("active")), genesis.get("status", {}).get("busy") if False else (self.genesis._busy or "idle"),
+            f"{gnote or 'scored'} · {gst.get('active', 0)} active formulas · candles {gc.get('minutes', '?')} ({gc.get('bootstrapped_from') or 'live only'})"
+            f" · last rescore {float(gst.get('rescore_seconds') or 0):.0f}s · next genesis in "
+            + ("—" if gst.get("next_genesis_in_s") is None else f"{float(gst['next_genesis_in_s']) / 60:.0f} min")),
+        row("news", bool(self.news.cache.all()), self.news.status.to_dict().get("rss", "?"),
+            f"{len(self.news.cache.all())} items · providers {self.news.cache.providers}")
+        row("brain", self.brain.is_live, self.brain.status.value, self.brain.message)
+        row("websocket", self.ws_dropped < 50, f"{len(self._subscribers)} clients",
+            f"{self.ws_dropped} messages dropped (coalesced) since start")
+        row("event loop", self.loop_lag_ms < 250, f"lag {self.loop_lag_ms} ms",
+            f"peak {self.loop_lag_max_ms} ms · >250 ms means the CPU is saturated (genesis scoring / formula passes)")
+        for name, err in self.last_errors.items():
+            if name not in ("emotions", "physics", "formulas"):
+                row(name, False, "error", err)
+        return {"at": now, "ok": all(r["ok"] for r in rows), "rows": rows}
 
     def emotions_payload(self) -> dict:
         """The live emotion reading, plus the frozen one that shaped the signal.
@@ -1699,7 +1792,9 @@ class CycleManager:
             try:
                 physics_report = self.physics.compute(snapshot, self.asset)
                 self.last_physics = physics_report
+                self.last_errors.pop("physics", None)
             except Exception as exc:  # noqa: BLE001
+                self.last_errors["physics"] = f"{type(exc).__name__}: {exc}"[:300]
                 log.warning("thermodynamic layer failed this pass: %s", exc)
                 warnings.append(f"thermodynamic layer skipped: {exc}")
         genesis_report = None

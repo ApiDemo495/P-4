@@ -210,6 +210,14 @@
       </div>
     </div>
 
+    <!-- Round AP: SYSTEM - every subsystem running / waiting / failing, with the
+         reason.  Nothing on this dashboard may be "just there": if a panel is
+         idle, this strip says why in the same words the backend logged. -->
+    <div class="card" id="system-card">
+      <div class="cell-label">SYSTEM — what is running, what is waiting, and why <span class="muted" id="sys-summary"></span></div>
+      <div class="sys-grid" id="sys-rows"></div>
+    </div>
+
     <!-- Round Y: the probability branches of this window - the engine's own
          dispersion model (drift fixed by the printed confidence, sigma = the
          realised volatility the levels were sized on) with the realised path

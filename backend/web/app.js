@@ -513,9 +513,28 @@ async function applyUpdate() {
   setTimeout(() => location.reload(), 15000);
 }
 
+/* Round AP: the SYSTEM strip - /api/system/health every 15 s on the one
+   existing timer (no second setInterval). */
+async function refreshSystemHealth() {
+  const box = $("sys-rows");
+  if (!box) return;
+  const h = await getJSON("/api/system/health");
+  if (!h || h.error) { box.innerHTML = `<div class="sys-row bad"><b>engine</b><span>${escapeHtml(String(h && h.error || "unreachable"))}</span></div>`; return; }
+  box.innerHTML = "";
+  (h.rows || []).forEach((r) => {
+    const div = document.createElement("div");
+    div.className = `sys-row ${r.ok ? "ok" : "bad"}`;
+    div.innerHTML = `<i>${r.ok ? "●" : "○"}</i><b>${escapeHtml(r.name)}</b><em>${escapeHtml(r.state || "")}</em><span>${escapeHtml(r.detail || "")}</span>`;
+    box.appendChild(div);
+  });
+  const bad = (h.rows || []).filter((r) => !r.ok).map((r) => r.name);
+  $("sys-summary").textContent = bad.length ? `· ${bad.length} not live: ${bad.join(", ")}` : "· everything live";
+}
+
 async function safetyNet() {
   updateTick += 1;
   lockWatchdog();
+  if (updateTick % 3 === 1) refreshSystemHealth();   // 15 s
   if (updateTick % 60 === 1) checkForUpdate();   // 5 s x 60 = every 5 min, first at boot
   // A socket that is OPEN but silent is the proxy keeping our side alive
   // after the backend side died or stalled (Codespaces does exactly this):
@@ -2164,7 +2183,7 @@ function renderGenesis(payload) {
     `${states.DECAYING || 0} decaying · ${st.graveyard || 0} autopsied · ${st.bred || 0} bred`;
   const nextG = st.next_genesis_in_s;
   $("gn-gen").textContent = `generation ${st.generation ?? 0} · ` +
-    (nextG == null ? "genesis after the first scoring" : nextG <= 0 ? "genesis due now" : `next genesis in ${Math.round(nextG / 60)} min`);
+    "votes on every 60 s window · " + (nextG == null ? "breeds new formulas after the first scoring" : nextG <= 0 ? "breeding new formulas now" : `breeds the next 50 formulas in ${Math.round(nextG / 60)} min (4 h cadence - not the signal timer)`);
   const nextR = st.next_rescore_in_candles;
   $("gn-candles").textContent = `${cs.minutes ?? 0} min (${cs.live_minutes ?? 0} live${cs.bootstrapped_from ? `, history ${cs.bootstrapped_from}` : ""}) · ` +
     (nextR == null ? "first scoring at 240" : `re-score in ${nextR} candles`) +

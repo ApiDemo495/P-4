@@ -1149,3 +1149,14 @@ body.pulse .widget-panel, body.pulse .card { animation: pulse-breath .6s var(--e
 .formula-row { padding: 5px 0; border-radius: 8px; transition: background .25s var(--ease); }
 .formula-row:hover { background: rgba(255,255,255,.03); }
 .category-head { letter-spacing: .12em; }
+
+/* Round AP: SYSTEM strip */
+.sys-grid { display: grid; grid-template-columns: 1fr; gap: 4px; }
+.sys-row { display: grid; grid-template-columns: 14px 92px 110px 1fr; gap: 8px; align-items: baseline; font-size: 12px; padding: 4px 6px; border-radius: 6px; background: rgba(255,255,255,.025); }
+.sys-row i { font-style: normal; }
+.sys-row.ok i { color: var(--pos, #35d07f); }
+.sys-row.bad i { color: var(--neg, #ff5d5d); }
+.sys-row.bad { background: rgba(255,93,93,.07); }
+.sys-row b { letter-spacing: .04em; text-transform: uppercase; font-size: 11px; }
+.sys-row em { font-style: normal; opacity: .85; }
+.sys-row span { opacity: .75; overflow-wrap: anywhere; }

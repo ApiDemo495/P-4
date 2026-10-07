@@ -121,6 +121,15 @@ class GenesisEngine:
     # ------------------------------------------------------------ worker
     def _loop(self) -> None:
         warnings.simplefilter("ignore", RuntimeWarning)
+        # Round AP: a full rescore is ~40 s of NumPy per asset.  On a 2-core
+        # Codespace that thread competed on equal terms with the event loop
+        # (sockets, countdown, emotion stream).  Lower its priority - Linux
+        # schedules threads as tasks, so a per-thread nice works - and yield
+        # between formulas (see rescore) so the loop never waits long.
+        try:
+            os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), 15)
+        except Exception:  # noqa: BLE001 - not Linux / not permitted
+            pass
         while not self._stop.is_set():
             try:
                 for a in self.assets:
@@ -194,9 +203,11 @@ class GenesisEngine:
         signals: dict[str, np.ndarray] = {}
         # templates first, bred formulas after (they may read template signals)
         order = sorted(pool.values(), key=lambda f: (f.spec.origin != "template", f.fid))
-        for f in order:
+        for idx, f in enumerate(order):
             if f.state in (State.DEAD, State.AUTOPSY):
                 continue
+            if idx % 20 == 19:
+                time.sleep(0.004)   # hand the GIL to the event loop
             res = self._run(f, frame, signals)
             if res is None:
                 f.record(fit.Score(fitness=-1.0, note=f.error))
