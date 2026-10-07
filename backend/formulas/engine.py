@@ -242,6 +242,70 @@ def provenance(snapshot, asset: str) -> dict:
     return out
 
 
+#: what each formula needs before it can print anything but 0.00
+_NEEDS = {
+    "RSV": "about 30 one-minute closes (DFA over five scales) and a non-zero direction",
+    "VSS": "10 one-minute closes and a volatility surprise with a direction",
+    "TWRS": "12 one-minute closes and a skew t-stat above noise",
+    "ERC": "two minutes of closes to measure regime change",
+    "MCPE": "12 closes for the multi-scale momentum",
+    "MPS": "a non-zero momentum persistence over the window",
+    "HRDD": "both legs (BTC and PAXG) moving: 10 synced grid returns or 11 minute closes, then a warmed beta baseline",
+    "GCDV": "both legs moving on the synced grid",
+    "SHRP": "both legs moving on the synced grid",
+    "DRG": "at least one scored window (outcomes feed the reward learner)",
+    "NIV": "at least one relevant headline less than 15 minutes old",
+    "SMD": "two headlines with different sentiment to diverge",
+    "BAR": "two consecutive order-book snapshots that differ",
+    "DGW": "a non-empty order book",
+    "LCS": "order-book depth on both sides",
+    "VSD": "trades with volume (quote prints carry none) over the window",
+    "AFPR": "aggressor-flagged trades over the window",
+    "TAI": "trades with sides over the window",
+    "SED": "spread history at tick timestamps",
+    "DSKD": "enough prices for the Kalman filter to converge",
+    "CCSv2": "the brain matrix and the upstream formulas",
+    "KCAE": "the brain matrix and the upstream formulas",
+}
+
+
+def _fmt_num(value) -> str:
+    try:
+        return f"{float(value):.3f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _zero_reason(name: str, trace: list, result, ticks) -> str:
+    """Plain-words reason a formula printed 0.00 on this pass."""
+    rows = {str((r or {}).get("label", "")).lower(): r for r in (trace or []) if isinstance(r, dict)}
+    for label, row in rows.items():
+        val = str(row.get("value", ""))
+        unit = str(row.get("unit", ""))
+        if "direction used" in label:
+            try:
+                flat = float(val) == 0.0
+            except ValueError:
+                flat = False
+            if flat:
+                t = rows.get("drift t-statistic") or rows.get("vol surprise") or rows.get("skew t-stat")
+                if t is not None:
+                    return (f"no significant direction this pass: {t.get('label')} = {_fmt_num(t.get('value'))} "
+                            f"is below the significance gate, so the magnitude is not given a sign")
+                return "no significant direction this pass (the sign gate did not clear)"
+        if "basis" in label and ("need" in unit or "no " in unit):
+            return f"{val} {unit}"
+    need = _NEEDS.get(name, "more data than this pass had")
+    have = f"{int(ticks or 0)} ticks"
+    try:
+        n_candles = int(result.micro.get("candles", 0) or 0) if isinstance(result.micro, dict) else 0
+        if n_candles:
+            have += f", {n_candles} minute closes"
+    except Exception:  # noqa: BLE001
+        pass
+    return f"needs {need}; this pass had {have}"
+
+
 def _quiet_allowance(ticks) -> float:
     """A quiet tape is not a broken one: allow three median inter-print gaps
     (of the last 50 prints) before a connected feed reads 'delayed'."""
@@ -429,6 +493,8 @@ class FormulaResult:
     ccs_confidence: float = 0.0
     kcae: float = 0.0
     brain_trace: dict = field(default_factory=dict)
+    #: Round AP: formula name -> plain-words reason it printed 0.00 this pass
+    zero_reasons: dict = field(default_factory=dict)
     total_ms: float = 0.0
     total_us: int = 0
     asset: str = "BTC"
@@ -519,6 +585,7 @@ class FormulaResult:
             "ccs_confidence": round(self.ccs_confidence, 6),
             "kcae": round(self.kcae, 6),
             "brain_trace": self.brain_trace,
+            "zero_reasons": self.zero_reasons,
             "total_ms": round(self.total_ms, 4),
             "total_us": int(self.total_us),
             "history_window": FORMULA_HISTORY,
@@ -665,6 +732,10 @@ class FormulaEngine:
         try:
             report = micro_analyze(snapshot, asset, state=self._micro)
             result.micro = report.to_dict()
+            try:
+                result.micro["candles"] = int(len(snapshot.candles(asset)))
+            except Exception:  # noqa: BLE001
+                pass
         except Exception as exc:  # noqa: BLE001 - analysis must never break a pass
             log.debug("micro analysis failed: %s", exc)
             result.micro = {"available": False, "reason": str(exc)}
@@ -786,7 +857,15 @@ class FormulaEngine:
             stats = result.stats.get(name, {})
             value = float(result.values.get(name, 0.0))
             entry = logic_entry(name)
-            context = [
+            context = []
+            if abs(value) < 1e-12:
+                # Round AP: a 0.00 must say why.  Read the formula's own trace
+                # first (a module that bailed out early says so there); fall
+                # back to what it needs and what the snapshot had.
+                why = _zero_reason(name, trace, result, ticks)
+                result.zero_reasons[name] = why
+                context.append({"label": "why 0.00", "value": why, "unit": "the value is excluded from the vote until this clears"})
+            context += [
                 {
                     "label": "value · "
                     + (entry.range_label() if entry is not None else "raw"),

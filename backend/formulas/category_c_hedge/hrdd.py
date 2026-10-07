@@ -60,10 +60,28 @@ class State:
 
 def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None = None) -> float:
     synced = snapshot.synced
-    if synced is None or not synced.valid:
-        return 0.0
-    r_b = synced.btc_returns
-    r_g = synced.paxg_returns
+    if synced is not None and synced.valid and min(synced.btc_returns.size, synced.paxg_returns.size) >= 10:
+        r_b = synced.btc_returns
+        r_g = synced.paxg_returns
+        trace(ctx, "pair basis", float(min(r_b.size, r_g.size)), "tick-grid returns")
+    else:
+        # Round AP: a thin PAXG tape must not silence the hedge-ratio drift.
+        # Fall back to the last 120 one-minute closes of both legs (seeded
+        # from public history at start) - a coarser clock, same regression.
+        try:
+            cb = np.asarray(snapshot.candles("BTC"), dtype=np.float64)
+            cg = np.asarray(snapshot.candles("PAXG"), dtype=np.float64)
+        except Exception:  # noqa: BLE001
+            trace(ctx, "pair basis", 0.0, "no tick grid, no candles")
+            return 0.0
+        m = min(cb.size, cg.size, 121)
+        if m < 11:
+            trace(ctx, "pair basis", float(m), "minute closes - need 11 on both legs")
+            return 0.0
+        cb, cg = cb[-m:], cg[-m:]
+        r_b = np.diff(cb) / np.maximum(cb[:-1], EPS)
+        r_g = np.diff(cg) / np.maximum(cg[:-1], EPS)
+        trace(ctx, "pair basis", float(r_b.size), "one-minute candle returns (tick grid thin)")
     n = min(r_b.size, r_g.size)
     if n < 10:
         return 0.0

@@ -1173,3 +1173,4 @@ body.pulse .widget-panel, body.pulse .card { animation: pulse-breath .6s var(--e
 .livecalc-ticker { margin-top: 8px; font-size: 11px; line-height: 1.6; max-height: 140px; overflow: hidden; }
 .lc-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lc-line b { letter-spacing: .04em; }
+.formula-zero-why { font-size: 11px; color: #ffb454; margin-left: 6px; }

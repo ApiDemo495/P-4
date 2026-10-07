@@ -2542,6 +2542,13 @@ function formulaRow(name, value, description, meta, readings = {}, traces = {}) 
   const row = document.createElement("div");
   const known = typeof value === "number";
   const v = known ? value : 0;
+  // Round AP: a 0.00 carries its reason (engine zero_reasons, via the trace's "why 0.00" row)
+  const zeroWhy = (() => {
+    const t = traces && traces[name];
+    if (!Array.isArray(t)) return "";
+    const row = t.find((r) => r && String(r.label || "").startsWith("why 0.00"));
+    return row ? String(row.value || "") : "";
+  })();
   let posClass = "neutral", fillClass = "fill-pos";
   if (v > 0.15) { posClass = "pos"; }
   else if (v < -0.15) { posClass = "neg"; fillClass = "fill-neg"; }
@@ -2596,6 +2603,7 @@ function formulaRow(name, value, description, meta, readings = {}, traces = {}) 
     `  <div class="formula-value ${posClass}">${known ? fmtSigned(v, 3) : "—"}</div>` +
     `  <div class="formula-head">` +
     `    <span class="formula-reading">${escapeHtml(reading)}</span>` +
+    (known && Math.abs(v) < 1e-12 && zeroWhy ? `<span class="formula-zero-why" title="why this formula prints 0.00 right now">⚠ ${escapeHtml(zeroWhy)}</span>` : "") +
     (stats
       ? `<span class="formula-stats" title="this value against its own history">` +
         `${fmtSigned(stats.zscore || 0, 2)}σ · p${Math.round(stats.percentile || 0)} · ` +
