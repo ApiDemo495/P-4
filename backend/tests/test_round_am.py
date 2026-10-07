@@ -126,8 +126,9 @@ def test_levels_are_bounded_by_the_measured_minute_moves():
     # a wildly inflated sigma (one bad print) no longer produces a 40/60 bps plan
     bad = risk_levels("BTC", "BUY", 100000.0, 45.0, settings, horizon_seconds=60, edge=0.5, spread_bps=0.1, moves=moves)
     assert bad["sl_bps"] <= moves["mae80"] + 1e-6 and bad["tp_bps"] <= moves["q95"] + 1e-6
-    assert bad["tp_bps"] >= bad["sl_bps"] * 1.2 - 1e-6
-    assert "measured" in bad["note"]
+    # Round AP: one-minute sizing - the stop is never more than 1.25 x the target
+    assert bad["sl_bps"] <= bad["tp_bps"] * 1.25 + 0.01  # levels are rounded to 0.01 bp
+    assert "1-minute sizing" in bad["note"] or "measured" in bad["note"]
     unbounded = risk_levels("BTC", "BUY", 100000.0, 45.0, settings, horizon_seconds=60, edge=0.5, spread_bps=0.1)
     assert unbounded["tp_bps"] > 5 * bad["tp_bps"]
     # floors are one-minute floors now

@@ -146,6 +146,9 @@ def size_levels(
     rr_target = float(getattr(settings, "rr_target", 1.5) or 1.5)
     rr = min(max(rr_target + RR_EDGE_GAIN * abs(float(edge or 0.0)), RR_FLOOR), RR_CEIL)
     tp = min(max(sl * rr, float(settings.min_tp_bps)), float(settings.max_tp_bps))
+    if tp < sl:
+        # the 1-minute target cap binds: the stop is never wider than the target
+        sl = tp
     capped = ""
     if measured:
         ceiling = max(float(moves.get("q95") or 0.0), sl * RR_FLOOR, float(settings.min_tp_bps))

@@ -53,7 +53,7 @@ def test_take_profit_and_stop_move_with_volatility():
     loud = risk_levels("BTC", "BUY", 60_000.0, 40.0, cfg.SETTINGS)
     assert loud["tp_bps"] > quiet["tp_bps"] >= cfg.SETTINGS.min_tp_bps
     assert loud["take_profit"] - 60_000.0 > quiet["take_profit"] - 60_000.0
-    assert loud["tp_bps"] == pytest.approx(loud["sl_bps"] * cfg.SETTINGS.rr_target, rel=1e-3)
+    assert loud["tp_bps"] == pytest.approx(min(loud["sl_bps"] * cfg.SETTINGS.rr_target, cfg.SETTINGS.max_tp_bps), rel=1e-3)
 
 
 def test_drg_turns_negative_after_a_loss():

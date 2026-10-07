@@ -9,11 +9,15 @@ from backend.core import lock_weights, risk_engine, utility_inversion
 
 
 def test_risk_engine_stop_is_the_mae_quantile_and_target_grows_with_edge():
-    flat = risk_engine.size_levels("BTC", 20.0, edge=0.0, settings=cfg.SETTINGS)
+    # Round AP: sized for one minute - sigma 8 bps keeps every level under the
+    # 1-minute caps so the geometry itself can be checked
+    flat = risk_engine.size_levels("BTC", 8.0, edge=0.0, settings=cfg.SETTINGS)
     assert flat.mae_z == pytest.approx(1.2816, abs=1e-3)
-    assert flat.sl_bps == pytest.approx(1.2816 * 20.0, rel=1e-3)
+    assert flat.sl_bps == pytest.approx(1.2816 * 8.0, rel=1e-3)
     assert flat.rr == pytest.approx(cfg.SETTINGS.rr_target, rel=1e-3)
-    strong = risk_engine.size_levels("BTC", 20.0, edge=0.9, settings=cfg.SETTINGS)
+    strong = risk_engine.size_levels("BTC", 8.0, edge=0.9, settings=cfg.SETTINGS)
+    capped = risk_engine.size_levels("BTC", 20.0, edge=0.0, settings=cfg.SETTINGS)
+    assert capped.tp_bps <= cfg.SETTINGS.max_tp_bps and capped.sl_bps <= capped.tp_bps
     assert strong.sl_bps == flat.sl_bps and strong.rr > flat.rr and strong.rr <= risk_engine.RR_CEIL
     wide = risk_engine.size_levels("BTC", 2.0, spread_bps=4.0, settings=cfg.SETTINGS)
     assert wide.sl_bps >= 12.0 and "spread floor" in wide.method
