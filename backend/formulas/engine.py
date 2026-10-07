@@ -227,6 +227,11 @@ def provenance(snapshot, asset: str) -> dict:
         state = "derived" if desc.get("widened") else "live"
         feeds["cross"] = _feed(state, desc.get("reason") or f"BTC/PAXG on a {desc.get('window_seconds', 60)} s grid",
                                **desc)
+    elif real and _pair_candles_ok(snapshot):
+        # Round AP: the hedge formulas fall back to the last minute closes of
+        # both legs (hrdd / hedge outcomes) - the pair is derived, not missing.
+        feeds["cross"] = _feed("derived", "BTC/PAXG basis from the last minute closes of both legs "
+                               "(tick grid too thin - PAXG prints rarely)", **desc)
     elif real:
         feeds["cross"] = _feed("warming", desc.get("reason") or "waiting for both legs", **desc)
     else:
@@ -317,6 +322,13 @@ def _quiet_allowance(ticks) -> float:
         return float(3.0 * np.median(gaps[gaps > 0])) if np.any(gaps > 0) else 0.0
     except Exception:  # noqa: BLE001
         return 0.0
+
+
+def _pair_candles_ok(snapshot, minimum: int = 11) -> bool:
+    try:
+        return all(len(snapshot.candles(a)) >= minimum for a in ("BTC", "PAXG"))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _grade(feed_rows, real: bool, simulated: bool) -> str:

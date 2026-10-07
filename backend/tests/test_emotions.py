@@ -79,7 +79,7 @@ def test_a_reading_scores_every_emotion_on_every_timescale() -> None:
         assert all(0.0 <= v <= 1.0 for v in item["by_timescale"].values())
         assert item["dominant_timescale"] in E.TIMESCALES
         assert item["tone"] in ("negative", "positive", "neutral")
-        assert len(item["drivers"]) == 3, "every emotion prints the numbers behind it"
+        assert 3 <= len(item["drivers"]) <= 4, "every emotion prints the numbers behind it"
     # ranked, dominant first
     intensities = [item["intensity"] for item in payload["emotions"]]
     assert intensities == sorted(intensities, reverse=True)

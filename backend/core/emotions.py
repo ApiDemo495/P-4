@@ -214,6 +214,9 @@ TERM_DEFINITIONS: dict[str, str] = {
     "ask_thin": "ramp(−depth_imbalance; 0.10, 0.55)",
     "divergence": "news_pos × down_5s",
     "dip_buying": "min(buy, down_5s)",
+    "social_buzz": "ramp(social posts among the last 30 wire items; 2, 12)",
+    "social_pos": "ramp(social_sentiment; 0.10, 0.60) × social_buzz",
+    "social_neg": "ramp(−social_sentiment; 0.10, 0.60) × social_buzz",
 }
 
 
@@ -949,11 +952,23 @@ def features(
         ]
         out["news_freshest_seconds"] = float(min(ages)) if ages else 0.0
         out["news_volume"] = _ramp(len(items), 6.0, 20.0)
+        # Round AP: the social sensors (Reddit / StockTwits / X) ride the same
+        # wire tagged "social" - the crowd talking about the crowd.  Buzz is
+        # how many of the last 30 items are social; social_sentiment is their
+        # own mean sentiment (the retail mood, separate from the newsroom).
+        social = [item for item in items[-30:] if str(getattr(item, "relevance_tag", "")) == "social"]
+        out["social_posts"] = float(len(social))
+        out["social_buzz"] = _ramp(len(social), 2.0, 12.0)
+        out["social_sentiment"] = (float(np.mean([_num(getattr(i, "sentiment", 0.0)) for i in social]))
+                                   if social else 0.0)
     else:
         out["news_sentiment"] = 0.0
         out["news_items"] = 0.0
         out["news_freshest_seconds"] = 0.0
         out["news_volume"] = 0.0
+        out["social_posts"] = 0.0
+        out["social_buzz"] = 0.0
+        out["social_sentiment"] = 0.0
 
     # --- crowding / manipulation signature -------------------------------
     out["herding"] = _herding(ticks[-min(ticks.shape[0], 300) :])
@@ -1060,6 +1075,10 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
     news_pos = _ramp(news, 0.15, 0.70)
     news_neg = _ramp(-news, 0.15, 0.70)
     news_flow = f.get("news_volume", 0.0)
+    # Round AP: social buzz - loud and positive is FOMO, loud and negative is panic
+    social_buzz = f.get("social_buzz", 0.0)
+    social_pos = _ramp(f.get("social_sentiment", 0.0), 0.10, 0.60) * social_buzz
+    social_neg = _ramp(-f.get("social_sentiment", 0.0), 0.10, 0.60) * social_buzz
 
     # --- the book ---------------------------------------------------------
     depth = f.get("depth_imbalance", 0.0)
@@ -1184,13 +1203,13 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
             "COMPLACENCY": _weighted([(0.6, vol_calm), (0.4, middle)]),
         },
         "news": {
-            "FEAR": news_neg * (0.6 + 0.4 * news_flow),
-            "PANIC": news_neg * (0.8 + 0.2 * news_flow),
+            "FEAR": max(news_neg * (0.6 + 0.4 * news_flow), 0.6 * social_neg),
+            "PANIC": max(news_neg * (0.8 + 0.2 * news_flow), 0.8 * social_neg),
             "CAPITULATION": news_neg * (0.5 + 0.5 * news_flow),
             "DENIAL": news_pos * down_5s,
-            "HOPE": news_pos * (0.5 + 0.5 * news_flow),
-            "EUPHORIA": news_pos * (0.6 + 0.4 * news_flow),
-            "FOMO": news_pos * (0.6 + 0.4 * news_flow),
+            "HOPE": max(news_pos * (0.5 + 0.5 * news_flow), 0.5 * social_pos),
+            "EUPHORIA": max(news_pos * (0.6 + 0.4 * news_flow), 0.8 * social_pos),
+            "FOMO": max(news_pos * (0.6 + 0.4 * news_flow), social_pos),
             # Silence in the headlines is not a feeling, so complacency has no
             # news band - otherwise "no news" would fake a calm reading.
             "COMPLACENCY": 0.0,
@@ -1232,6 +1251,8 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
             f"5 s move {f.get('z_5s', 0.0):+.1f}x typical",
             f"volume {f.get('volume_climax', 0.0):.1f}x the tape's pace",
             f"ask side {'thin' if f.get('depth_imbalance', 0.0) < 0 else 'heavy'} ({f.get('depth_imbalance', 0.0):+.2f})",
+            (f"social: {int(f.get('social_posts', 0))} posts, mood {f.get('social_sentiment', 0.0):+.2f}"
+             if f.get('social_posts', 0) else "social: no posts on the wire (X needs a paid token; Reddit/StockTwits keyless)"),
         ],
         "COMPLACENCY": [
             f"volatility x{f.get('vol_ratio', 1.0):.2f}",

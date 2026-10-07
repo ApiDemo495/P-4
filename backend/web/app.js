@@ -1960,7 +1960,14 @@ function renderNewsList(data) {
       .map(([t, v]) => `${t}×${v.headlines}${v.habituation < 0.9 ? ` (${Math.round(v.habituation * 100)}% fresh)` : ""}`).join(", ");
     impactEl.innerHTML = `${cell("BTC")} ${cell("PAXG")} <span class="muted">· ${imp.classified || 0} themed, ${imp.world_items || 0} world` +
       `${imp.duplicates ? `, ${imp.duplicates} duplicates ignored` : ""}${themes ? ` · ${escapeHtml(themes)}` : ""}</span>`;
-    impactEl.title = "weight = tier × age decay × novelty (1/k-th headline on the theme × habituation: halves every 2 h a theme stays on the wire)";
+    const dropped = Object.values(data.filtered || {}).reduce((acc, v) => acc + Number(v || 0), 0);
+    const social = (data.items || []).filter((i) => i.relevance_tag === "social").length;
+    if (dropped || social) {
+      impactEl.innerHTML += ` <span class="muted">· relevance gate dropped ${dropped} unrelated headline${dropped === 1 ? "" : "s"}` +
+        `${social ? ` · ${social} social post${social === 1 ? "" : "s"} in view` : ""}</span>`;
+    }
+    impactEl.title = "weight = tier × age decay × novelty (1/k-th headline on the theme × habituation: halves every 2 h a theme stays on the wire)" +
+      ((data.filtered_examples || []).length ? "\nfiltered out: " + data.filtered_examples.slice(0, 4).join(" | ") : "");
   }
   (data.items || []).forEach((item) => {
     const row = document.createElement("div");
