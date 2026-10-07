@@ -242,7 +242,7 @@ def test_the_prediction_detail_explains_the_side(manager: CycleManager):
     assert engine["history_samples"] > 0
     assert detail["levels"]["tp_bps"] == pytest.approx(detail["levels"]["sl_bps"] * detail["levels"]["rr"], rel=1e-3)
     # Round AN: the target is capped at the measured 95 % minute move, so rr may sit below rr_target (never below RR_FLOOR)
-    assert 1.2 <= detail["levels"]["rr"] <= 2.5
+    assert 0.75 <= detail["levels"]["rr"] <= 2.5
     assert detail["micro"]["available"] is True
     assert detail["micro"]["resolution_us"] > 0
 
@@ -274,7 +274,7 @@ def test_the_live_formula_block_carries_microseconds_and_history(manager: CycleM
 
 def test_the_prediction_exposes_the_levels(manager: CycleManager):
     prediction = manager.signal_payload()["prediction"]
-    assert 1.2 <= prediction["rr"] <= 2.5
+    assert 0.75 <= prediction["rr"] <= 2.5
     assert prediction["tp_bps"] == pytest.approx(prediction["sl_bps"] * prediction["rr"], rel=1e-3)
     if prediction["entry"]:
         assert prediction["take_profit"] and prediction["stop_loss"]

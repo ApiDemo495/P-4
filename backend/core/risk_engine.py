@@ -112,9 +112,32 @@ def size_levels(
     spread_floor = SPREAD_MULT * max(float(spread_bps or 0.0), 0.0)
     moves = moves or {}
     measured = int(moves.get("n") or 0) >= 5 and float(moves.get("q80") or 0.0) > 0
+    if measured and float(moves.get("exc50") or 0.0) > 0:
+        # Round AP - sized for a ONE-MINUTE horizon from what the last
+        # minutes actually did, one-sided:
+        #   target = median one-sided excursion (the minute reaches it about
+        #            half the time before any edge), floored at 2 x spread;
+        #   stop   = 80 % one-sided excursion, capped at 1.25 x target so a
+        #            stop is never a whole minute's range away.
+        # Reward:risk is therefore reported, not targeted - a 1-minute
+        # window cannot deliver a 1.5:1 geometry and a reachable target at
+        # the same time, and pretending otherwise is what put the stop
+        # 300 points away.
+        exc50 = float(moves["exc50"])
+        exc80 = float(moves.get("exc80") or moves.get("mae80") or exc50 * 1.6)
+        tp = max(exc50, 2.0 * max(float(spread_bps or 0.0), 0.0), float(settings.min_tp_bps))
+        tp = min(tp, float(settings.max_tp_bps))
+        raw_stop = max(exc80, spread_floor)
+        sl = min(max(raw_stop, tp, float(settings.min_sl_bps)), 1.25 * tp, float(settings.max_sl_bps))
+        rr = tp / sl if sl > 0 else 1.0
+        method = (f"1-minute sizing from {moves.get('source')}: target = median one-sided excursion "
+                  f"{exc50:.1f} bps, stop = 80 % one-sided excursion {exc80:.1f} bps"
+                  + (" capped at 1.25 x target" if exc80 > 1.25 * tp else "")
+                  + (f", spread floor {spread_floor:.1f} bps" if spread_floor > 0 else "")
+                  + f"; reward:risk {rr:.2f} (reported, not targeted)")
+        return RiskLevels(sl, tp, rr, sigma_t, mae_z, spread_floor, method)
+
     if measured:
-        # Round AN: the stop is the measured 80 % adverse excursion of the
-        # last windows (what the tape actually did), not a modelled z x sigma.
         raw_stop = max(float(moves.get("mae80") or moves["q80"]), spread_floor)
     else:
         raw_stop = max(mae_z * sigma_t, spread_floor)
@@ -125,7 +148,6 @@ def size_levels(
     tp = min(max(sl * rr, float(settings.min_tp_bps)), float(settings.max_tp_bps))
     capped = ""
     if measured:
-        # a target the minute reaches less than one time in twenty is not a target
         ceiling = max(float(moves.get("q95") or 0.0), sl * RR_FLOOR, float(settings.min_tp_bps))
         if tp > ceiling:
             tp = ceiling

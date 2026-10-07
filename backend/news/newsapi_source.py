@@ -23,7 +23,10 @@ log = logging.getLogger("drosophila.news.newsapi")
 
 API_URL = "https://newsapi.org/v2/everything"
 PROVIDER = "NewsAPI"
-QUERY = "bitcoin OR ethereum OR crypto OR gold OR paxg"
+# Round AP: title-scoped and market-scoped - no more immigration rows that
+# happened to mention "gold" in the body.
+QUERY = ('(bitcoin OR btc OR crypto OR "gold price" OR bullion OR paxg OR "federal reserve" OR tariff '
+         'OR sanctions OR "rate cut" OR "rate hike" OR etf) NOT (immigration OR football OR celebrity)')
 
 
 class RateLimited(RuntimeError):
@@ -39,6 +42,7 @@ async def fetch(client: httpx.AsyncClient, settings=None, limit: int = 20,
 
     params = {
         "q": QUERY,
+        "searchIn": "title,description",
         "sortBy": "publishedAt",
         "language": "en",
         "pageSize": limit,

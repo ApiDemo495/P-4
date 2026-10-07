@@ -1667,8 +1667,10 @@ function renderWidgetPanel() {
   const risk = s?.risk || {};
   $("w-entry").textContent = fmtMoney(risk.entry || s?.price);
   const tradeable = !!risk.tradeable;
-  $("w-tp").textContent = tradeable ? fmtMoney(risk.take_profit) : "—";
-  $("w-sl").textContent = tradeable ? fmtMoney(risk.stop_loss) : "—";
+  const entryPx = Number(risk.entry || s?.price || 0);
+  const pts = (lvl) => (entryPx && lvl ? ` (${(Number(lvl) - entryPx) >= 0 ? "+" : ""}${(Number(lvl) - entryPx).toFixed(entryPx > 1000 ? 0 : 2)})` : "");
+  $("w-tp").textContent = tradeable ? fmtMoney(risk.take_profit) + pts(risk.take_profit) : "—";
+  $("w-sl").textContent = tradeable ? fmtMoney(risk.stop_loss) + pts(risk.stop_loss) : "—";
   $("w-sl").className = tradeable ? "neg" : "muted";
   $("w-tp").className = tradeable ? "pos" : "muted";
   $("w-rr").textContent = tradeable && risk.rr ? `${Number(risk.rr).toFixed(2)} : 1` : "—";

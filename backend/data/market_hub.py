@@ -44,6 +44,11 @@ class AssetBuffers:
         self.candle_minute: int = -1
         self.candle_close: float = 0.0
         self.candles_from_ticks: bool = False
+        # Round AP: quote-mid prints for thin tapes (see MarketDataHub._quote_tick)
+        self.last_trade_ts: float = 0.0
+        self.last_quote_mid: float = 0.0
+        self.quote_ticks: int = 0
+        self.candles_seeded_from: str = ""
 
 
 class MarketDataHub:
@@ -52,6 +57,7 @@ class MarketDataHub:
     def __init__(self, settings=None) -> None:
         self.settings = settings or cfg.SETTINGS
         self.buffers: dict[str, AssetBuffers] = {a: AssetBuffers(a) for a in cfg.ASSETS}
+        self._candle_seed: dict[str, tuple[list, str]] = {}
         self.binance: BinanceWebSocket | None = None
         self.coingecko: CoinGeckoFeed | None = None
         self.kraken: KrakenWebSocket | None = None
@@ -221,15 +227,77 @@ class MarketDataHub:
             return
         for row in ticks or []:
             buf.ticks.append(row[1], row[2], row[3], time_ms=row[0])
+            buf.last_trade_ts = max(buf.last_trade_ts, float(row[0]) / 1000.0)
             self._track_flash(asset, row[1], row[0] / 1000.0)
             self._roll_candle(buf, float(row[1]), float(row[0]))
         if book is not None:
             buf.book.push(book)
+            self._quote_tick(asset, buf)
         for listener in self.listeners:
             try:
                 listener(asset, ticks, book)
             except Exception as exc:  # noqa: BLE001
                 log.debug("tape listener failed: %s", exc)
+
+    def seed_candles(self, asset: str, rows: list[tuple[float, float]], source: str = "history") -> int:
+        """Round AP: pre-load minute closes ``(open_time_ms, close)`` from
+        public history so candle-based readings never start from an empty
+        buffer.  Remembered and re-applied after a tape flush."""
+        buf = self.buffers.get(asset)
+        if buf is None or not rows:
+            return 0
+        self._candle_seed[asset] = (list(rows), source)
+        return self._apply_candle_seed(asset)
+
+    def _apply_candle_seed(self, asset: str) -> int:
+        buf = self.buffers[asset]
+        seed = self._candle_seed.get(asset)
+        if not seed or len(buf.candles) >= 30:
+            return 0
+        rows, source = seed
+        have = set(buf.candles._open_time)
+        n = 0
+        for open_ms, close in rows:
+            if int(open_ms) in have or close <= 0:
+                continue
+            buf.candles.push(float(close), int(open_ms))
+            n += 1
+        buf.candles_seeded_from = source
+        log.info("%s candle buffer seeded with %d minutes from %s", asset, n, source)
+        return n
+
+    #: a quote print is written when no trade arrived for this long ...
+    QUOTE_TICK_AFTER_S = 2.0
+    #: ... and the mid moved by at least this fraction (0.5 bp)
+    QUOTE_TICK_MIN_MOVE = 0.00005
+
+    def _quote_tick(self, asset: str, buf: AssetBuffers) -> None:
+        """Round AP: keep a thin tape alive from the order book.
+
+        PAXG prints a trade every few minutes on Gemini and a few times a
+        minute on Kraken.  Every tape-driven reading - the emotions, the
+        physics mechanisms that need both legs, the minute-move quantiles the
+        levels are sized on, half of the 22 formulas - starved on it and sat
+        at "waiting" / 0.00 / inactive.  The book, however, updates many
+        times a second on every venue.  When no trade has printed for
+        ``QUOTE_TICK_AFTER_S`` and the mid has moved, the mid is written to
+        the tape as a *quote print*: ``qty = 0`` and ``side = 0`` so volume
+        and aggressor statistics ignore it, price statistics see the market
+        moving.  Counted per asset for /api/feeds/diagnose."""
+        mid = buf.book.mid()
+        if mid <= 0:
+            return
+        now = time.time()
+        if now - buf.last_trade_ts < self.QUOTE_TICK_AFTER_S:
+            buf.last_quote_mid = mid
+            return
+        ref = buf.last_quote_mid or (float(buf.ticks.prices(1)[-1]) if buf.ticks.size else 0.0)
+        if ref > 0 and abs(mid / ref - 1.0) < self.QUOTE_TICK_MIN_MOVE:
+            return
+        buf.last_quote_mid = mid
+        buf.ticks.append(mid, 0.0, 0.0, time_ms=now * 1000.0)
+        buf.quote_ticks += 1
+        self._roll_candle(buf, float(mid), now * 1000.0)
 
     def _roll_candle(self, buf: AssetBuffers, price: float, time_ms: float) -> None:
         """Build 1-minute closes from the trade tape.
@@ -410,6 +478,8 @@ class MarketDataHub:
                 buf.candle_minute = -1
                 buf.candle_close = 0.0
                 buf.candles_from_ticks = False
+            for asset in self.buffers:
+                self._apply_candle_seed(asset)
             self._flash_marks = {a: [] for a in cfg.ASSETS}
             self._day_high = {}
             log.warning("tape flushed: %s -> %s share no history", previous, source)

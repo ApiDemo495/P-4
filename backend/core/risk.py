@@ -104,7 +104,8 @@ def minute_move_quantiles(snapshot, asset: str, horizon_seconds: float = 60.0) -
     target the minute almost never reaches.  Falls back to the 1-minute
     candle closes when the tick tape is shorter than three horizons.
     """
-    out = {"n": 0, "q50": 0.0, "q80": 0.0, "q90": 0.0, "q95": 0.0, "mae80": 0.0, "source": "none"}
+    out = {"n": 0, "q50": 0.0, "q80": 0.0, "q90": 0.0, "q95": 0.0, "mae80": 0.0,
+           "exc50": 0.0, "exc80": 0.0, "source": "none"}
     try:
         ticks = snapshot.ticks(asset)
     except Exception:  # noqa: BLE001
@@ -125,11 +126,18 @@ def minute_move_quantiles(snapshot, asset: str, horizon_seconds: float = 60.0) -
             if i0.size >= 6:
                 entry = p[i0]
                 moves = (p[i1] / entry - 1.0) * 1e4
-                mae = np.empty(i0.size)
+                # Round AP: one-sided excursions.  The old "max of both
+                # directions" was the *range* of the minute - it counted the
+                # favourable leg as adverse and doubled every stop.  Each
+                # window contributes its up-leg and its down-leg separately;
+                # the pool is what one side of a trade actually sees.
+                ups = np.empty(i0.size)
+                downs = np.empty(i0.size)
                 for k in range(i0.size):
                     seg = p[i0[k]: i1[k] + 1] / entry[k] - 1.0
-                    mae[k] = max(float(-seg.min()), float(seg.max())) * 1e4
-                maes = mae
+                    ups[k] = max(0.0, float(seg.max())) * 1e4
+                    downs[k] = max(0.0, float(-seg.min())) * 1e4
+                maes = np.concatenate([ups, downs])
                 out["source"] = f"tick tape, {i0.size} overlapping {int(horizon_seconds)}s windows"
     if moves.size < 6:
         closes = np.asarray(snapshot.candles(asset), dtype=np.float64)
@@ -143,9 +151,11 @@ def minute_move_quantiles(snapshot, asset: str, horizon_seconds: float = 60.0) -
     if moves.size < 5:
         return out
     a = np.abs(moves)
+    exc = maes if maes.size else a
     out.update(n=int(a.size), q50=float(np.quantile(a, 0.5)), q80=float(np.quantile(a, 0.8)),
                q90=float(np.quantile(a, 0.9)), q95=float(np.quantile(a, 0.95)),
-               mae80=float(np.quantile(maes, 0.8)) if maes.size else float(np.quantile(a, 0.8)))
+               exc50=float(np.quantile(exc, 0.5)), exc80=float(np.quantile(exc, 0.8)),
+               mae80=float(np.quantile(exc, 0.8)))
     return out
 
 

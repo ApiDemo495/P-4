@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -28,7 +28,7 @@ from backend.data.ring_buffer import NewsCache, NewsItem
 
 # A deterministic offline headline pack so the news bar, NIV/SMD and the
 # emergency path are all exercisable without network access.
-from backend.news import cryptopanic_source, newsapi_source, rss_source
+from backend.news import cryptopanic_source, newsapi_source, rss_source, social_source
 from backend.news.critical_event_detector import CriticalEvent, CriticalEventDetector
 
 log = logging.getLogger("drosophila.news")
@@ -50,6 +50,7 @@ class NewsStatus:
     cryptopanic: str = "not_configured"
     newsapi: str = "not_configured"
     rss: str = "unknown"
+    social: dict = field(default_factory=dict)
     last_poll: float = 0.0
     items: int = 0
     niv: float = 0.0
@@ -60,6 +61,7 @@ class NewsStatus:
             "cryptopanic": self.cryptopanic,
             "newsapi": self.newsapi,
             "rss": self.rss,
+            "social": dict(self.social),
             "last_poll": self.last_poll,
             "seconds_since_poll": round(time.time() - self.last_poll, 1) if self.last_poll else None,
             "items": self.items,
@@ -83,6 +85,7 @@ class NewsEngine:
         self._last_cryptopanic = 0.0
         self._last_newsapi = 0.0
         self._last_rss = 0.0
+        self._last_social = 0.0
         self._synthetic_index = 0
         self.last_error: str = ""
 
@@ -145,6 +148,13 @@ class NewsEngine:
             polled["rss"] = await self._poll_rss()
             self._last_rss = now
 
+        # --- Social sensors (Round AP): Reddit + StockTwits keyless, X keyed
+        if getattr(self.settings, "social_enabled", True) and (
+            force or (now - self._last_social) >= float(getattr(self.settings, "social_poll_seconds", 90.0))
+        ):
+            polled["social"] = await self._poll_social()
+            self._last_social = now
+
         # --- Last resort: keep the pipeline alive offline ---------------
         if self.cache.all() == () or (now - self.cache.last_poll) > 300:
             polled["synthetic"] = self._seed_synthetic()
@@ -154,6 +164,21 @@ class NewsEngine:
         return polled
 
     # ------------------------------------------------------------------
+    async def _poll_social(self) -> int:
+        assert self._client is not None
+        try:
+            items, status = await social_source.fetch(self._client, self.settings)
+        except Exception as exc:  # noqa: BLE001
+            self.status.social = {"error": str(exc)}
+            self.cache.providers["social"] = f"error: {exc}"
+            return 0
+        self.status.social = status
+        added = self.cache.add(items)
+        live = [k for k, v in status.items() if str(v).startswith("ok")]
+        self.cache.providers["social"] = (f"ok ({added} new from {', '.join(live)})" if live
+                                          else "; ".join(f"{k}: {v}" for k, v in status.items() if k in ("reddit", "stocktwits", "x")))
+        return added
+
     async def _poll_cryptopanic(self) -> int:
         return await self._poll_with_ring("cryptopanic", cryptopanic_source)
 
@@ -259,7 +284,7 @@ class NewsEngine:
         now = time.time()
         num = den = 0.0
         for item in items:
-            weight = item.credibility * pow(2.718281828, -item.age_seconds(now) / 300.0)
+            weight = item.credibility * float(getattr(item, "relevance", 1.0) or 1.0) * pow(2.718281828, -item.age_seconds(now) / 300.0)
             num += item.sentiment * weight
             den += weight
         return float(num / den) if den > 0 else 0.0

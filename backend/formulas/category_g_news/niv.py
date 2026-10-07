@@ -73,7 +73,7 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     used = 0
     for item in list(items)[:ITEMS]:
         age = max(0.0, now - float(item.published_at))
-        weight = float(item.credibility) * math.exp(-age / DECAY_SECONDS)
+        weight = float(item.credibility) * float(getattr(item, "relevance", 1.0) or 1.0) * math.exp(-age / DECAY_SECONDS)
         if weight <= 0.0:
             continue
         num += float(item.sentiment) * weight

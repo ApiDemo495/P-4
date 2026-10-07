@@ -22,6 +22,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
+import dataclasses
 from dataclasses import dataclass
 
 import numpy as np
@@ -199,6 +200,9 @@ class NewsItem:
     published_at: float
     url: str = ""
     provider: str = ""
+    #: Round AP: 1.0 direct (bitcoin/gold), 0.7 macro, 0.6 geopolitical, 0 noise
+    relevance: float = 1.0
+    relevance_tag: str = "direct"
 
     @property
     def credibility(self) -> float:
@@ -218,6 +222,8 @@ class NewsItem:
             "age_seconds": round(self.age_seconds(), 1),
             "url": self.url,
             "provider": self.provider,
+            "relevance": self.relevance,
+            "relevance_tag": self.relevance_tag,
         }
 
 
@@ -229,13 +235,26 @@ class NewsCache:
         self._items: deque[NewsItem] = deque(maxlen=capacity)
         self.last_poll: float = 0.0
         self.providers: dict[str, str] = {}
+        #: Round AP: headlines refused by the relevance gate, per provider
+        self.filtered: dict[str, int] = {}
+        self.filtered_examples: deque[str] = deque(maxlen=12)
 
     def add(self, items: list[NewsItem]) -> int:
+        from backend.news import relevance as rel
+
         seen = {i.headline for i in self._items}
         added = 0
         for item in items:
             if item.headline in seen:
                 continue
+            score, tag = rel.score(item.headline)
+            if score <= 0.0:
+                key = item.provider or item.source or "?"
+                self.filtered[key] = self.filtered.get(key, 0) + 1
+                self.filtered_examples.appendleft(f"{tag}: {item.headline[:90]}")
+                continue
+            if item.relevance != score or item.relevance_tag != tag:
+                item = dataclasses.replace(item, relevance=score, relevance_tag=tag)
             seen.add(item.headline)
             self._items.appendleft(item)
             added += 1

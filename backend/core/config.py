@@ -176,6 +176,10 @@ class Settings:
     glassnode_key: str = field(default_factory=lambda: _env("GLASSNODE_API_KEY"))
     twelvedata_key: str = field(default_factory=lambda: _env("TWELVEDATA_API_KEY"))
     lunarcrush_key: str = field(default_factory=lambda: _env("LUNARCRUSH_API_KEY"))
+    # Round AP: social sensors (Reddit + StockTwits keyless; X needs a paid bearer token)
+    x_bearer_token: str = field(default_factory=lambda: _env("X_BEARER_TOKEN"))
+    social_enabled: bool = field(default_factory=lambda: _env("SOCIAL_ENABLED", "1") not in ("0", "false", "no"))
+    social_poll_seconds: float = field(default_factory=lambda: _env_float("SOCIAL_POLL_SECONDS", 90.0))
     cave_server: str = field(
         default_factory=lambda: _env("CAVE_SERVER", "https://global.daf-apis.com")
     )
@@ -371,10 +375,12 @@ class Settings:
     # --- Risk levels (Section 10.5) -------------------------------------
     # Round AN: one-minute levels.  A quiet BTC minute moves 1-3 bps; the old
     # floors (4 / 3 bps) and caps (150 / 120 bps) belonged to a longer horizon.
+    # Round AP: caps for a ONE-MINUTE horizon (BTC's median one-sided minute
+    # excursion is 3-10 bps; a 60 bp target was never a 1-minute target).
     min_tp_bps: float = 1.5
-    max_tp_bps: float = 60.0
+    max_tp_bps: float = 25.0
     min_sl_bps: float = 1.0
-    max_sl_bps: float = 40.0
+    max_sl_bps: float = 30.0
     default_volatility_bps: float = 12.0
 
     @property

@@ -96,6 +96,10 @@ async def test_agent(name: str, payload: TestPayload | None = None) -> dict:
         feeds = await rss_source.check_feeds(manager.settings.rss_feeds)
         ok = sum(1 for f in feeds if f["ok"])
         return {"valid": ok > 0, "detail": f"{ok}/{len(feeds)} feeds reachable", "feeds": feeds}
+    if name == "x":
+        from backend.news import social_source
+
+        return await social_source.test_key(key or manager.settings.x_bearer_token)
     if name in ("glassnode", "twelvedata", "lunarcrush"):
         from backend.data import keyed_providers
 
@@ -172,6 +176,13 @@ async def key_effects() -> dict:
                      "effect": ("no key" if not st.get("configured") else
                                 f"{st.get('rows')} rows feeding column {st.get('column')}" if st.get("rows") else
                                 f"not contributing: {st.get('error') or 'first poll pending'}")}
+    social = (manager.news.status.to_dict().get("social") or {})
+    out["x"] = {"configured": bool(settings.x_bearer_token), "status": social.get("x", ""),
+                "effect": ("no token (Reddit + StockTwits run without one)" if not settings.x_bearer_token else
+                           str(social.get("x") or "first poll pending"))}
+    out["social (reddit, stocktwits)"] = {"configured": True, "status": ", ".join(f"{k}: {v}" for k, v in social.items() if k in ("reddit", "stocktwits")),
+                                          "effect": ("posts flowing into the news wire" if any(str(social.get(k, "")).startswith("ok") for k in ("reddit", "stocktwits"))
+                                                     else (", ".join(f"{k}: {v}" for k, v in social.items() if k in ("reddit", "stocktwits")) or "first poll pending"))}
     env_path = cfg.REPO_ROOT / ".env"
     out["_persistence"] = {
         "env_file": str(env_path), "env_exists": env_path.exists(),
@@ -192,6 +203,7 @@ async def key_rings() -> dict:
     rings["cave"] = {"configured": bool(manager.settings.cave_token), "configured_slots": 1}
     for name in ("glassnode", "twelvedata", "lunarcrush"):
         rings[name] = {"configured": bool(getattr(manager.settings, f"{name}_key", "")), "configured_slots": 1}
+    rings["x"] = {"configured": bool(manager.settings.x_bearer_token), "configured_slots": 1}
     return {"rings": rings, "max_slots": keyring.MAX_SLOTS}
 
 
@@ -210,6 +222,8 @@ def _store_key(manager, name: str, key: str, slot: int) -> None:
         manager.settings.cave_token = key
     elif name in ("glassnode", "twelvedata", "lunarcrush"):
         setattr(manager.settings, f"{name}_key", key)
+    elif name == "x":
+        manager.settings.x_bearer_token = key
     else:
         raise HTTPException(status_code=404, detail=f"unknown key slot {name!r}")
 
@@ -252,6 +266,7 @@ _SINGLE_ENV_NAMES = {
     "glassnode": "GLASSNODE_API_KEY",
     "twelvedata": "TWELVEDATA_API_KEY",
     "lunarcrush": "LUNARCRUSH_API_KEY",
+    "x": "X_BEARER_TOKEN",
 }
 
 

@@ -273,6 +273,19 @@ class CycleManager:
             await asyncio.wait_for(self.genesis.bootstrap(), timeout=25)
         except Exception as exc:  # noqa: BLE001
             log.warning("genesis bootstrap skipped: %s", exc)
+        # Round AP: the same public minute history seeds the hub's candle
+        # buffers, so the candle formulas (RSV, VSS, TWRS, the realised-vol
+        # sigma, the 1-min move quantiles' fallback) compute from the first
+        # window instead of printing 0.00 for the first 20-60 minutes - and
+        # again after every tape flush.
+        for asset in cfg.ASSETS:
+            try:
+                rows = self.genesis.stores[asset].rows(limit=cfg.CANDLE_BUFFER_SIZE, include_open=False)
+                if len(rows):
+                    self.market.seed_candles(asset, [(float(r[0]), float(r[4])) for r in rows],
+                                             source=self.genesis.stores[asset].bootstrapped_from or "history")
+            except Exception as exc:  # noqa: BLE001
+                log.debug("candle seed skipped for %s: %s", asset, exc)
         self.genesis.start()
         await self.macro.start()
 
@@ -1518,6 +1531,8 @@ class CycleManager:
             "niv": round(self.news.current_niv(), 4),
             "cache_size": len(self.news.cache.all()),
             "providers": self.news.cache.providers,
+            "filtered": dict(self.news.cache.filtered),
+            "filtered_examples": list(self.news.cache.filtered_examples)[:6],
         }
 
     def agents_payload(self) -> dict:
@@ -1753,6 +1768,10 @@ class CycleManager:
                 "source": self.market.active_source,
                 "simulated": self.market.tape_is_simulated,
                 "btc_ticks": self.market.tick_count("BTC"),
+                "paxg_ticks": self.market.tick_count("PAXG"),
+                "quote_prints": {a: self.market.buffers[a].quote_ticks for a in cfg.ASSETS},
+                "candles": {a: {"n": len(self.market.buffers[a].candles),
+                                "seeded_from": self.market.buffers[a].candles_seeded_from} for a in cfg.ASSETS},
                 "rejected_writes": dict(self.market.rejected),
                 "source_age_seconds": round(time.time() - self.market.source_changed_at, 1),
                 "feeds": self.market.feeds_report().get("feeds", {}),
