@@ -1786,3 +1786,40 @@ suite 302.
   token is present (unreachable / refused / query failed).
 * Fresh-Codespace path documented (README, API_KEYS_AND_MODELS): repository
   Codespace secrets with the exact env names; env wins over `.env` (setdefault).
+
+## AP - the thirteen things that were still wrong
+
+* **TP/SL too wide**: `risk_engine.size_levels` sizes for ONE minute from the
+  measured one-sided excursions (target = median excursion, stop = 80 % excursion
+  capped at 1.25 x target; `max_tp_bps` 25, `max_sl_bps` 30, and the stop is
+  never wider than the target cap). Reward:risk is *reported*, not targeted.
+* **Crowd emotion "waiting for the first sample"**: `broadcast` dropped a slow
+  subscriber on `QueueFull` and never re-added it; Genesis re-scoring starved the
+  loop (now niced / chunked). `/api/system/health` tells which stage is quiet.
+* **News irrelevant**: `backend/news/relevance.py` scores every headline against
+  BTC / gold / macro / war-trade-sanctions themes; `score == 0` is counted in
+  `cache.filtered` and shown in the news card ("relevance gate dropped n").
+* **Same BUY/SELL while the market moves against it**: `_tape_veto` inside `_fuse`
+  (before the lock) flips or flattens a side that the last 20 s of tape contradicts
+  by more than the spread; printed as `fusion.tape_veto` and the `w-veto` row.
+* **Gemini errors**: `choose_model` walks the ListModels result and skips models
+  whose free-tier quota is 0 or that reject `responseSchema` (falls back to
+  schema-less JSON); the probe is shown on `/settings`.
+* **Hedge never did the maths**: `hedge_outcomes.build` and `HRDD` fall back to
+  the last <=121 one-minute closes of BTC and PAXG when the tick grid is thin
+  (PAXG prints every ~15 min on Gemini); the `&b` cross feed is then *derived*,
+  not "warming" - no more permanent `partial`.
+* **Physics "inactive"**: each mechanism prints its exact reason (one venue only,
+  no gold spot, PAXG tape too thin) in the Physics card; thresholds unchanged -
+  they were honest, the inputs were thin. Quote-mid prints (`_quote_tick`) feed
+  thin tapes so the kinetics can run.
+* **Every 0.00 says why**: `FormulaResult.zero_reasons` and a `why 0.00` trace row
+  (what the formula needs vs what the pass had, or "computed, genuinely flat").
+  Rendered as an amber chip in the Formula Explorer and in the LIVE CALCULATION note.
+* **LIVE CALCULATION panel** (`#livecalc-card`): all 24 formula values stream on
+  every full EMOTION sample (2 s) with the pass time in µs; 90-point sparklines
+  per formula and a top-6 delta ticker. No client timer - the backend schedule.
+* **Social**: Reddit / StockTwits keyless sensors (+ X with a paid bearer) ride
+  the news wire tagged `social`; `social_buzz` / `social_sentiment` features drive
+  FOMO / EUPHORIA (positive buzz) and FEAR / PANIC (negative buzz) on the news band.
+* Tests follow one-minute sizing (`test_round_aa/am/v`, `test_prediction`); suite 304.

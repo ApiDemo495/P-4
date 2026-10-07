@@ -300,6 +300,17 @@ def _zero_reason(name: str, trace: list, result, ticks) -> str:
                 return "no significant direction this pass (the sign gate did not clear)"
         if "basis" in label and ("need" in unit or "no " in unit):
             return f"{val} {unit}"
+    # the formula computed and the answer really is zero: say so, with its own words
+    gate = rows.get("noise gate")
+    if gate is not None and str(gate.get("value", "")).strip() in ("0", "0.0", "0.000000"):
+        snr = rows.get("signal-to-noise")
+        return ("computed, but below its noise gate" +
+                (f" (signal-to-noise {_fmt_num(snr.get('value'))} < 1)" if snr else "") +
+                " - the deviation is not distinguishable from noise this pass")
+    reading = rows.get("reading")
+    if reading is not None and any(w in str(reading.get("value", "")).lower()
+                                   for w in ("balanced", "no directional", "neutral", "inside", "flat")):
+        return f"computed, genuinely flat this pass: {reading.get('value')}"
     need = _NEEDS.get(name, "more data than this pass had")
     have = f"{int(ticks or 0)} ticks"
     try:
@@ -876,7 +887,9 @@ class FormulaEngine:
                 # back to what it needs and what the snapshot had.
                 why = _zero_reason(name, trace, result, ticks)
                 result.zero_reasons[name] = why
-                context.append({"label": "why 0.00", "value": why, "unit": "the value is excluded from the vote until this clears"})
+                context.append({"label": "why 0.00", "value": why,
+                                "unit": ("a true zero - it votes neither way" if why.startswith("computed")
+                                         else "the value is excluded from the vote until this clears")})
             context += [
                 {
                     "label": "value · "
