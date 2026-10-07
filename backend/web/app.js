@@ -1671,8 +1671,12 @@ function renderWidgetPanel() {
   if (state.accuracyWindowId === windowId && sinceOpen > 3) return;
   state.accuracyWindowId = windowId;
   const rows = state.outcomes || [];
-  const wins = rows.filter((r) => r.outcome > 0).length;
-  const winRate = rows.length ? wins / rows.length : null;
+  // Round AM: the rate is over DECIDED windows; flat windows (no print or a
+  // move inside the spread) are shown beside it, never counted as losses.
+  const decidedRows = rows.filter((r) => r.outcome !== 0);
+  const flats = rows.length - decidedRows.length;
+  const wins = decidedRows.filter((r) => r.outcome > 0).length;
+  const winRate = decidedRows.length ? wins / decidedRows.length : null;
   let streak = 0;
   for (let i = rows.length - 1; i >= 0; i -= 1) {
     if (rows[i].outcome === 0) break;
@@ -1681,7 +1685,14 @@ function renderWidgetPanel() {
     else break;
   }
   $("w-winrate").textContent = winRate === null ? "—" : fmtPct(winRate);
-  $("w-samples").textContent = rows.length ? String(rows.length) : "0";
+  $("w-samples").textContent = rows.length ? `${decidedRows.length} · ${flats} flat` : "0";
+  const guard = (state.prediction && state.prediction.accuracy && state.prediction.accuracy.edge_guard) || {};
+  if ($("w-guard")) {
+    $("w-guard").textContent = guard.inverted
+      ? `⇄ INVERTED — ${guard.note || "the raw side has been losing; publishing the opposite"}`
+      : (guard.note || "arming");
+    $("w-guard").className = guard.inverted ? "neg" : "muted";
+  }
   $("w-streak").textContent = streak === 0 ? "—" : (streak > 0 ? `${streak} win${streak > 1 ? "s" : ""}` : `${-streak} loss${streak < -1 ? "es" : ""}`);
   $("w-streak").className = streak > 0 ? "pos" : streak < 0 ? "neg" : "muted";
   const last = rows[rows.length - 1];

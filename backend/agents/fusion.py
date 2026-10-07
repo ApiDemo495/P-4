@@ -65,6 +65,7 @@ class FusionResult:
     spec_score: float = 0.0
     physics: dict = field(default_factory=dict)
     genesis: dict = field(default_factory=dict)
+    edge_guard: dict = field(default_factory=dict)
 
     # -- binary direction fields (HOLD was removed) ----------------------
     @property
@@ -106,6 +107,7 @@ class FusionResult:
             "spec_score": round(self.spec_score, 4),
             "physics": self.physics,
             "genesis": self.genesis,
+            "edge_guard": self.edge_guard,
         }
         # Kept for the two clients: "lean" now always equals the decision,
         # because there is no third state to lean away from.
@@ -136,6 +138,7 @@ def fuse(
     learned: dict | None = None,
     physics: dict | None = None,
     genesis: dict | None = None,
+    edge_guard: dict | None = None,
     news_impact: dict | None = None,
     asset: str = "BTC",
     ledger_sources: list | None = None,
@@ -438,6 +441,21 @@ def fuse(
         )
 
     # ------------------------------------------------------------------
+    # Round AM: live edge guard.  When the engine's raw side has been
+    # significantly WORSE than a coin flip over the decided windows, the
+    # tape is telling us the sign is wrong - publish the opposite side and
+    # say so, until the raw side is right again.  Measured on the raw side,
+    # so it cannot oscillate.
+    # ------------------------------------------------------------------
+    guard = dict(edge_guard or {})
+    raw_score, raw_ccs = score, ccs_value
+    if guard.get("inverted"):
+        score = -score
+        ccs_value = -ccs_value
+    guard["raw_side"] = BUY if raw_score >= 0 else SELL
+    guard["raw_score"] = round(float(raw_score), 4)
+
+    # ------------------------------------------------------------------
     # Decision: always a side (Section 10.1, amended to binary)
     # ------------------------------------------------------------------
     degraded = insufficient_evidence or any(
@@ -458,6 +476,11 @@ def fuse(
         forced_reason = "Emergency override active"
     elif degraded:
         forced_reason = "Insufficient formula evidence"
+    if guard.get("inverted"):
+        # keep the raw numbers visible: the explanation below is built from
+        # the raw recipe, the guard's note says why the side is the opposite.
+        learned_note = (learned_note + "; " if learned_note else "") + str(guard.get("note") or "edge guard inverted the side")
+    ccs_value = raw_ccs
 
     reasoning = _explain(
         direction,
@@ -496,6 +519,7 @@ def fuse(
         spec_score=spec_score,
         physics=physics,
         genesis=genesis,
+        edge_guard=guard,
         lock_weights=table.as_dict(),
     )
 

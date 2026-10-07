@@ -660,6 +660,16 @@ pair-neutral, mirror leg) with expected bp, σ and P(profit), the best by μ/σ;
 GCDV / SHRP ("hedge working", "weakening", "breaking", "ratio drifting",
 "paths diverging"). It is in `signal.hedge.outcomes` of `/api/signal/current`.
 
+## 9c-bis. How a window is scored (and the edge guard)
+
+A window is **FLAT** when the price did not move or the move stayed inside
+the spread - it is counted and shown, never as a loss. The win rate is over
+*decided* windows. The **edge guard** scores the engine's raw side on every
+decided window; if that raw side has been significantly worse than a coin
+flip (95 % Wilson upper bound < 50 % over the last 12–30 decided windows) the
+engine publishes the opposite side, says "⇄ INVERTED" in the accuracy panel,
+and releases only when the raw side is right again.
+
 ## 9d. The Formula Genesis Engine (v3.0)
 
 A second formula layer that does not replace the 22 named formulas: it

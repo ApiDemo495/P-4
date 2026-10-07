@@ -1722,3 +1722,23 @@ travels with the lock → `cycle_manager.genesis_payload()` in
 
 **Verification.** `test_round_al.py` (20), `tools/dev/genesis_bench.py`
 (full pool ≈ 32 s on a 620-minute synthetic tape), dead-code 0, assets `v=2.23.0`.
+
+## AM — flat windows and the live edge guard
+
+**Symptom.** "Win rate 8 % in one hour." A coin-flip scorer cannot print 8 %;
+on the simulator the same scorer prints ~50 %. Two real causes, both fixed:
+
+- **Flat windows were losses.** `_evaluate_outcome` scored `exit == entry`
+  (a thin PAXG minute with no print) and any move inside the spread as a LOSS
+  for whichever side was published. Now `|move| ≤ spread cost` or no move is
+  FLAT (outcome 0): reported (`accuracy.flat`, `decided`), never a loss; win
+  rate = wins / decided; per-side rates only count decided windows.
+- **Anti-correlation was tolerated.** `backend/core/edge_guard.py`: the
+  engine's RAW side (before inversion) is scored on every decided window; when
+  the Wilson 95 % upper bound of the raw hit rate over the last 30 (≥ 12) is
+  below 50 %, fusion publishes the opposite side (`FusionResult.edge_guard`,
+  `raw_side`, note in the reasoning) and stays inverted until the raw rate is
+  back to 50 % - measured on the raw side, so it cannot oscillate. Shown in
+  the prediction panel ("Edge guard" row, "⇄ INVERTED").
+
+`test_round_am.py` (4); full suite 301; assets `v=2.24.0`.

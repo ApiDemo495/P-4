@@ -45,6 +45,7 @@ from backend.core.prediction import build as build_prediction
 from backend.core.emotions import EmotionMonitor, analyze as analyze_emotions, compact as compact_emotions
 from backend.core.prediction import detail as prediction_detail
 from backend.core.prediction import build_reasoning, consensus
+from backend.core import edge_guard
 from backend.core.calibration import EvidenceLedger
 from backend.core.frozen_snapshot import FrozenMarketSnapshot
 from backend.core.redis_bus import Store
@@ -151,6 +152,12 @@ class CycleManager:
         #: (side, outcome) pairs, so the accuracy panel can say which side the
         #: engine has actually been getting right rather than only the total.
         self._side_outcomes: deque[tuple[str, float]] = deque(maxlen=40)
+        #: Round AM: ±1 per decided window measured on the engine's RAW side
+        #: (before the edge guard's inversion), oldest first; the guard's input.
+        self._raw_outcomes: deque[int] = deque(maxlen=60)
+        self._inverted_cycles: set[int] = set()
+        self._flat_windows = 0
+        self.edge_guard: dict = {"inverted": False, "note": "edge guard arming"}
         self.stats = CycleStats()
 
         self.asset = "BTC"
@@ -1295,6 +1302,10 @@ class CycleManager:
         if self._last_votes:
             self.ledger.remember(signal.asset, signal.cycle_number, self._last_votes,
                                  float((self._last_learned or {}).get("p_up") or 0.5))
+        if ((self.last_fusion or {}).get("edge_guard") or {}).get("inverted"):
+            self._inverted_cycles.add(int(signal.cycle_number))
+            if len(self._inverted_cycles) > 400:
+                self._inverted_cycles = set(sorted(self._inverted_cycles)[-200:])
         task = asyncio.create_task(self._evaluate_outcome(signal, snapshot))
         self._outcome_tasks.add(task)
         task.add_done_callback(self._outcome_tasks.discard)
@@ -1325,7 +1336,16 @@ class CycleManager:
             return
 
         change_bps = (exit_price / entry - 1.0) * 10_000.0
-        if signal.signal == "BUY":
+        cost_bps = self._trading_cost_bps(signal.asset)
+        # Round AM: a window whose move did not clear the spread (or did not
+        # move at all - a thin PAXG minute) is FLAT, not a loss.  It used to
+        # be scored as a loss for whichever side was published, which on a
+        # thin tape printed single-digit "win rates" that measured the tape's
+        # silence, not the engine.
+        flat = exit_price == entry or abs(change_bps) <= cost_bps
+        if flat:
+            outcome = 0.0
+        elif signal.signal == "BUY":
             outcome = 1.0 if exit_price > entry else -1.0
         else:
             outcome = 1.0 if exit_price < entry else -1.0
@@ -1333,22 +1353,33 @@ class CycleManager:
         # +20 bps move is -20 bps.  (It used to print "LOSS +198 bps".)
         pnl_bps = change_bps if signal.signal == "BUY" else -change_bps
         self.outcomes.append(outcome, pnl_bps)
+        if flat:
+            self._flat_windows += 1
+        else:
+            # the guard scores the RAW side: a published (inverted) win is a raw loss
+            raw = int(outcome) * (-1 if int(signal.cycle_number) in self._inverted_cycles else 1)
+            self._raw_outcomes.append(raw)
+            self._inverted_cycles.discard(int(signal.cycle_number))
+            self.edge_guard = edge_guard.assess(list(self._raw_outcomes),
+                                                bool(self.edge_guard.get("inverted"))).as_dict()
         learned_update = self.ledger.score(
             signal.asset, signal.cycle_number,
             None if exit_price == entry else exit_price > entry,
-            move_bps=change_bps, cost_bps=self._trading_cost_bps(signal.asset),
+            move_bps=change_bps, cost_bps=cost_bps,
         )
         if learned_update:
             log.info("ledger scored window %s: %s (%d sources right, %d wrong)",
                      signal.cycle_number, learned_update["actual"],
                      learned_update["sources_right"], learned_update["sources_wrong"])
-        self._side_outcomes.append((signal.signal, outcome))
+        if not flat:
+            self._side_outcomes.append((signal.signal, outcome))
         log.info(
-            "outcome %s on %s: %+.1f bps (%s)",
+            "outcome %s on %s: %+.1f bps (%s)%s",
             signal.signal,
             signal.asset,
             change_bps,
-            "win" if outcome > 0 else "loss",
+            "flat" if flat else ("win" if outcome > 0 else "loss"),
+            " · edge guard INVERTED" if self.edge_guard.get("inverted") else "",
         )
         await self.broadcast(
             {
@@ -1411,6 +1442,9 @@ class CycleManager:
             "returned": int(recent.shape[0]),
             "buffer_size": int(rows.shape[0]),
             "win_rate": round(self.outcomes.win_rate(), 4),
+            "decided": int((rows[:, 0] != 0).sum()) if rows.shape[0] else 0,
+            "flat": int((rows[:, 0] == 0).sum()) if rows.shape[0] else 0,
+            "edge_guard": dict(self.edge_guard),
             "rows": [
                 {
                     "outcome": float(o),
@@ -1687,6 +1721,7 @@ class CycleManager:
             crowd=crowd if crowd is not None else self.emotion_locked,
             physics=physics_report,
             genesis=genesis_report,
+            edge_guard=dict(self.edge_guard),
             news_impact=self._news_impact_safe(),
             asset=self.asset,
             ledger_sources=self._ledger_sources_safe(),
@@ -1767,6 +1802,8 @@ class CycleManager:
         rows = self.outcomes.array()
         evaluated = int(rows.shape[0])
         wins = int((rows[:, 0] > 0).sum()) if evaluated else 0
+        flats = int((rows[:, 0] == 0).sum()) if evaluated else 0
+        decided = evaluated - flats
         streak = 0
         for outcome in reversed(rows[:, 0].tolist() if evaluated else []):
             if outcome == 0:
@@ -1789,7 +1826,13 @@ class CycleManager:
                 }
         return {
             "evaluated": evaluated,
-            "win_rate": round(wins / evaluated, 4) if evaluated else None,
+            # Round AM: the win rate is over DECIDED windows; flat windows
+            # (inside the spread / no print) are reported, not counted as losses.
+            "win_rate": round(wins / decided, 4) if decided else None,
+            "decided": decided,
+            "flat": flats,
+            "flat_total": self._flat_windows,
+            "edge_guard": dict(self.edge_guard),
             "streak": streak,
             "last_outcome": (
                 None

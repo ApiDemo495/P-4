@@ -6,7 +6,7 @@
 <title>Drosophila Trader v2.0</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" />
-<link rel="stylesheet" href="/static/styles.css?v=2.23.0" />
+<link rel="stylesheet" href="/static/styles.css?v=2.24.0" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪰</text></svg>" />
 </head>
 <body>
@@ -197,13 +197,14 @@
       <div class="widget-cell">
         <div class="cell-label">PREDICTION ACCURACY</div>
         <div class="kv-grid">
-          <div class="kv-item"><span>Win rate</span><b id="w-winrate">—</b></div>
-          <div class="kv-item"><span>Evaluated windows</span><b id="w-samples">—</b></div>
+          <div class="kv-item"><span>Win rate (decided windows)</span><b id="w-winrate">—</b></div>
+          <div class="kv-item"><span>Decided · flat (inside spread)</span><b id="w-samples">—</b></div>
           <div class="kv-item"><span>Current streak</span><b id="w-streak">—</b></div>
           <div class="kv-item"><span>Last outcome</span><b id="w-last-outcome">—</b></div>
           <div class="kv-item"><span>Hit rate · BUY</span><b id="w-buy-rate">—</b></div>
           <div class="kv-item"><span>Hit rate · SELL</span><b id="w-sell-rate">—</b></div>
           <div class="kv-item"><span>Evaluated after</span><b id="w-horizon">—</b></div>
+          <div class="kv-item wide"><span>Edge guard (raw side vs tape)</span><b id="w-guard" class="muted">arming</b></div>
           <div class="kv-item wide"><span>Engine</span><b id="w-engine" class="muted">—</b></div>
         </div>
       </div>
@@ -570,6 +571,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=2.23.0"></script>
+<script src="/static/app.js?v=2.24.0"></script>
 </body>
 </html>
