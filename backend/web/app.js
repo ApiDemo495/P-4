@@ -211,6 +211,7 @@ function handle(msg) {
       refreshOutcomes();
       break;
     case "EMOTION": {
+      if (msg.data && msg.data.formulas) recordLiveCalc(msg.data);
       // The crowd's mood, streamed twice a second on the backend's schedule.
       // Only the emotion panel repaints: nothing else on the page is touched,
       // so the countdown and the locked panels stay exactly where they are.
@@ -1714,6 +1715,15 @@ function renderWidgetPanel() {
       : (guard.note || "arming");
     $("w-guard").className = guard.inverted ? "neg" : "muted";
   }
+  const veto = (state.prediction && state.prediction.fusion && state.prediction.fusion.tape_veto) || (s && s.fusion && s.fusion.tape_veto) || {};
+  if ($("w-veto")) {
+    $("w-veto").textContent = veto.fired
+      ? `⇄ ${veto.note}`
+      : (veto.move_30s_bps !== undefined
+          ? `not fired · tape ${fmtSigned(veto.move_30s_bps, 1)} bp in 30 s vs ${veto.recipe_side} (needs ${Number(veto.threshold_bps).toFixed(1)} bp against, confidence < 62 %)`
+          : "—");
+    $("w-veto").className = veto.fired ? "neg" : "muted";
+  }
   $("w-streak").textContent = streak === 0 ? "—" : (streak > 0 ? `${streak} win${streak > 1 ? "s" : ""}` : `${-streak} loss${streak < -1 ? "es" : ""}`);
   $("w-streak").className = streak > 0 ? "pos" : streak < 0 ? "neg" : "muted";
   const last = rows[rows.length - 1];
@@ -2342,6 +2352,102 @@ function selfTestVerdict(name) {
   const list = state.selfTest?.formulas;
   if (!Array.isArray(list)) return null;
   return list.find((f) => f.name === name) || null;
+}
+
+/* ------------------------------------------------- Round AP: LIVE CALCULATION
+   Every 2 s the EMOTION stream carries the 22 formula values of the live
+   pass.  Each formula keeps the last 90 points (3 min) and is drawn as a
+   sparkline with its current value; the ticker lists what changed most in
+   the last pass.  No timer of its own - it paints when a message arrives. */
+const liveCalc = { history: {}, last: null, passes: 0, lastAt: 0 };
+const LIVECALC_POINTS = 90;
+
+function recordLiveCalc(data) {
+  const f = data.formulas || {};
+  const prev = liveCalc.last || {};
+  const deltas = [];
+  Object.entries(f).forEach(([name, v]) => {
+    const arr = liveCalc.history[name] || (liveCalc.history[name] = []);
+    arr.push(Number(v));
+    if (arr.length > LIVECALC_POINTS) arr.shift();
+    if (prev[name] !== undefined) deltas.push([name, Number(v) - Number(prev[name]), Number(v)]);
+  });
+  liveCalc.last = f;
+  liveCalc.passes += 1;
+  liveCalc.lastAt = Date.now();
+  renderLiveCalc(data, deltas);
+}
+
+function sparkline(canvas, arr, color) {
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  if (!arr || arr.length < 2) return;
+  const finite = arr.filter(Number.isFinite);
+  if (!finite.length) return;
+  let lo = Math.min(...finite), hi = Math.max(...finite);
+  if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
+  ctx.strokeStyle = "rgba(255,255,255,.12)"; ctx.lineWidth = 1;
+  if (lo < 0 && hi > 0) { const y0 = h - ((0 - lo) / (hi - lo)) * (h - 2) - 1; ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(w, y0); ctx.stroke(); }
+  ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.beginPath();
+  arr.forEach((v, i) => {
+    const x = (i / (LIVECALC_POINTS - 1)) * (w - 2) + 1;
+    const y = h - ((v - lo) / (hi - lo)) * (h - 2) - 1;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  const vLast = arr[arr.length - 1];
+  const xl = ((arr.length - 1) / (LIVECALC_POINTS - 1)) * (w - 2) + 1;
+  const yl = h - ((vLast - lo) / (hi - lo)) * (h - 2) - 1;
+  ctx.fillStyle = color; ctx.beginPath(); ctx.arc(xl, yl, 2.2, 0, Math.PI * 2); ctx.fill();
+}
+
+function renderLiveCalc(data, deltas) {
+  const grid = $("livecalc-grid");
+  if (!grid) return;
+  markPanel("livecalc");
+  const names = Object.keys(liveCalc.history);
+  if (grid.childElementCount !== names.length) {
+    grid.innerHTML = "";
+    names.forEach((name) => {
+      const cell = document.createElement("div");
+      cell.className = "livecalc-cell";
+      cell.dataset.name = name;
+      cell.innerHTML = `<div class="lc-head"><b>${escapeHtml(name)}</b><span class="lc-val">—</span></div><canvas width="160" height="34"></canvas>`;
+      grid.appendChild(cell);
+    });
+  }
+  names.forEach((name) => {
+    const cell = grid.querySelector(`.livecalc-cell[data-name="${name}"]`);
+    if (!cell) return;
+    const arr = liveCalc.history[name];
+    const v = arr[arr.length - 1];
+    const prev = arr.length > 1 ? arr[arr.length - 2] : v;
+    const color = v > 0 ? "#35d07f" : v < 0 ? "#ff5d5d" : "#9aa4b2";
+    sparkline(cell.querySelector("canvas"), arr, color);
+    const valEl = cell.querySelector(".lc-val");
+    valEl.textContent = Number.isFinite(v) ? v.toFixed(Math.abs(v) >= 100 ? 1 : 4) : "—";
+    valEl.className = `lc-val ${v > 0 ? "pos" : v < 0 ? "neg" : "muted"}`;
+    cell.classList.toggle("moved", Math.abs(v - prev) > 1e-9);
+    cell.classList.toggle("zero", Math.abs(v) < 1e-12);
+  });
+  const zero = names.filter((n) => Math.abs(liveCalc.history[n][liveCalc.history[n].length - 1]) < 1e-12);
+  const note = $("livecalc-note");
+  if (note) {
+    note.textContent = `pass #${liveCalc.passes} · ${names.length} formulas · ${data.ticks ?? "?"} ticks` +
+      (data.formula_pass_us ? ` · ${fmtUs(data.formula_pass_us)}` : "") +
+      (zero.length ? ` · ${zero.length} at 0.00 (${zero.join(", ")}) - hover the Formula Explorer row for the reason` : " · every formula non-zero");
+  }
+  const ticker = $("livecalc-ticker");
+  if (ticker && deltas && deltas.length) {
+    const top = deltas.filter((d) => Math.abs(d[1]) > 1e-9).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 6);
+    const line = document.createElement("div");
+    line.className = "lc-line";
+    line.innerHTML = `<span class="muted">${new Date().toISOString().substr(11, 8)}Z</span> ` +
+      (top.length ? top.map((d) => `<b>${escapeHtml(d[0])}</b> ${fmtSigned(d[1], 4)} → ${Number(d[2]).toFixed(4)}`).join(" · ") : "<span class=\"muted\">no formula moved on this pass</span>");
+    ticker.prepend(line);
+    while (ticker.childElementCount > 8) ticker.removeChild(ticker.lastChild);
+  }
 }
 
 function renderLiveFormulas(data) {

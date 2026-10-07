@@ -66,6 +66,8 @@ class FusionResult:
     physics: dict = field(default_factory=dict)
     genesis: dict = field(default_factory=dict)
     edge_guard: dict = field(default_factory=dict)
+    #: Round AP: the tape veto, when it fired (see CycleManager._tape_veto)
+    tape_veto: dict = field(default_factory=dict)
 
     # -- binary direction fields (HOLD was removed) ----------------------
     @property
@@ -108,6 +110,7 @@ class FusionResult:
             "physics": self.physics,
             "genesis": self.genesis,
             "edge_guard": self.edge_guard,
+            "tape_veto": self.tape_veto,
         }
         # Kept for the two clients: "lean" now always equals the decision,
         # because there is no third state to lean away from.

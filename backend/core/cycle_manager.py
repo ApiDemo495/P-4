@@ -30,6 +30,8 @@ import math
 import os
 import time
 from pathlib import Path
+
+import numpy as np
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -1225,6 +1227,13 @@ class CycleManager:
                                     else None
                                 ),
                                 "deep_included": full,
+                                # Round AP: the live pass of the 22 formulas rides on
+                                # every full sample (2 s) - the LIVE CALCULATION panel
+                                # draws its sparklines from this, nothing is polled.
+                                "formulas": (dict(self.last_live_formulas) if full else None),
+                                "formula_pass_us": (int(sum((self.last_live_result.timings_us or {}).values()))
+                                                    if full and self.last_live_result is not None else None),
+                                "ticks": have,
                                 "emotions": streamed,
                                 "live_price": float(self.market.last_price(self.asset) or 0.0) or None,
                                 "dampening": {
@@ -1879,8 +1888,60 @@ class CycleManager:
             spec.learned = {"active": False, "scored": learned.get("scored", 0),
                             "min_samples": learned.get("min_samples"), "p_up": learned.get("p_up"),
                             "voters": learned.get("voters", 0), "watching": len(votes)}
-            return spec
-        return fusion_module.fuse(**common, learned=learned)
+            return self._tape_veto(spec, snapshot)
+        return self._tape_veto(fusion_module.fuse(**common, learned=learned), snapshot)
+
+    #: the last-30 s move must oppose the side by at least this many bps ...
+    TAPE_VETO_MIN_BPS = 2.0
+    #: ... and the recipe's confidence must be below this for the tape to win
+    TAPE_VETO_MAX_CONF = 0.62
+
+    def _tape_veto(self, fusion, snapshot):
+        """Round AP: "the app gives the same BUY while the market is falling".
+
+        The recipe is frozen a few seconds before the boundary; when the tape
+        has moved *against* its side over the last 30 s by more than the
+        median one-sided minute excursion (and at least 2 bp), and the recipe
+        is not strongly convinced, the side follows the tape for this window
+        and the confidence is capped at 0.5.  Sub-minute order-flow momentum
+        is the one effect every microstructure study agrees on; fighting it
+        with a 55 % opinion is how a window is lost.  Everything about the
+        veto is printed (``tape_veto``) so it is never a silent flip.
+        """
+        try:
+            if snapshot is None or fusion is None or fusion.decision not in ("BUY", "SELL"):
+                return fusion
+            ticks = snapshot.ticks(self.asset)
+            if ticks is None or len(ticks) < 8:
+                return fusion
+            t = np.asarray(ticks[:, 0], dtype=float) / 1000.0
+            p = np.asarray(ticks[:, 1], dtype=float)
+            now = float(t[-1])
+            i0 = int(np.searchsorted(t, now - 30.0, side="left"))
+            if i0 >= len(p) - 2 or p[i0] <= 0:
+                return fusion
+            move_bps = (p[-1] / p[i0] - 1.0) * 1e4
+            moves = self._pending_moves or {}
+            threshold = max(self.TAPE_VETO_MIN_BPS, 0.75 * float(moves.get("exc50") or 0.0))
+            against = (fusion.decision == "BUY" and move_bps < -threshold) or (
+                fusion.decision == "SELL" and move_bps > threshold)
+            fusion.tape_veto = {"fired": False, "move_30s_bps": round(move_bps, 2), "threshold_bps": round(threshold, 2),
+                                "recipe_side": fusion.decision, "recipe_confidence": round(float(fusion.confidence), 4)}
+            if not against or float(fusion.confidence) >= self.TAPE_VETO_MAX_CONF:
+                return fusion
+            new_side = "SELL" if fusion.decision == "BUY" else "BUY"
+            fusion.tape_veto.update({"fired": True, "published_side": new_side,
+                                     "note": (f"tape veto: price moved {move_bps:+.1f} bp against the recipe's {fusion.decision} "
+                                              f"in the last 30 s (threshold {threshold:.1f} bp, recipe confidence "
+                                              f"{float(fusion.confidence):.0%} < {self.TAPE_VETO_MAX_CONF:.0%}) - "
+                                              f"following the tape, confidence capped at 50 %")})
+            fusion.decision = new_side
+            fusion.confidence = min(float(fusion.confidence), 0.5)
+            fusion.reasoning = (fusion.tape_veto["note"] + " | " + (fusion.reasoning or ""))[:600]
+            return fusion
+        except Exception as exc:  # noqa: BLE001 - the veto must never break a window
+            log.debug("tape veto skipped: %s", exc)
+            return fusion
 
     def _news_theme_votes(self, impact: dict | None) -> dict[str, float]:
         """theme -> signed impact on this asset, from the wire's drivers."""

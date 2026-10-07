@@ -1160,3 +1160,16 @@ body.pulse .widget-panel, body.pulse .card { animation: pulse-breath .6s var(--e
 .sys-row b { letter-spacing: .04em; text-transform: uppercase; font-size: 11px; }
 .sys-row em { font-style: normal; opacity: .85; }
 .sys-row span { opacity: .75; overflow-wrap: anywhere; }
+
+/* Round AP: LIVE CALCULATION */
+.livecalc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px; }
+.livecalc-cell { background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.06); border-radius: 8px; padding: 6px 8px 4px; transition: border-color .4s, background .4s; }
+.livecalc-cell.moved { border-color: rgba(120,180,255,.45); }
+.livecalc-cell.zero { opacity: .55; border-style: dashed; }
+.livecalc-cell canvas { width: 100%; height: 34px; display: block; }
+.lc-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; margin-bottom: 2px; }
+.lc-head b { letter-spacing: .05em; }
+.lc-val { font-variant-numeric: tabular-nums; font-size: 12px; }
+.livecalc-ticker { margin-top: 8px; font-size: 11px; line-height: 1.6; max-height: 140px; overflow: hidden; }
+.lc-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lc-line b { letter-spacing: .04em; }

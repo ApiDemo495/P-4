@@ -205,6 +205,7 @@
           <div class="kv-item"><span>Hit rate · SELL</span><b id="w-sell-rate">—</b></div>
           <div class="kv-item"><span>Evaluated after</span><b id="w-horizon">—</b></div>
           <div class="kv-item wide"><span>Edge guard (raw side vs tape)</span><b id="w-guard" class="muted">arming</b></div>
+          <div class="kv-item wide"><span>Tape veto (last 30 s vs recipe)</span><b id="w-veto" class="muted">—</b></div>
           <div class="kv-item wide"><span>Engine</span><b id="w-engine" class="muted">—</b></div>
         </div>
       </div>
@@ -486,6 +487,18 @@
   </section>
 
   <!-- ======================= FORMULA EXPLORER ======================= -->
+  <!-- Round AP: LIVE CALCULATION - the 22 formulas as they are recomputed every
+       2 s on the moving tape (the locked signal does not change; this is the
+       engine visibly working between windows). -->
+  <section class="card" data-panel="livecalc" id="livecalc-card">
+    <div class="card-head">
+      <h2>▼ Live Calculation <span class="muted">every 2 s on the moving tape · signal stays locked</span></h2>
+      <div class="explorer-tools"><span class="pill" id="livecalc-note">waiting for the first pass…</span></div>
+    </div>
+    <div class="livecalc-grid" id="livecalc-grid"></div>
+    <div class="livecalc-ticker" id="livecalc-ticker"></div>
+  </section>
+
   <section class="card" data-panel="formulas">
     <div class="card-head">
       <h2>▼ Formula Explorer <span class="muted">(22 formulas + DRG)</span></h2>
