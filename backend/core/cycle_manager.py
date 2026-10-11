@@ -599,8 +599,10 @@ class CycleManager:
     def _boundary_pick(self, draft: FrozenSignal, cycle: int, entry: float) -> FrozenSignal:
         """Round AS: finalise the side against the actual entry print (never raises)."""
         try:
-            recipe_p_up = float(draft.confidence or 0.5)
-            recipe_p_up = recipe_p_up if draft.signal == "BUY" else 1.0 - recipe_p_up
+            # confidence is a 0-1 edge on the published side, not P(up):
+            # BUY at 0.07 means "barely up", i.e. P(up) = 0.535.
+            edge = float(max(0.0, min(1.0, draft.confidence or 0.0)))
+            recipe_p_up = 0.5 + 0.5 * edge if draft.signal == "BUY" else 0.5 - 0.5 * edge
             recent = list(self.competition.rows)[-30:]
             pin_rate = (sum(1 for r in recent if r.tie) / len(recent)) if len(recent) >= 5 else 0.0
             bid, ask, bq, aq = self.market.l1(self.asset)
@@ -615,7 +617,7 @@ class CycleManager:
             p_side = pick.p_up if pick.side == "BUY" else 1.0 - pick.p_up
             return draft._replace(
                 signal=pick.side,
-                confidence=float(max(0.5, min(0.95, p_side))),
+                confidence=float(max(0.05, min(0.95, 2.0 * (p_side - 0.5)))),
                 direction_source=f"boundary pick against the entry print: {pick.note}",
                 reasoning=f"{draft.reasoning} · AT THE BOUNDARY the entry print turned this to {pick.side}: {pick.note}",
             )

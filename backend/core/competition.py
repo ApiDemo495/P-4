@@ -140,11 +140,15 @@ def boundary_features(ticks: np.ndarray, bid: float, ask: float, bid_qty: float,
         return None
     entry_side = float(source[-1, 3]) if trades.shape[0] else 0.0
     if tick is None:
-        # a tick size estimated from the tape: the smallest non-zero price step,
-        # bounded so a thin tape cannot make a $5 "tick"
+        # a tick size estimated from the tape: a low quantile of the non-zero
+        # price steps (the exact tick on a real exchange tape, a sane step on
+        # a continuous simulator), floored by half the spread and bounded so
+        # a thin tape cannot make a $5 "tick"
         steps = np.abs(np.diff(source[-400:, 1]))
         steps = steps[steps > 0]
-        tick = float(np.min(steps)) if steps.size else entry * 1e-5
+        tick = float(np.percentile(steps, 20)) if steps.size else entry * 1e-5
+        if bid > 0 and ask > bid:
+            tick = max(tick, (ask - bid) * 0.5)
         tick = min(max(tick, entry * 1e-7), entry * 1e-3)
     if bid > 0 and ask > bid and (bid_qty + ask_qty) > 0:
         microprice = (bid * ask_qty + ask * bid_qty) / (bid_qty + ask_qty)
