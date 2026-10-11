@@ -34,6 +34,15 @@ async def brain_dopamine() -> dict:
     return {"dopamine": manager.dopamine.to_dict(), "brain_phasic_applied": manager.brain.dopamine_phasic}
 
 
+@router.get("/api/competition")
+async def competition() -> dict:
+    """Round AS: the competition scoreboard (last-trade vs last-trade, tie =
+    loss), the streak ladder and the boundary picker's learned weights."""
+    manager = get_manager()
+    return {"competition": manager.competition.to_dict(), "boundary_pick": manager.last_pick,
+            "picker": manager.picker.to_dict()}
+
+
 @router.get("/api/triune")
 async def triune() -> dict:
     """Round AR: the three-minds analyst - human / AI / data votes, their

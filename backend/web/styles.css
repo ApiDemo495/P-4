@@ -1175,3 +1175,15 @@ body.pulse .widget-panel, body.pulse .card { animation: pulse-breath .6s var(--e
 .lc-line b { letter-spacing: .04em; }
 .formula-zero-why { font-size: 11px; color: #ffb454; margin-left: 6px; }
 .brain-mood { font-size: 12px; line-height: 1.5; padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,0.03); }
+
+/* Round AS: the competition scoreboard */
+.competition-cell { border: 1px solid rgba(255, 196, 0, 0.25); background: linear-gradient(160deg, rgba(255,196,0,0.06), rgba(255,255,255,0.01)); }
+.comp-streak { display: flex; align-items: baseline; gap: 10px; margin: 4px 0 8px; }
+.comp-streak b { font-size: 34px; font-variant-numeric: tabular-nums; letter-spacing: -1px; }
+.comp-ladder { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
+.comp-rung { padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,0.04); font-size: 11px; line-height: 1.35; }
+.comp-rung b { display: block; font-size: 14px; }
+.comp-rung.reached { background: rgba(0, 200, 120, 0.18); }
+.comp-rung.next { outline: 1px solid rgba(255, 196, 0, 0.6); }
+.comp-rung .bar { height: 3px; border-radius: 2px; background: rgba(255,255,255,0.08); margin-top: 4px; overflow: hidden; }
+.comp-rung .bar i { display: block; height: 100%; background: #ffc400; }

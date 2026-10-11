@@ -6,7 +6,7 @@
 <title>Drosophila Trader v2.0</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" />
-<link rel="stylesheet" href="/static/styles.css?v=2.27.0" />
+<link rel="stylesheet" href="/static/styles.css?v=2.28.0" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪰</text></svg>" />
 </head>
 <body>
@@ -182,8 +182,19 @@
     </div>
 
     <div class="widget-row row-bottom">
+      <div class="widget-cell competition-cell" id="competition-cell">
+        <div class="cell-label">THE COMPETITION <span class="muted">last trade :00 → :60 · tie = loss · every window called</span></div>
+        <div class="comp-streak"><b id="c-streak">—</b><span id="c-streak-label" class="muted">consecutive wins</span></div>
+        <div class="comp-ladder" id="c-ladder"></div>
+        <div class="kv-grid">
+          <div class="kv-item"><span>Per-pick win rate (last 100)</span><b id="c-winrate">—</b></div>
+          <div class="kv-item"><span>Best streak · ties</span><b id="c-best">—</b></div>
+          <div class="kv-item wide"><span>Boundary pick (entry print)</span><b id="c-pick" class="muted">—</b></div>
+          <div class="kv-item wide"><span>Reading</span><b id="c-reading" class="muted">—</b></div>
+        </div>
+      </div>
       <div class="widget-cell">
-        <div class="cell-label">TAKE PROFIT / STOP LOSS</div>
+        <div class="cell-label">TAKE PROFIT / STOP LOSS <span class="muted">secondary - the competition has no size, no levels</span></div>
         <div class="kv-grid">
           <div class="kv-item"><span>Entry</span><b id="w-entry">—</b></div>
           <div class="kv-item"><span>Take profit</span><b id="w-tp" class="pos">—</b></div>
@@ -597,6 +608,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=2.27.0"></script>
+<script src="/static/app.js?v=2.28.0"></script>
 </body>
 </html>

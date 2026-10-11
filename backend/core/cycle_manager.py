@@ -49,6 +49,7 @@ from backend.core.prediction import detail as prediction_detail
 from backend.core.prediction import build_reasoning, consensus
 from backend.core import edge_guard
 from backend.core.calibration import EvidenceLedger
+from backend.core.competition import BoundaryPicker, CompetitionLedger, boundary_features
 from backend.core.dopamine import DopamineBrain
 from backend.core.triune import TriuneAnalyst
 from backend.core.frozen_snapshot import FrozenMarketSnapshot
@@ -147,6 +148,10 @@ class CycleManager:
         # Round AR: the brain's own dopamine (how it feels wins and losses)
         # and the three-minds analyst (human / AI / data, correlated).
         self.dopamine = DopamineBrain()
+        # Round AS: the competition's own scoreboard and the boundary picker
+        self.competition = CompetitionLedger()
+        self.picker = BoundaryPicker()
+        self.last_pick: dict = {}
         self.triune = TriuneAnalyst()
         self.last_triune: dict | None = None
         self._last_minds: dict = {}
@@ -582,6 +587,7 @@ class CycleManager:
                 "data": self.snapshot_payload(locked, include_history=True),
             }
         )
+        self.competition.enter(cycle, locked.signal, float(locked.price or 0.0))
         self._schedule_outcome(locked, None)
         asyncio.create_task(self._heartbeat_loop(cycle, deadline_wall, self.window_valid_until))
         log.info(
@@ -589,6 +595,33 @@ class CycleManager:
             cycle, locked.signal, locked.confidence * 100,
             max(0.0, deadline_wall - self.prefetch_at) if self.prefetch_at else 0.0,
         )
+
+    def _boundary_pick(self, draft: FrozenSignal, cycle: int, entry: float) -> FrozenSignal:
+        """Round AS: finalise the side against the actual entry print (never raises)."""
+        try:
+            recipe_p_up = float(draft.confidence or 0.5)
+            recipe_p_up = recipe_p_up if draft.signal == "BUY" else 1.0 - recipe_p_up
+            recent = list(self.competition.rows)[-30:]
+            pin_rate = (sum(1 for r in recent if r.tie) / len(recent)) if len(recent) >= 5 else 0.0
+            bid, ask, bq, aq = self.market.l1(self.asset)
+            feats = boundary_features(self.market.buffers[self.asset].ticks.view(600), bid, ask, bq, aq,
+                                      time.time() * 1000.0, pin_rate)
+            if feats is None:
+                return draft
+            pick = self.picker.pick(cycle, feats, draft.signal, recipe_p_up)
+            self.last_pick = pick.as_dict()
+            if not pick.flipped:
+                return draft
+            p_side = pick.p_up if pick.side == "BUY" else 1.0 - pick.p_up
+            return draft._replace(
+                signal=pick.side,
+                confidence=float(max(0.5, min(0.95, p_side))),
+                direction_source=f"boundary pick against the entry print: {pick.note}",
+                reasoning=f"{draft.reasoning} · AT THE BOUNDARY the entry print turned this to {pick.side}: {pick.note}",
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("boundary pick skipped: %s", exc)
+            return draft
 
     def _stamp_window(self, draft: FrozenSignal, cycle: int, deadline_wall: float) -> FrozenSignal:
         """Re-anchor a pre-computed draft to the window it now governs.
@@ -600,8 +633,15 @@ class CycleManager:
         from backend.core.direction import opposite
 
         period = self.settings.cycle_period_seconds
-        price = self.market.last_price(self.asset) or draft.price
         emergency = self.lock.emergency_active()
+        # Round AS: the entry is the LAST TRADE at the boundary (the price the
+        # competition settles against), and the side is finalised against that
+        # very print - microprice gap, bid-ask bounce, 3 s reversal, 5 s OFI -
+        # before the lock closes.  This is the last moment anything may move.
+        trade_px, _side, _ts = self.market.last_trade(self.asset)
+        price = trade_px or self.market.last_price(self.asset) or draft.price
+        if not emergency:
+            draft = self._boundary_pick(draft, cycle, price)
         exit_side = opposite(draft.signal)
         signal_for_levels = draft.signal
         if emergency and exit_side:
@@ -1481,6 +1521,15 @@ class CycleManager:
             return
         if entry <= 0 or exit_price <= 0:
             return
+        # Round AS: the competition settles on the last TRADE, tie = loss.
+        comp_row = None
+        try:
+            settle_px = self.market.last_trade(signal.asset)[0] or exit_price
+            comp_row = self.competition.settle(signal.cycle_number, settle_px)
+            if comp_row is not None:
+                self.picker.learn(signal.cycle_number, None if comp_row.tie else comp_row.exit > comp_row.entry)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("competition settle skipped: %s", exc)
 
         change_bps = (exit_price / entry - 1.0) * 10_000.0
         cost_bps = self._trading_cost_bps(signal.asset)
@@ -1551,6 +1600,8 @@ class CycleManager:
                     "exit": exit_price,
                     "accuracy": self.accuracy_block(),
                     "horizon_seconds": round(horizon, 1),
+                    "competition": self.competition.to_dict(),
+                    "competition_row": comp_row.as_dict() if comp_row else None,
                 },
             }
         )
@@ -1704,6 +1755,8 @@ class CycleManager:
         payload["news_feed"] = self.news_payload(limit=30)
         payload["emotions"] = self.emotions_payload()
         payload["accuracy"] = self.accuracy_block()
+        payload["competition"] = self.competition.to_dict()
+        payload["boundary_pick"] = dict(self.last_pick)
         payload["brain_explain"] = self.brain_explain_payload()
         payload["physics"] = self.physics_payload()
         payload["genesis"] = self.genesis_payload()

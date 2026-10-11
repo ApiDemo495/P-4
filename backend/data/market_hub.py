@@ -523,6 +523,32 @@ class MarketDataHub:
     def tick_count(self, asset: str) -> int:
         return self.buffers[asset].ticks.size
 
+    def last_trade(self, asset: str) -> tuple[float, float, float]:
+        """Round AS: the last *trade* print - ``(price, aggressor_side, time_ms)``.
+
+        The competition settles on the exchange's last trade, not on the
+        quote mid that :meth:`last_price` prefers; quote prints (qty 0) are
+        skipped.  Falls back to the mid when the tape has no trade at all."""
+        buf = self.buffers[asset]
+        rows = buf.ticks.view(400)
+        if rows.shape[0]:
+            trades = rows[rows[:, 2] > 0]
+            if trades.shape[0]:
+                last = trades[-1]
+                return float(last[1]), float(last[3]), float(last[0])
+            last = rows[-1]
+            return float(last[1]), 0.0, float(last[0])
+        px = buf.book.mid()
+        return (px, 0.0, time.time() * 1000.0) if px > 0 else (0.0, 0.0, 0.0)
+
+    def l1(self, asset: str) -> tuple[float, float, float, float]:
+        """Round AS: ``(bid, ask, bid_qty, ask_qty)`` at the top of the book."""
+        book = self.buffers[asset].book.current
+        try:
+            return float(book[0, 0, 0]), float(book[1, 0, 0]), float(book[0, 0, 1]), float(book[1, 0, 1])
+        except Exception:  # noqa: BLE001
+            return 0.0, 0.0, 0.0, 0.0
+
     def last_price(self, asset: str) -> float:
         buf = self.buffers[asset]
         px = buf.book.mid()

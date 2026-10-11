@@ -626,6 +626,20 @@ tail -f server.log
   matrix remains only as the fallback until the download completes.
   `GET /api/brain/connectome` has the full read-out; the brain card shows which
   circuit answered.
+* **The competition scoreboard and the boundary pick (Round AS).** The app is
+  played in a streak competition: every 60 s window must be called BUY or
+  SELL, entry is the exchange's last trade at :00, settlement the last trade
+  at :60, strictly higher/lower wins, **a tie loses**, and the ladder pays on
+  5 / 20 / 50 / 72 consecutive wins. The engine now scores every window by
+  exactly that rule (`/api/competition`, the gold card at the top of the
+  prediction panel: streak, ladder with per-attempt probability and expected
+  time at the measured per-pick rate, best streak, ties). The side is
+  finalised **at the boundary against the actual entry print** - microprice
+  gap, bid-ask bounce of the entry print, 3 s reversal, 5 s order-flow
+  imbalance - through a logistic picker whose weights start at
+  literature priors and are learned online from the competition outcomes;
+  in a pinned tape it breaks the tie toward the microprice. Nothing moves
+  after the lock closes; TP/SL stay as a secondary line.
 * **The brain's own dopamine and the three minds (Round AR).** Every scored
   window is fed back as a *reward prediction error*, not as P&L: a loss hurts
   2.25× a win (Kahneman–Tversky), a confident miss hurts more than a doubtful

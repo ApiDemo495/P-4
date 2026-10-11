@@ -1907,3 +1907,38 @@ prediction card shows the "Three minds" line.
 `triune.score`. `emotions_payload` adds `brain_mood` (PULSE / snapshots; the
 200 ms emotion stream does not carry it, the client keeps the last). Endpoints
 `/api/brain/dopamine`, `/api/triune`. Tests `backend/tests/test_round_ar.py`.
+
+## AS - the competition rule and the boundary pick
+
+**The real game** (user, this round): forced 60 s windows, entry = Binance
+BTCUSDT last trade at :00, settlement = last trade at :60, tie = loss, prizes
+at 5 (coupon) / 20 (coupon) / 50 ($30 cash) / 72 ($500) consecutive wins,
+a loss resets the streak (prizes already won are kept). The user's observed
+"15–25 s lag" is irrelevant under these rules - nothing may be done inside a
+window - so the whole investment goes into the pick at second 0.
+
+**`backend/core/competition.py`.**
+* `CompetitionLedger`: `enter(cycle, side, entry)` at publication,
+  `settle(cycle, exit)` one horizon later with the rule above; streak, best
+  streak, ties, milestone hits, finished-streak history, `p_estimate` = last
+  100 shrunk toward 0.5 (k = 10), ladder with `p**k` and Feller's expected
+  windows to the first k-run `(1 − p^k)/((1 − p)p^k)`.
+* `boundary_features`: entry = last *trade* print and its aggressor side,
+  microprice `(bid·ask_qty + ask·bid_qty)/(bid_qty + ask_qty)` and its gap in
+  ticks, 3 s move in ticks, 5 s signed-volume OFI, L1 imbalance, pin rate.
+* `BoundaryPicker`: `p_up = σ(w·x)` with priors recipe 1.0 · gap 0.35 ·
+  bounce −0.20 · r3 −0.12 · ofi 0.30 · imb 0.25; SGD on the log-loss after
+  each settled window (lr 0.03, L2 0.002 toward the priors, `w_recipe ≥ 0.2`);
+  ties teach nothing. Pinned tape (≥25 % flat closes) + indifferent model →
+  tie broken toward the microprice.
+
+**Wiring.** `MarketDataHub.last_trade()` / `l1()`; `_stamp_window` now takes
+the entry from the last trade and calls `_boundary_pick` *before* the lock
+closes (flip → `signal`, `confidence = p_side`, `direction_source`,
+`reasoning` annotated); `_open_window` → `competition.enter`;
+`_evaluate_outcome` → `competition.settle` on the last trade + `picker.learn`;
+OUTCOME broadcast and snapshots carry `competition` / `boundary_pick`.
+`GET /api/competition`. UI: gold "THE COMPETITION" cell with the streak, the
+ladder (progress, per-attempt probability, expected time), per-pick rate,
+best/ties, the boundary-pick line and the reading; TP/SL demoted to
+"secondary". Tests `backend/tests/test_round_as.py`.

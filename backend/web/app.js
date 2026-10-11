@@ -209,6 +209,10 @@ function handle(msg) {
     }
     case "OUTCOME":
       refreshOutcomes();
+      if (msg.data && msg.data.competition) {
+        renderCompetition(msg.data.competition, null);
+        if (msg.data.competition_row) haptic(msg.data.competition_row.won ? 12 : [30, 40, 30]);
+      }
       break;
     case "EMOTION": {
       if (msg.data && msg.data.formulas) recordLiveCalc(msg.data);
@@ -1651,6 +1655,32 @@ const synesthesia = {
    Row 2: take profit & stop loss | prediction accuracy
    Row 3: probability branches (Round Y)
    ======================================================================== */
+/* Round AS: the competition scoreboard - the number the user is paid on. */
+function renderCompetition(c, pick) {
+  if (!c || !$("c-streak")) return;
+  state.competition = c;
+  if (pick && pick.side) state.boundaryPick = pick;
+  const streak = Number(c.streak || 0);
+  $("c-streak").textContent = String(streak);
+  $("c-streak").className = streak >= 5 ? "pos" : "";
+  $("c-streak-label").textContent = c.next_rung ? `consecutive wins · ${c.to_next_rung} more to the ${c.next_rung}-rung` : "consecutive wins";
+  $("c-ladder").innerHTML = (c.ladder || []).map((r) => {
+    const pct = Math.min(100, (streak / r.streak) * 100);
+    const cls = r.reached ? "reached" : (c.next_rung === r.streak ? "next" : "");
+    const eta = r.expected_hours === null || r.expected_hours === undefined ? "—" : (r.expected_hours < 48 ? `~${r.expected_hours} h` : `~${(r.expected_hours / 24).toFixed(0)} d`);
+    return `<div class="comp-rung ${cls}" title="${escapeHtml(r.prize)}"><b>${r.streak}</b>${escapeHtml(r.prize.split(" (")[0].split(" -")[0])}<br><span class="muted">${(r.probability_per_attempt * 100).toPrecision(2)}% per run · ${eta}${r.hit ? ` · hit ×${r.hit}` : ""}</span><div class="bar"><i style="width:${pct}%"></i></div></div>`;
+  }).join("");
+  $("c-winrate").textContent = c.win_rate_100 === null || c.win_rate_100 === undefined ? `— (${c.scored} scored)` : `${(c.win_rate_100 * 100).toFixed(1)}% · ${c.scored} scored`;
+  $("c-winrate").className = c.win_rate_100 >= 0.7 ? "pos" : c.win_rate_100 !== null && c.win_rate_100 < 0.5 ? "neg" : "";
+  $("c-best").textContent = `${c.best_streak} · ${c.ties} tie${c.ties === 1 ? "" : "s"} (lost)`;
+  const p = state.boundaryPick;
+  if (p && p.side) {
+    $("c-pick").textContent = p.note;
+    $("c-pick").className = p.flipped ? "neg" : "muted";
+  }
+  $("c-reading").textContent = c.reading || "—";
+}
+
 function renderWidgetPanel() {
   markPanel("window");
   const s = state.signal;
@@ -3010,6 +3040,7 @@ function applySnapshot(data, opts = {}) {
   if (data.genesis) renderGenesis(data.genesis);
   if (data.history) renderHistory(data.history);
   if (data.outcomes) renderOutcomes(data.outcomes);
+  if (data.competition) renderCompetition(data.competition, data.boundary_pick);
   if (data.accuracy && state.prediction) state.prediction.accuracy = data.accuracy;
   if (data.window) state.window = data.window;
   state.lastSnapshotAt = Date.now();
