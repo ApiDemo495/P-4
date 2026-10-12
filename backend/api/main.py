@@ -248,8 +248,8 @@ async def system_config() -> dict:
             "genesis": settings.weight_genesis,
         },
         "configured": {
-            "gemini": bool(settings.gemini_api_key),
-            "github": bool(settings.github_models_token),
+            "gemini": bool(settings.rings["gemini"].configured or settings.gemini_api_key),
+            "github": bool(settings.rings["github"].configured or settings.github_models_token),
             "cryptopanic": settings.rings["cryptopanic"].configured,
             "newsapi": settings.rings["newsapi"].configured,
             "neuprint": bool(settings.neuprint_token),

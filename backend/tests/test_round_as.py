@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import numpy as np
@@ -116,3 +117,23 @@ def test_the_engine_enters_on_the_last_trade_and_settles_the_competition():
     assert 'id="competition-cell"' in index and 'id="c-ladder"' in index and 'id="c-pick"' in index
     assert "function renderCompetition" in app and "msg.data.competition" in app
     assert "/api/competition" in (ROOT / "backend/api/routes_brain.py").read_text()
+
+
+# ---------------------------------------------------------- key states fix
+def test_a_key_in_any_slot_counts_as_configured_everywhere():
+    """User report: 'UI says api key not set even though I saved it'."""
+    from backend.agents.keyring import KeyRing
+
+    ring = KeyRing("gemini")
+    for slot in ring.slots:
+        slot.key = ""
+    ring.set_slot(2, "AQ.Ab-some-new-style-key")
+    assert ring.configured and ring.primary == "AQ.Ab-some-new-style-key"
+    main_src = (ROOT / "backend/api/main.py").read_text()
+    assert 'settings.rings["gemini"].configured' in main_src
+    app_js = (ROOT / "backend/web/app.js").read_text()
+    # the dashboard re-reads the engine's config after a save instead of
+    # repainting the copy it took at page load
+    assert "async function refreshKeyStates" in app_js
+    assert app_js.count("await refreshKeyStates()") >= 1
+    assert len(re.findall(r"setInterval\(", app_js)) == 1

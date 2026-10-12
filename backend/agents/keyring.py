@@ -111,7 +111,12 @@ class KeyRing:
 
     @property
     def primary(self) -> str:
-        return self.slots[0].key
+        """The first slot that holds a key - a key typed into box 2 or 3
+        alone must still count as "configured" everywhere."""
+        for entry in self.slots:
+            if entry.key:
+                return entry.key
+        return ""
 
     def keys(self) -> list[str]:
         return [s.key for s in self.slots]

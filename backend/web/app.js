@@ -2827,7 +2827,16 @@ const KEY_SLOTS = ["gemini", "cryptopanic", "newsapi", "github", "neuprint"];
 
 function openKeys() {
   $("keys-modal").classList.remove("hidden");
+  refreshKeyStates();
+}
+
+/* The key states are read from the engine every time they are shown or
+   changed - never from the copy of the config taken at page load. */
+async function refreshKeyStates() {
+  const fresh = await getJSON("/api/system/config");
+  if (fresh && !fresh.error) state.config = fresh;
   renderKeyStates();
+  maybeShowSetupBanner();
 }
 function closeKeys() {
   $("keys-modal").classList.add("hidden");
@@ -2897,7 +2906,7 @@ async function saveKeys() {
       brain && brain.status === "LIVE" ? "ok" : "warn");
     await refreshBrain();
   }
-  renderKeyStates();
+  await refreshKeyStates();
 }
 
 function renderKeyStates() {
