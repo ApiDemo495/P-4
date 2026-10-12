@@ -1620,7 +1620,7 @@ class CycleManager:
                     "exit": exit_price,
                     "accuracy": self.accuracy_block(),
                     "horizon_seconds": round(horizon, 1),
-                    "competition": self.competition.to_dict(),
+                    "competition": self.competition_payload(),
                     "competition_row": comp_row.as_dict() if comp_row else None,
                 },
             }
@@ -1778,7 +1778,7 @@ class CycleManager:
         payload["news_feed"] = self.news_payload(limit=30)
         payload["emotions"] = self.emotions_payload()
         payload["accuracy"] = self.accuracy_block()
-        payload["competition"] = self.competition.to_dict()
+        payload["competition"] = self.competition_payload()
         payload["boundary_pick"] = dict(self.last_pick)
         payload["brain_explain"] = self.brain_explain_payload()
         payload["physics"] = self.physics_payload()
@@ -2153,6 +2153,20 @@ class CycleManager:
             for spec in ALL_FORMULAS
             if getattr(spec, "directional", True)
         }
+
+    def competition_payload(self) -> dict:
+        """The ledger plus what the boundary picker has learned so far (Round
+        AW: the learning is real and persistent, so the UI shows it)."""
+        out = self.competition.to_dict()
+        pk = self.picker.to_dict()
+        moved = {k: round(v - pk["priors"][k], 3) for k, v in pk["weights"].items() if abs(v - pk["priors"][k]) >= 0.01}
+        out["learning"] = {
+            "updates": pk["updates"],
+            "log_loss_200": pk["log_loss_200"],
+            "moved": moved,
+            "memory": {"items": len(self.vault.to_dict()["items"]), "restored": list(self.vault_restored)},
+        }
+        return out
 
     def accuracy_block(self) -> dict:
         """Measured form of recent windows, overall and per side."""

@@ -1687,7 +1687,12 @@ function renderCompetition(c, pick) {
     $("c-pick").textContent = p.note;
     $("c-pick").className = p.flipped ? "neg" : "muted";
   }
-  $("c-reading").textContent = c.reading || "—";
+  const L = c.learning;
+  const learned = L ? ` · learned from ${L.updates} settled window${L.updates === 1 ? "" : "s"}` +
+    (L.log_loss_200 !== null && L.log_loss_200 !== undefined ? ` (log-loss ${L.log_loss_200.toFixed(3)} vs 0.693 coin)` : "") +
+    (L.moved && Object.keys(L.moved).length ? ` · weights moved: ${Object.entries(L.moved).map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v}`).join(", ")}` : "") +
+    (L.memory && L.memory.restored.length ? ` · memory restored (${L.memory.restored.length} items)` : "") : "";
+  $("c-reading").textContent = (c.reading || "—") + learned;
 }
 
 function renderWidgetPanel() {

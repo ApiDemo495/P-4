@@ -389,6 +389,27 @@ What the app does about it now:
 If the whole Codespace is asleep, the port 502s until you wake it: reopen the
 Codespace tab and let the attach command run, then reload the URL.
 
+### Running permanently, and what "permanently" honestly means
+
+GitHub stops an idle Codespace after its **idle timeout** (30 minutes by
+default, 240 minutes at most) and the app cannot stop that from inside the
+container - HTTP traffic on the forwarded port does not count as activity, only
+an open VS Code / browser editor session does. So:
+
+* Set the timeout to the maximum once: GitHub → **Settings → Codespaces →
+  Default idle timeout → 240 minutes**. Keep the Codespace editor tab open while
+  you play (that *is* activity).
+* **Nothing is lost when it does stop.** Every learned thing is written to
+  `.run/vault/` on the Codespace disk the moment a window settles - the
+  competition streak and ledger, the boundary picker's weights, the dopamine
+  brain, the outcome buffer and accuracy figures, the edge guard, the emotion
+  anchor, the formula state and the window counter. On the next start the
+  engine reads it back and carries on with the same streak and the same
+  history; the footer says `memory=10 on disk · 9 restored`. The same is true
+  for a self-update restart and a crash restart.
+* The only thing that empties the memory is creating a **new** Codespace
+  (new disk). Resume the existing one instead of creating a fresh one.
+
 ---
 
 ## 6. Troubleshooting

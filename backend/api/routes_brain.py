@@ -39,7 +39,7 @@ async def competition() -> dict:
     """Round AS: the competition scoreboard (last-trade vs last-trade, tie =
     loss), the streak ladder and the boundary picker's learned weights."""
     manager = get_manager()
-    return {"competition": manager.competition.to_dict(), "boundary_pick": manager.last_pick,
+    return {"competition": manager.competition_payload(), "boundary_pick": manager.last_pick,
             "picker": manager.picker.to_dict()}
 
 

@@ -1992,3 +1992,52 @@ Codespace must carry. Three layers make them appear with zero actions:
    builds). Status in `/api/agents/local/status → autoload / manifest`;
    settings page "models.json" chips. Prebuild instructions in
    `docs/LOCAL_MODELS.md §8`.
+
+## AW - 53 s windows, a memory that survives restarts, and violence is not calm
+
+**The window is 53 seconds everywhere.** `Settings.cycle_seconds` defaults to
+53 and every subsystem reads it (`window_seconds()` is the same number):
+clock grid (boundaries are multiples of 53 s since the epoch), countdown,
+lock, emotions, deep-micro, physics, prediction horizon, risk, hedge
+outcomes, competition, cross-asset sync grid (`SYNC_WINDOW_SECONDS = 53`),
+synthetic tapes, the dashboard strings. `CYCLE_SECONDS` still overrides.
+
+**StateVault (`backend/core/state_vault.py`).** The user's requirement:
+"permanently run and save history and really learn"; "reconnects must never
+lose history".  `Store` falls back to an in-memory dict without Redis, so
+until now every restart (Codespace resume, self-update, crash) forgot the
+streak, the picker's weights, the outcomes, the accuracy, the dopamine brain.
+Now `CycleManager._persist_learned()` pickles each learner to `.run/vault/`
+(atomic rename, schema-versioned, 3-day max age) **the moment a window
+settles** (`asyncio.to_thread`, after the OUTCOME broadcast) and at shutdown;
+`_restore_learned()` adopts the saved state back into the live objects
+(`__dict__` update, so no reference held elsewhere goes stale) in `start()`.
+Items: `competition`, `picker`, `dopamine`, `triune`, `outcomes`, `stats`
+(so window ids keep climbing), `lock_history`, `guard` (edge-guard
+side/raw outcomes, inverted cycles, flat count), `emotions` (volatility
+anchor, consensus EMA), `formulas` (export_state).  `STATE_VAULT_DIR`
+overrides the path (the test suite isolates every test and module).  Status:
+`infrastructure.vault` in the status payload, footer `memory=10 on disk · 9
+restored`, `/api/competition.learning` (picker updates, log-loss vs coin,
+which weights moved, what was restored).  README §5 states honestly what the
+app cannot do: GitHub's idle timeout stops a Codespace regardless of HTTP
+traffic; set it to 240 min and resume, do not recreate.
+
+**Complacency in violent markets.** Every surprise ramp was scaled by the
+tape's *own* recent scale (`_typical_move_bps`, ~600 ticks) and `vol_ratio`
+compares 30 to 240 ticks, so a market that stays violent normalises itself
+and reads calm.  Fix: a **slow volatility anchor** on the `EmotionTracker` -
+an EMA (20 min half-life, 2 Hz) of the window's realised move
+(`_window_sigma_bps`, 5 s buckets scaled to one window), seeded at once from
+exchange history when ≥ 120 one-minute candles exist (`_hourly_sigma_bps`,
+Kraken bootstrap gives 720), otherwise learned and silent (turbulence 1.0)
+for the first ~10 min; persisted in the vault; reset on asset switch.
+`turbulence = sigma_window / anchor` feeds: `vol_rise = max(vol_rise,
+ramp(turbulence, 1.3, 3))`, `vol_calm` and `calm_moves` × (1 − turbulent),
+the COMPLACENCY gate and every band's COMPLACENCY × (1 − 0.9·turbulent), and
+the Bayesian filter's evidence (`turbulent` evidence: COMPLACENCY −3.0, FEAR
++1.2, PANIC +1.0, FOMO +0.8; `calm` × (1 − turbulent), `stress` ≥
+turbulent).  A stateless `features()` read has no memory and stays neutral.
+Drivers say "last window moved 12.3× its hourly norm".
+
+Tests: `test_round_as.py` (+ violent-market, + restart-survival), 336 pass.
