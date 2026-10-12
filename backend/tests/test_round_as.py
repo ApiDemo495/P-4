@@ -232,3 +232,54 @@ def test_image_bakes_runtime_connectome_and_models():
     assert "self.agents.local.autoloader.start()" in cm and "MODEL_AUTOLOAD" in cm
     html = (ROOT / "backend/web/settings.html").read_text()
     assert 'id="autoload-status"' in html
+
+
+# -------------------------------------------- Round AW: violent != calm
+def test_a_market_that_stays_violent_is_not_complacent():
+    """User: 'even when the market was too violent it was continuously showing
+    complacency'.  The tape's own last-minute scale normalises violence away;
+    the hourly candle anchor must not."""
+    import numpy as np
+    from backend.core import emotions as E
+    from backend.core.frozen_snapshot import FrozenMarketSnapshot
+
+    rng = np.random.default_rng(3)
+    n, rate = 180 * 10, 10
+    t = np.arange(n) * (1000.0 / rate)
+    # a tape that has been violent for 3 minutes: 90 bps per minute
+    rets = rng.normal(0.0, 90.0 / 1e4 / np.sqrt(60 * rate), size=n)
+    px = 60_000.0 * np.exp(np.cumsum(rets))
+    side = np.where(rng.random(n) > 0.5, 1.0, -1.0)
+    ticks = np.column_stack([t, px, np.ones(n), side])
+    # the hour before was quiet: 1-minute closes moving ~8 bps
+    calm_closes = 60_000.0 * np.exp(np.cumsum(rng.normal(0, 8.0 / 1e4, size=60)))
+    book = np.zeros((2, 20, 2)); book[0, 0] = (px[-1] - 1, 5); book[1, 0] = (px[-1] + 1, 5)
+    snap = FrozenMarketSnapshot(timestamp=0.0, btc_ticks=ticks, paxg_ticks=ticks, btc_book=book, paxg_book=book,
+                                btc_book_prev=book, paxg_book_prev=book, btc_candles=calm_closes, paxg_candles=calm_closes,
+                                news_items=(), drg_outcomes=np.zeros((0, 2)), btc_tick_count=n, paxg_tick_count=n)
+    f = E.features(snap, "BTC")
+    assert f["sigma_window_bps"] > 3.0 * f["sigma_hour_bps"] > 0, f
+    # a stateless read has no memory to judge by: neutral
+    assert f["turbulence"] == 1.0
+    # the tracker remembers the quiet hour (seeded from exchange history)
+    tracker = E.EmotionTracker()
+    tracker.restore_anchor({"sigma_anchor_bps": f["sigma_hour_bps"], "sigma_anchor_samples": 0,
+                            "sigma_anchor_seeded": True})
+    report = E.analyze(snap, "BTC", tracker=tracker).to_dict()
+    assert report["features"]["turbulence"] > 3.0, report["features"]["turbulence"]
+    assert report["dominant"]["name"] != "COMPLACENCY", report["dominant"]
+    comp = [e for e in report["emotions"] if e.get("name") == "COMPLACENCY"]
+    assert not comp or comp[0]["intensity"] < 0.2, comp
+    # the same violent tape in a market whose norm IS violent is just normal
+    wild = E.EmotionTracker()
+    wild.restore_anchor({"sigma_anchor_bps": f["sigma_window_bps"], "sigma_anchor_seeded": True})
+    r2 = E.analyze(snap, "BTC", tracker=wild).to_dict()
+    assert r2["features"]["turbulence"] < 1.6
+    # an unseeded tracker stays silent until it has learned (~10 min)
+    fresh = E.EmotionTracker()
+    assert fresh.anchor_turbulence(50.0, 0.0, 0) == 1.0
+    # the anchor survives a restart through its state dict
+    assert E.EmotionTracker().restore_anchor(tracker.anchor_state()) is None
+    # ...and real exchange history (>= 2 h of candles) seeds it at once
+    seeded = E.EmotionTracker()
+    assert seeded.anchor_turbulence(90.0, 8.0, 120) > 3.0

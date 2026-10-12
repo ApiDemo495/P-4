@@ -83,7 +83,7 @@ BANDS = (
 LIKELIHOOD: dict[str, dict[str, float]] = {
     "FEAR": {
         "formula_down": 1.5, "formula_up": -1.0,
-        "down_mid": 2.0, "down_slow": 1.0, "stress": 1.5, "blowout": 1.0,
+        "down_mid": 2.0, "down_slow": 1.0, "stress": 1.5, "turbulent": 1.2, "blowout": 1.0,
         "toxicity": 0.8, "book_pressure": -0.8, "news": -0.8, "calm": -1.5,
         # Round Z geometry: cavities opening in the book and critical slowing
         # down are fear *before* the market orders arrive.
@@ -93,7 +93,7 @@ LIKELIHOOD: dict[str, dict[str, float]] = {
     },
     "PANIC": {
         "formula_down": 1.2,
-        "down_fast": 2.5, "cascade": 2.0, "stress": 1.5, "toxicity": 1.2,
+        "down_fast": 2.5, "cascade": 2.0, "stress": 1.5, "turbulent": 1.0, "toxicity": 1.2,
         "blowout": 1.2, "momentum": 0.3, "calm": -2.0,
         "tearing": 1.0, "chaotic": 1.2, "polarised": 0.8,
         "loss_averse": 1.5,
@@ -126,13 +126,13 @@ LIKELIHOOD: dict[str, dict[str, float]] = {
     "FOMO": {
         "formula_up": 1.2,
         "up_fast": 2.5, "cascade": 2.0, "toxicity": 1.0, "momentum": 1.0,
-        "herd_memory": 1.2, "calm": -1.5,
+        "herd_memory": 1.2, "calm": -1.5, "turbulent": 0.8,
         "heating": 1.0, "chaotic": 0.8, "polarised": 0.8,
         "gain_chasing": 1.5, "risk_seeking": 1.0,
     },
     "COMPLACENCY": {
         "formula_conviction": -1.5,
-        "calm": 2.5, "disorder": 1.0, "stress": -2.0, "down_fast": -1.5,
+        "calm": 2.5, "disorder": 1.0, "stress": -2.0, "turbulent": -3.0, "down_fast": -1.5,
         "up_fast": -1.5, "down_mid": -1.5, "up_mid": -1.5, "cascade": -1.0,
         "toxicity": -0.8,
         "tearing": -1.0, "csd": -0.8, "chaotic": -0.8, "polarised": -0.6,
@@ -142,6 +142,7 @@ LIKELIHOOD: dict[str, dict[str, float]] = {
 
 #: Plain-language names for the evidence variables, used in the chain.
 EVIDENCE_LABEL = {
+    "turbulent": "turbulent (window vs hourly norm)",
     "down_fast": "fast sell-off (1 s)", "up_fast": "fast ramp (1 s)",
     "down_mid": "sell-off over 5 s", "up_mid": "ramp over 5 s",
     "down_slow": "minute-scale decline", "up_slow": "minute-scale advance",
@@ -611,8 +612,12 @@ def _evidence(
         "persistence": _clip((_safe(bands["seconds"]["hurst"], 0.5) - 0.5) * 4.0, -1.0, 1.0),
         "disorder": _safe(bands["seconds"]["entropy"], 1.0),
         "herd_memory": _safe(deep["flow"]["sign_memory"]),
-        "stress": _safe(reg.get("stress")),
-        "calm": _safe(reg.get("calm")),
+        # Round AW: the slow anchor - the last window against the hourly norm.
+        # A tape that has been violent for minutes has a quiet "regime" by its
+        # own standards; turbulence keeps it from reading as calm.
+        "turbulent": _ramp(_safe(f.get("turbulence"), 1.0), 1.3, 3.0),
+        "stress": max(_safe(reg.get("stress")), _ramp(_safe(f.get("turbulence"), 1.0), 1.3, 3.0)),
+        "calm": _safe(reg.get("calm")) * (1.0 - _ramp(_safe(f.get("turbulence"), 1.0), 1.3, 3.0)),
         # A wide spread is only evidence when the tape is actually moving, and a
         # sub-basis-point spread cannot be a fear signal however wide it "blew".
         "blowout": (

@@ -189,7 +189,7 @@ EMOTION_FORMULAS: dict[str, str] = {
     ),
     "COMPLACENCY": (
         "COMPLACENCY = [0.35·calm_moves + 0.20·no_aggression + 0.20·middle "
-        "+ 0.15·tight + 0.10·max(slow_tape, vol_calm)] "
+        "+ 0.15·tight + 0.10·max(slow_tape, vol_calm)] × (1 − 0.9·turbulent) "
         "× (1 − 0.70·max(fear, panic, fomo, ½·up_1s, ½·down_1s))"
     ),
 }
@@ -205,14 +205,15 @@ TERM_DEFINITIONS: dict[str, str] = {
     "down_win": "ramp(−z_win; 0.8, 2.5)",
     "up_win": "ramp(+z_win; 0.8, 2.5)",
     "vol_rise": "ramp(σ_now/σ_baseline; 1.15, 1.80)",
-    "vol_calm": "1 − ramp(σ_now/σ_baseline; 0.85, 1.30)",
+    "vol_calm": "[1 − ramp(σ_now/σ_baseline; 0.85, 1.30)] × (1 − turbulent)",
+    "turbulent": "ramp(σ_window / σ_hourly; 1.3, 3.0) — the last window against what windows did over the past hour",
     "climax": "ramp(volume / its own pace; 2.0, 8.0)",
     "surge": "ramp(tick rate / its own pace; 1.5, 5.0)",
     "slow_tape": "1 − ramp(tick rate / its own pace; 0.6, 1.6)",
     "jitter": "ramp(inter-arrival jitter; 5 ms, 200 ms)",
     "blowout": "ramp(spread / its baseline; 1.6, 4.0) × min(1, movement) × (½ if spread < 1 bp)",
     "tight": "max(1 − ramp(spread/baseline; 0.9, 1.8), 1 − ramp(spread_bps; 1, 8))",
-    "calm_moves": "1 − ramp(max|z_1s, z_5s, z_win|; 0.8, 2.5)",
+    "calm_moves": "[1 − ramp(max|z_1s, z_5s, z_win|; 0.8, 2.5)] × (1 − turbulent)",
     "no_aggression": "1 − ramp(|aggression_5s|; 0.10, 0.50)",
     "top": "ramp(range_position; 0.70, 0.98)",
     "bottom": "1 − ramp(range_position; 0.05, 0.35)",
@@ -312,6 +313,50 @@ class EmotionTracker:
     challenger_count: int = 0
     #: the Bayesian filter's posterior, carried between samples
     deep_state: deep_micro.DeepState = field(default_factory=deep_micro.DeepState)
+    #: Round AW - the slow volatility anchor: an EMA of the window's realised
+    #: move (bps, scaled to one window) with a ~20 min half-life.  Seeded from
+    #: real exchange history when there is at least two hours of it, otherwise
+    #: learned from the tape; silent (turbulence 1.0) until it has learned.
+    sigma_anchor_bps: float = 0.0
+    sigma_anchor_samples: int = 0
+    sigma_anchor_seeded: bool = False
+
+    #: samples (2 per second) before a learned anchor is trusted (~10 min)
+    ANCHOR_WARMUP = 1200
+    #: one-sample EMA weight for a 20 min half-life at 2 Hz
+    ANCHOR_ALPHA = 1.0 - 0.5 ** (1.0 / 2400.0)
+
+    def anchor_turbulence(self, sigma_window_bps: float, sigma_hour_bps: float,
+                          hour_candles: int) -> float:
+        """Fold one window-sigma reading into the anchor and return turbulence."""
+        if not self.sigma_anchor_seeded and hour_candles >= 120 and sigma_hour_bps > 1e-6:
+            self.sigma_anchor_bps = float(sigma_hour_bps)
+            self.sigma_anchor_seeded = True
+        if sigma_window_bps > 0:
+            if self.sigma_anchor_bps <= 0:
+                self.sigma_anchor_bps = float(sigma_window_bps)
+            else:
+                self.sigma_anchor_bps += self.ANCHOR_ALPHA * (float(sigma_window_bps) - self.sigma_anchor_bps)
+            self.sigma_anchor_samples += 1
+        trusted = self.sigma_anchor_seeded or self.sigma_anchor_samples >= self.ANCHOR_WARMUP
+        if not trusted or self.sigma_anchor_bps <= 1e-6 or sigma_window_bps <= 0:
+            return 1.0
+        return float(sigma_window_bps / self.sigma_anchor_bps)
+
+    def anchor_state(self) -> dict:
+        return {"sigma_anchor_bps": self.sigma_anchor_bps,
+                "sigma_anchor_samples": self.sigma_anchor_samples,
+                "sigma_anchor_seeded": self.sigma_anchor_seeded}
+
+    def restore_anchor(self, state: dict | None) -> None:
+        if not state:
+            return
+        try:
+            self.sigma_anchor_bps = float(state.get("sigma_anchor_bps", 0.0) or 0.0)
+            self.sigma_anchor_samples = int(state.get("sigma_anchor_samples", 0) or 0)
+            self.sigma_anchor_seeded = bool(state.get("sigma_anchor_seeded", False))
+        except (TypeError, ValueError):
+            pass
 
     def _elect(self, ranked: list[tuple[str, float]]) -> str:
         """The dominant emotion, with hysteresis (see the class docstring)."""
@@ -811,6 +856,47 @@ def _typical_move_bps(times_ms: np.ndarray, prices: np.ndarray, seconds: float) 
     return float(np.median(moves))
 
 
+def _window_sigma_bps(times_ms: np.ndarray, prices: np.ndarray, window_s: float) -> float:
+    """Realised move of the last ``window_s`` seconds of tape, in bps per
+    window: 5 s bucket closes, their return std scaled by sqrt(time)."""
+    if prices.size < 8:
+        return 0.0
+    t = times_ms / 1000.0
+    keep = t >= t[-1] - window_s
+    t, p = t[keep], prices[keep]
+    if p.size < 8 or t[-1] - t[0] < window_s * 0.5:
+        return 0.0
+    bucket = 5.0
+    edges = np.floor((t - t[0]) / bucket).astype(np.int64)
+    change = np.flatnonzero(np.diff(edges))
+    closes = np.concatenate([p[change], p[-1:]]) if change.size else p[-1:]
+    if closes.size < 4:
+        return 0.0
+    rets = np.diff(closes) / closes[:-1]
+    rets = rets[np.isfinite(rets)]
+    if rets.size < 3:
+        return 0.0
+    return float(np.std(rets, ddof=1)) * 1e4 * float(np.sqrt(window_s / bucket))
+
+
+def _hourly_sigma_bps(tape: Any, asset: str, window_s: float) -> tuple[float, int]:
+    """What a window usually moves, from the last two hours of 1-minute candle
+    closes (the slow anchor's seed), and how many candles backed it.
+    (0, 0) when the tape carries no candles yet."""
+    try:
+        closes = np.asarray(tape.candles(asset), dtype=np.float64)
+    except Exception:  # noqa: BLE001
+        return 0.0, 0
+    if closes.ndim != 1 or closes.size < 10:
+        return 0.0, 0
+    closes = closes[-121:]
+    rets = np.diff(closes) / np.where(np.abs(closes[:-1]) > 1e-12, closes[:-1], np.nan)
+    rets = rets[np.isfinite(rets)]
+    if rets.size < 6:
+        return 0.0, 0
+    return float(np.std(rets, ddof=1)) * 1e4 * float(np.sqrt(window_s / 60.0)), int(rets.size)
+
+
 def features(
     tape: Any,
     asset: str,
@@ -921,6 +1007,19 @@ def features(
         out["vol_ratio"] = vol_short / vol_long if vol_long > 1e-12 else 1.0
     else:
         out["vol_ratio"] = 1.0
+    # --- Round AW: turbulence against a SLOW anchor ------------------------
+    # Every ratio above is the tape against its own last minute or two, so a
+    # market that has been violent for five minutes reads as "normal" - the
+    # user saw COMPLACENCY in a vigorous market.  The anchor here is the last
+    # hour of 1-minute candles (what the tape usually does), and the live
+    # number is the realised move of the last window on the tick tape.
+    out["sigma_window_bps"] = _window_sigma_bps(times_ms, prices, WIN)
+    out["sigma_hour_bps"], out["hour_candles"] = _hourly_sigma_bps(tape, asset, WIN)
+    # ``turbulence`` is the window's realised move against the market's slow
+    # norm.  The norm is *remembered* by the EmotionTracker (an EMA that lives
+    # across windows and is persisted); a stateless read has no memory to judge
+    # by, so it is neutral (1.0) here and the tracker overrides it in analyze().
+    out["turbulence"] = 1.0
     recent_slice = prices[-min(prices.size, 240) :]
     low = float(np.min(recent_slice)); high = float(np.max(recent_slice))
     out["range_position"] = (last - low) / (high - low) if high > low else 0.5
@@ -1042,8 +1141,13 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
     buy = _ramp(f.get("aggression_5s", 0.0), 0.15, 0.65)
 
     # --- pace, volatility and spread, all relative ------------------------
-    vol_rise = _ramp(f.get("vol_ratio", 1.0), 1.15, 1.80)
-    vol_calm = 1.0 - _ramp(f.get("vol_ratio", 1.0), 0.85, 1.30)
+    # Round AW: the slow anchor.  turbulent = the last window moved 1.3x-3x
+    # what windows have moved over the past hour; it lifts vol_rise, kills
+    # vol_calm / calm_moves and gates COMPLACENCY, so a market that has been
+    # violent for a while cannot normalise itself into "calm".
+    turbulent = _ramp(f.get("turbulence", 1.0), 1.3, 3.0)
+    vol_rise = max(_ramp(f.get("vol_ratio", 1.0), 1.15, 1.80), turbulent)
+    vol_calm = (1.0 - _ramp(f.get("vol_ratio", 1.0), 0.85, 1.30)) * (1.0 - turbulent)
     # A wider spread on its own is not fear - it is often just a quiet book
     # being re-quoted.  It only counts as stress next to a move that is already
     # happening, so the term is multiplied by the strongest moving evidence.
@@ -1076,7 +1180,7 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
     surprise = max(
         abs(f.get("z_1s", 0.0)), abs(f.get("z_5s", 0.0)), abs(f.get("z_win", 0.0))
     )
-    calm_moves = 1.0 - _ramp(surprise, 0.8, 2.5)
+    calm_moves = (1.0 - _ramp(surprise, 0.8, 2.5)) * (1.0 - turbulent)
     no_aggression = 1.0 - _ramp(abs(f.get("aggression_5s", 0.0)), 0.10, 0.50)
 
     # --- where price sits, and how far it has come ------------------------
@@ -1173,7 +1277,7 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
     euphoria *= gates["EUPHORIA"]
     hope *= gates["HOPE"]
     fomo *= gates["FOMO"]
-    gates["COMPLACENCY"] = 1.0 - 0.70 * max(fear, panic, fomo, up_1s * 0.5, down_1s * 0.5)
+    gates["COMPLACENCY"] = (1.0 - 0.70 * max(fear, panic, fomo, up_1s * 0.5, down_1s * 0.5)) * (1.0 - 0.9 * turbulent)
     complacency *= gates["COMPLACENCY"]
     terms = {
         "FEAR": fear_terms, "PANIC": panic_terms, "CAPITULATION": capitulation_terms,
@@ -1235,6 +1339,10 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
             "COMPLACENCY": 0.0,
         },
     }
+    # Round AW: a tight spread or a mid-range price on a turbulent tape is not
+    # calm on ANY timescale - the same gate the headline score gets.
+    for band in by_band.values():
+        band["COMPLACENCY"] = band["COMPLACENCY"] * (1.0 - 0.9 * turbulent)
 
     drivers = {
         "FEAR": [
@@ -1276,10 +1384,14 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
         ],
         "COMPLACENCY": [
             f"volatility x{f.get('vol_ratio', 1.0):.2f}",
+            f"last window moved x{f.get('turbulence', 1.0):.2f} its hourly norm",
             f"spread x{f.get('spread_blowout', 1.0):.2f} of normal",
             f"{f.get('tick_rate_hz', 0.0):.1f} ticks/s",
         ],
     }
+    if f.get("turbulence", 1.0) >= 1.3:
+        for name in ("FEAR", "PANIC", "FOMO", "EUPHORIA"):
+            drivers[name].insert(0, f"turbulent: the window moves x{f.get('turbulence', 1.0):.1f} the hourly norm")
 
     order = [
         ("FEAR", fear), ("PANIC", panic), ("CAPITULATION", capitulation),
@@ -1416,6 +1528,12 @@ def analyze(
     if not f.get("ticks"):
         report.reason = "no ticks on the tape yet"
         return report
+
+    if tracker is not None:
+        f["turbulence"] = tracker.anchor_turbulence(
+            float(f.get("sigma_window_bps", 0.0)), float(f.get("sigma_hour_bps", 0.0)),
+            int(f.get("hour_candles", 0)))
+        f["sigma_anchor_bps"] = tracker.sigma_anchor_bps
 
     report.available = True
     report.ticks = int(f.get("ticks", 0))
