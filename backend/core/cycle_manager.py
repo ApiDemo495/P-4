@@ -1,4 +1,4 @@
-"""The 60-second cycle manager - the heart of DROSOPHILA TRADER v2.0.
+"""The 53-second cycle manager - the heart of DROSOPHILA TRADER v2.0.
 
 One cycle, exactly as specified in Section 1.1 and Section 2.2:
 
@@ -6,14 +6,14 @@ One cycle, exactly as specified in Section 1.1 and Section 2.2:
     t=0-3ms     run all 22 formulas on the frozen snapshot
     t=3-8s      call the AI agents concurrently (7 s budget)
     t~8s        fuse, then LOCK the signal and broadcast it
-    t=8-60s     broadcast nothing that changes the signal panel; the Formula
+    t=8-53s     broadcast nothing that changes the signal panel; the Formula
                 Explorer refreshes every 15 s with the explicit note that the
                 signal remains locked
-    t=60s       next cycle begins
+    t=53s       next cycle begins
 
 The manager also owns:
 
-* the **outcome tracker** - 60 s after a signal fires, the result is evaluated
+* the **outcome tracker** - one window (53 s) after a signal fires, the result is evaluated
   and pushed into the DRG reward buffer
 * the **emergency path** - critical news events or a flash move override the
   locked signal to the *exit side* (the opposite of the direction that is open)
@@ -49,6 +49,7 @@ from backend.core.prediction import detail as prediction_detail
 from backend.core.prediction import build_reasoning, consensus
 from backend.core import edge_guard
 from backend.core.calibration import EvidenceLedger
+from backend.core.state_vault import StateVault
 from backend.core.competition import BoundaryPicker, CompetitionLedger, boundary_features
 from backend.core.dopamine import DopamineBrain
 from backend.core.triune import TriuneAnalyst
@@ -116,7 +117,7 @@ def _readings_for(result) -> dict:
 
 
 class CycleManager:
-    """Owns every subsystem and drives the 60-second world clock."""
+    """Owns every subsystem and drives the 53-second world clock."""
 
     def __init__(self, settings=None, clock: WorldClock | None = None, local_stub: bool | None = None) -> None:
         self.settings = settings or cfg.SETTINGS
@@ -159,6 +160,9 @@ class CycleManager:
         self.lock = SignalLockController()
 
         self.outcomes = OutcomeBuffer()
+        # Round AW: everything learned survives a restart (.run/vault/).
+        self.vault = StateVault(os.environ.get("STATE_VAULT_DIR") or (cfg.REPO_ROOT / ".run" / "vault"))
+        self.vault_restored: list[str] = []
         # Round N: which inputs actually predict - learned from scored windows.
         self.ledger = EvidenceLedger(
             Path(os.environ.get("CALIBRATION_PATH") or (cfg.REPO_ROOT / ".run" / "calibration.json"))
@@ -547,6 +551,10 @@ class CycleManager:
             self.emotions.tracker.emotions = {}
             self.emotions.tracker.last_dominant = ""
             self.emotions.tracker.samples = 0
+            # the volatility anchor is per asset: forget it and let the new
+            # asset's exchange history reseed it (Round AW)
+            self.emotions.tracker.restore_anchor({"sigma_anchor_bps": 0.0, "sigma_anchor_samples": 0,
+                                                  "sigma_anchor_seeded": False})
             self.emotions.last = {}
             self.emotion_locked = {}
 
@@ -1617,6 +1625,9 @@ class CycleManager:
                 },
             }
         )
+        # Round AW: a settled window is a learned fact - write it to disk now,
+        # not at shutdown (a Codespace idle-stop never calls shutdown).
+        await asyncio.to_thread(self._persist_learned)
 
     async def _price_at(self, asset: str, fallback: float) -> float:
         """Prefer live data; the CoinGecko/simulator feeds both end up here."""
@@ -1650,7 +1661,7 @@ class CycleManager:
         return self.brain.status_dict()
 
     def history_payload(self, limit: int = 72) -> dict:
-        # The lock keeps 1440 windows (a day at 60 s, x6 data); the clamp
+        # The lock keeps 1440 windows (~21 h at 53 s, x6 data); the clamp
         # matches it instead of silently cutting the request at 240.
         return {"history": self.lock.recent_history(min(max(int(limit), 1), 1440))}
 
@@ -1888,6 +1899,7 @@ class CycleManager:
             },
             "infrastructure": {
                 "redis": self.store.backend,
+                "vault": {**self.vault.to_dict(), "restored_at_start": list(self.vault_restored)},
                 "outcomes": len(self.outcomes),
                 "win_rate": round(self.outcomes.win_rate(), 4),
             },
@@ -2235,7 +2247,7 @@ class CycleManager:
                            now: float | None = None) -> dict:
         """The prediction block: side, levels, freshness, reasoning, detail.
 
-        The forecast window is the 60-second window that starts when the
+        The forecast window is the 53-second window that starts when the
         prediction is released, and its result is scored one window later; both
         are stated explicitly in the ``horizon`` block, in microseconds.
         """
@@ -2711,21 +2723,95 @@ class CycleManager:
     # ==================================================================
     # Persistence of formula state across restarts
     # ==================================================================
+    # Round AW -- the vault: what is learned is kept ------------------------
+    #: name -> attribute holding a learner whose whole state is adopted back
+    VAULT_OBJECTS = ("competition", "picker", "dopamine", "triune", "outcomes", "stats")
+    #: a streak older than this is not a live streak
+    VAULT_MAX_AGE = 3 * 86_400.0
+
+    def _persist_learned(self) -> dict:
+        """Write every learner to the vault (synchronous; call off-loop)."""
+        written = {}
+        for name in self.VAULT_OBJECTS:
+            written[name] = self.vault.save(name, getattr(self, name))
+        written["lock_history"] = self.vault.save("lock_history", list(self.lock.history)[-cfg.OUTCOME_BUFFER_SIZE:])
+        written["guard"] = self.vault.save("guard", {
+            "side_outcomes": list(self._side_outcomes),
+            "raw_outcomes": list(self._raw_outcomes),
+            "inverted_cycles": sorted(self._inverted_cycles),
+            "flat_windows": int(self._flat_windows),
+            "asset": self.asset,
+        })
+        tracker = getattr(self.emotions, "tracker", None)
+        if tracker is not None:
+            written["emotions"] = self.vault.save("emotions", {
+                "asset": self.asset,
+                "anchor": tracker.anchor_state(),
+                "consensus_ema": tracker.consensus_ema,
+                "emotions": dict(tracker.emotions),
+                "last_dominant": tracker.last_dominant,
+            })
+        try:
+            written["formulas"] = self.vault.save("formulas", self.formulas.export_state())
+        except Exception as exc:  # noqa: BLE001
+            log.debug("could not export formula state: %s", exc)
+        return written
+
+    def _restore_learned(self) -> list[str]:
+        restored: list[str] = []
+        for name in self.VAULT_OBJECTS:
+            if self.vault.restore_into(name, getattr(self, name), max_age=self.VAULT_MAX_AGE):
+                restored.append(name)
+        history = self.vault.load("lock_history", max_age=self.VAULT_MAX_AGE)
+        if isinstance(history, list) and history:
+            self.lock.history = history + [h for h in self.lock.history if h not in history]
+            restored.append("lock_history")
+        guard = self.vault.load("guard", max_age=self.VAULT_MAX_AGE)
+        if isinstance(guard, dict) and guard.get("asset") == self.asset:
+            self._side_outcomes.extend(tuple(x) for x in guard.get("side_outcomes", []))
+            self._raw_outcomes.extend(int(x) for x in guard.get("raw_outcomes", []))
+            self._inverted_cycles.update(int(x) for x in guard.get("inverted_cycles", []))
+            self._flat_windows = int(guard.get("flat_windows", 0) or 0)
+            restored.append("guard")
+        emo = self.vault.load("emotions", max_age=self.VAULT_MAX_AGE)
+        tracker = getattr(self.emotions, "tracker", None)
+        if isinstance(emo, dict) and tracker is not None and emo.get("asset") == self.asset:
+            tracker.restore_anchor(emo.get("anchor"))
+            if emo.get("consensus_ema") is not None:
+                tracker.consensus_ema = float(emo["consensus_ema"])
+            restored.append("emotions")
+        payload = self.vault.load("formulas", max_age=self.VAULT_MAX_AGE)
+        if payload:
+            try:
+                n = self.formulas.import_state(payload)
+                if n:
+                    restored.append(f"formulas:{n}")
+            except Exception as exc:  # noqa: BLE001
+                log.debug("could not import formula state: %s", exc)
+        # (``stats.cycle_number`` is restored above, so window ids keep
+        # climbing across restarts - a settled id stays unique in the ledger)
+        return restored
+
     async def _persist_state(self) -> None:
         try:
-            await self.store.set_pickle(
-                "formulas:state", self.formulas.export_state(), ttl=86_400
-            )
+            written = await asyncio.to_thread(self._persist_learned)
+            await self.store.set_pickle("formulas:state", self.formulas.export_state(), ttl=86_400)
+            log.info("Vault: wrote %d/%d items to %s", sum(1 for v in written.values() if v), len(written), self.vault.root)
         except Exception as exc:  # noqa: BLE001
-            log.debug("could not persist formula state: %s", exc)
+            log.debug("could not persist state: %s", exc)
 
     async def _restore_state(self) -> None:
         try:
+            self.vault_restored = await asyncio.to_thread(self._restore_learned)
+            if self.vault_restored:
+                log.info("Vault: restored %s (streak %d, %d scored windows)", ", ".join(self.vault_restored),
+                         int(getattr(self.competition, "streak", 0) or 0), len(self.outcomes))
+                return
             payload = await self.store.get_pickle("formulas:state")
             if payload:
                 restored = self.formulas.import_state(payload)
                 log.info("Restored %d formula states from cache", restored)
         except Exception as exc:  # noqa: BLE001
-            log.debug("could not restore formula state: %s", exc)
+            log.debug("could not restore state: %s", exc)
 
 

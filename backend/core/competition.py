@@ -2,7 +2,7 @@
 
 The rules, as the user plays them:
 
-* every 60 s window must be called BUY or SELL - no skipping, no sizing;
+* every 53 s window must be called BUY or SELL - no skipping, no sizing;
 * entry = the exchange's **last trade** at the opening second, settlement =
   the last trade at the closing second;
 * strictly higher wins a BUY, strictly lower wins a SELL, **a tie loses**;
@@ -25,7 +25,7 @@ the one-tick windows where ties and coin-flips live:
   entry print.  A print at the ask with a heavy bid is *above* fair value and
   the next prints lean down (Stoikov 2018);
 * **last-print reversal** - the aggressor side of the entry print itself
-  (bid-ask bounce: Roll 1984), and the move of the last 3 s, which at a 60 s
+  (bid-ask bounce: Roll 1984), and the move of the last 3 s, which at a 53 s
   horizon reverts more often than it continues;
 * **short order-flow imbalance** - signed volume of the last 5 s (Cont,
   Kukanov & Stoikov 2014), the only short-horizon feature that *continues*.

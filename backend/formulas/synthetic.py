@@ -52,7 +52,7 @@ TICKS_PER_WINDOW = 600
 WINDOWS = 48
 #: Micro-cycle period, in ticks: 30 ticks = 3 s at 10 ticks/s.
 CYCLE_PERIOD_TICKS = 30
-WINDOW_SECONDS = 60.0
+WINDOW_SECONDS = float(cfg.SETTINGS.cycle_seconds)
 END_MS = 1_700_000_000_000.0
 SEED = 20240924
 

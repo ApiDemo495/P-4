@@ -28,3 +28,28 @@ os.environ.setdefault("MARKET_ALLOW_SIMULATOR", "1")
 os.environ.setdefault("LOCAL_AGENT_STUB", "1")
 os.environ.setdefault("LOG_LEVEL", "warning")
 os.environ.setdefault("SOCIAL_ENABLED", "0")
+
+
+# Round AW: the StateVault writes to .run/vault on the real disk.  Every test
+# gets its own empty vault so one test's settled windows are never another
+# test's "restored" history (and the repo's own vault is never touched).
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _isolated_state_vault_per_module(tmp_path_factory):
+    # module-scoped engines (test_prediction, test_e2e, ...) are built before
+    # any function-scoped fixture runs
+    previous = os.environ.get("STATE_VAULT_DIR")
+    os.environ["STATE_VAULT_DIR"] = str(tmp_path_factory.mktemp("vault"))
+    yield
+    if previous is None:
+        os.environ.pop("STATE_VAULT_DIR", None)
+    else:
+        os.environ["STATE_VAULT_DIR"] = previous
+
+
+@pytest.fixture(autouse=True)
+def _isolated_state_vault(tmp_path, monkeypatch):
+    monkeypatch.setenv("STATE_VAULT_DIR", str(tmp_path / "vault"))
+    yield

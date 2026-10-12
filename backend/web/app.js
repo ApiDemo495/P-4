@@ -1298,6 +1298,15 @@ function degradationLabel(level) {
   }[level] || "—";
 }
 
+// Round AW: what the engine remembers across restarts (.run/vault on disk).
+function vaultLabel(v) {
+  if (!v) return "none";
+  const kept = (v.items || []).length;
+  const restored = (v.restored_at_start || []).length;
+  if (!kept) return "fresh";
+  return restored ? `${kept} on disk · ${restored} restored` : `${kept} on disk`;
+}
+
 function renderStatus(status) {
   if (!status) return;
   state.cycleNumber = status.cycle?.cycle_number ?? state.cycleNumber;
@@ -1306,7 +1315,7 @@ function renderStatus(status) {
   state.lockState = lock.state || state.lockState;
   $("degradation").textContent = degradationLabel(status.degradation_level);
   $("foot-status").textContent =
-    `cycle ${state.cycleNumber} · ${status.asset} · redis=${status.infrastructure?.redis ?? "?"}` +
+    `cycle ${state.cycleNumber} · ${status.asset} · memory=${vaultLabel(status.infrastructure?.vault)}` +
     ` · win rate ${fmtPct(status.infrastructure?.win_rate ?? 0)} · ${status.clock?.utc ?? ""}`;
   if (status.clock?.ntp_synced === false) {
     $("foot-status").textContent += " · NTP: system clock";

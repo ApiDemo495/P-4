@@ -1,6 +1,6 @@
 """World-clock timing.
 
-The 60-second cycle is phase-locked to the UTC minute (Section 9 of the
+The 53-second cycle is phase-locked to the UTC epoch grid (Section 9 of the
 specification).  NTP is used to correct for system-clock drift; if NTP is
 unreachable the module silently falls back to the system clock and re-attempts
 every 60 seconds (Section 13.1).
@@ -12,6 +12,8 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
+
+from backend.core import config as cfg
 
 log = logging.getLogger("drosophila.clock")
 
@@ -47,14 +49,15 @@ class WorldClock:
     def iso(self) -> str:
         return self.now_dt().strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    def seconds_into_minute(self, period: float = 60.0) -> float:
-        """Seconds since the last epoch-aligned boundary of ``period``."""
-        return self.now() % float(period or 60.0)
+    def seconds_into_minute(self, period: float | None = None) -> float:
+        """Seconds since the last epoch-aligned boundary of ``period`` (the
+        53 s window by default; the name is historical)."""
+        return self.now() % float(period or cfg.SETTINGS.cycle_seconds)
 
-    def seconds_until_next_minute(self, period: float = 60.0) -> float:
+    def seconds_until_next_minute(self, period: float | None = None) -> float:
         """Seconds to the next epoch-aligned boundary of ``period`` (Round AW:
         the name is historical - the grid is 53 s by default)."""
-        period = float(period or 60.0)
+        period = float(period or cfg.SETTINGS.cycle_seconds)
         return period - self.seconds_into_minute(period)
 
     # -- maintenance -----------------------------------------------------

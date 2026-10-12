@@ -140,7 +140,7 @@ L2_DEPTH_LEVELS = 20 * DATA_MULTIPLIER            # 120 levels per side
 CANDLE_BUFFER_SIZE = 60 * DATA_MULTIPLIER         # 360 candles
 NEWS_CACHE_SIZE = 20 * DATA_MULTIPLIER            # 120 headlines
 OUTCOME_BUFFER_SIZE = 20 * DATA_MULTIPLIER        # 120 scored windows
-SYNC_WINDOW_SECONDS = 60
+SYNC_WINDOW_SECONDS = 53   # Round AW: the cross-asset grid is one window
 
 
 @dataclass(frozen=True)
@@ -317,7 +317,7 @@ class Settings:
 
     # Cycle timing
     #: Length of one prediction window, in wall-clock seconds.  This is the
-    #: countdown the user watches, and it is **60 seconds**, phase-locked to the
+    #: countdown the user watches, and it is **53 seconds**, phase-locked to the
     #: UTC minute (the literal v2.0 timing, Section 9).  Every feature of the
     #: engine - the signal, the formulas, the news poll, the accuracy scoring -
     #: is scheduled on that one grid, so the dashboard refreshes in parallel
@@ -355,7 +355,7 @@ class Settings:
     )
     #: How long after a prediction its result is scored.  ``0`` (the default)
     #: means "one window later", so the accuracy panel fills at the same rate
-    #: the predictions arrive: 60 s with the 60-second countdown.
+    #: the predictions arrive: one window (53 s) with the countdown.
     outcome_horizon_seconds: float = field(
         default_factory=lambda: _env_float("OUTCOME_HORIZON_SECONDS", 0.0)
     )
@@ -390,7 +390,7 @@ class Settings:
     def cycle_period_seconds(self) -> float:
         """Wall-clock length of one prediction window.
 
-        ``CYCLE_SECONDS`` (60 s by default, minute-aligned) sets the cadence; a
+        ``CYCLE_SECONDS`` (53 s by default, epoch-aligned) sets the cadence; a
         larger ``TIME_SCALE`` compresses it further for demos and tests.
         """
         return self.cycle_seconds / max(self.time_scale, 0.01)
@@ -432,7 +432,7 @@ class Settings:
         return max(1.0, self.cycle_period_seconds + self.freshness_grace_seconds)
 
     def scaled(self, seconds: float) -> float:
-        """Convert a spec (virtual, 60s-cycle) duration to wall-clock seconds."""
+        """Convert a spec (virtual, one-cycle) duration to wall-clock seconds."""
         return seconds / max(self.time_scale, 0.01)
 
 

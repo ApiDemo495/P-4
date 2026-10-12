@@ -848,7 +848,7 @@ def _typical_move_bps(times_ms: np.ndarray, prices: np.ndarray, seconds: float) 
     base = prices[earlier[valid]]
     moves = np.abs(prices[valid] / base - 1.0) * 10_000.0
     moves = moves[np.isfinite(moves)]
-    # A horizon the tape barely covers (a 60 s lookback on a 65 s tape) has
+    # A horizon the tape barely covers (a 53 s lookback on a 58 s tape) has
     # too few samples for a median to mean anything; report "no scale" and
     # let the caller derive it from the next-shortest horizon.
     if moves.size < 30:

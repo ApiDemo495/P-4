@@ -1,7 +1,7 @@
 # DROSOPHILA TRADER v2.0
 
 A scalp-trading engine for **BTC** and **PAXG** built around a Drosophila
-mushroom-body connectome. One immutable prediction per **60-second window**,
+mushroom-body connectome. One immutable prediction per **53-second window**,
 22 formulas, three AI agents, and a brain that keeps working when neuPrint, the
 exchange or your API keys do not.
 
@@ -16,8 +16,8 @@ exchange or your API keys do not.
    └──────────────────────────────────────────────────────────────────────┘
 ```
 
-**One clock, one tick.** The countdown is 60 seconds, phase-locked to the UTC
-minute, and it is rendered from absolute instants the backend publishes - so it
+**One clock, one tick.** The countdown is 53 seconds, phase-locked to the Unix
+epoch grid (every boundary is a multiple of 53 s), and it is rendered from absolute instants the backend publishes - so it
 cannot drift or restart. Every panel (signal, formulas, news, agents, brain,
 accuracy) refreshes on the *same* tick, from a single message, instead of each
 one polling on a private timer.
@@ -25,7 +25,7 @@ one polling on a private timer.
 Every prediction carries a **side (BUY or SELL - there is no HOLD), a fresh-ness
 age, the reasoning behind it, and a 1:1 take-profit / stop-loss pair**.
 
-**The crowd's emotions, live.** A 60-second market is easily pushed around by
+**The crowd's emotions, live.** A 53-second market is easily pushed around by
 retail emotion, so the engine reads the crowd continuously - eight emotions
 (fear, panic, capitulation, denial, hope, euphoria, FOMO, complacency), each
 measured from microseconds to minutes - and the dashboard says **which emotion
@@ -272,11 +272,11 @@ bash tools/codespace_autostart.sh --update
 | `bash run.sh --stop` | stops the engine and its supervisor |
 | `bash run.sh --setup-only` | installs everything, starts nothing |
 | `bash run.sh --port 8020` | uses a different port (then forward that one instead) |
-| `CYCLE_SECONDS=60` | length of one prediction window; 60 keeps it locked to the UTC minute |
+| `CYCLE_SECONDS=53` | length of one prediction window; boundaries are multiples of 53 s since the epoch |
 | `CALIBRATION_ENABLED=1` | learned reliability: after `CALIBRATION_MIN_SAMPLES` (30) scored windows per asset the per-source hit-rate ledger decides the side and the confidence shown is the realised rate; `CALIBRATION_HALF_LIFE=120` windows of memory; inspect with `GET /api/signal/calibration?asset=BTC` |
-| `PREDICTION_MAX_AGE_SECONDS=0` | `0` = as long as its own window (60 s + a 5 s grace); set a number to pin a hard cap |
+| `PREDICTION_MAX_AGE_SECONDS=0` | `0` = as long as its own window (53 s + a 5 s grace); set a number to pin a hard cap |
 | `RR_TARGET=1.0` | reward:risk target; 1.0 = take-profit and stop-loss are equidistant |
-| `OUTCOME_HORIZON_SECONDS=0` | `0` = score each prediction one window later (60 s) |
+| `OUTCOME_HORIZON_SECONDS=0` | `0` = score each prediction one window later (53 s) |
 | `bash run.sh --public` | flips the Codespaces port to public |
 | `bash .devcontainer/setup.sh` | the Codespaces `postCreateCommand`: system packages, venv, requirements, redis, `.env` |
 
@@ -512,8 +512,8 @@ tail -f server.log
 
 ## 9. The parts that make it v2.0
 
-* **A 60-second countdown you can watch.** The window is 60 seconds, aligned to
-  the UTC minute, and the countdown walks 60 → 1 one second at a time. It is
+* **A 53-second countdown you can watch.** The window is 53 seconds, aligned to
+  the epoch grid, and the countdown walks 53 → 1 one second at a time. It is
   rendered from the absolute instants the backend publishes
   (`window_started_at_ms`, `window_ends_at_ms`, `server_time_ms`, `cycle_id`),
   and it only re-anchors when the window id changes - a late message can never
@@ -588,7 +588,7 @@ tail -f server.log
 * **Every prediction covers the minute that follows its release.** The payload
   carries `horizon` with `released_at` / `target_at` (six-digit ISO *and* epoch
   µs), `microseconds_to_target`, `scored_in_seconds`, and the words "the next
-  60 seconds" — so a side is never mistaken for "now". The dashboard shows that
+  53 seconds" — so a side is never mistaken for "now". The dashboard shows that
   line under the prediction, plus a `▸ prediction detail` block naming the
   formulas that backed the side and the µs the pass cost.
 * **A dashboard you can read at a glance.** Row 1: prediction + reasoning ·

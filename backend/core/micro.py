@@ -1,6 +1,6 @@
 """Microsecond-resolution market analysis.
 
-The engine's *decisions* are made once per 60-second window, but the *analysis*
+The engine's *decisions* are made once per 53-second window, but the *analysis*
 behind them is not second-granular: the tick stream carries sub-millisecond
 timestamps, and every quantity that describes the tape - how fast quotes arrive,
 how jittery that arrival is, how far price moves per microsecond - is measured

@@ -151,7 +151,7 @@ async def key_effects() -> dict:
             "calls": health.get("calls"), "last_error": health.get("last_error"),
             "weight": float(getattr(settings, f"weight_{name}", 0.0) or 0.0),
             "effect": ((f"voting in fusion ({health.get('calls')} calls, model {health.get('model') or '-'})" if health.get("calls")
-                        else "key active · first vote on the next 60 s cycle") if health.get("status") == "ACTIVE" else
+                        else "key active · first vote on the next 53 s cycle") if health.get("status") == "ACTIVE" else
                        "no key" if not (ring and ring.configured) else f"not voting: {health.get('status')} - {health.get('last_error') or health.get('detail') or ''}"),
         }
     agent_row("gemini", getattr(manager.agents, "gemini", None), settings.rings.get("gemini"))

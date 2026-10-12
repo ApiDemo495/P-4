@@ -283,3 +283,61 @@ def test_a_market_that_stays_violent_is_not_complacent():
     # ...and real exchange history (>= 2 h of candles) seeds it at once
     seeded = E.EmotionTracker()
     assert seeded.anchor_turbulence(90.0, 8.0, 120) > 3.0
+
+
+# -------------------------------------------- Round AW: memory survives a restart
+def test_everything_learned_survives_a_restart(tmp_path, monkeypatch):
+    """User: the app must 'permanently run and save history and really learn'
+    and a reconnect must never lose history.  Two engines, one vault."""
+    monkeypatch.setenv("STATE_VAULT_DIR", str(tmp_path / "vault"))
+    from backend.core.cycle_manager import CycleManager
+    from backend.core.state_vault import StateVault
+
+    first = CycleManager(local_stub=True)
+    first.competition.enter(41, "BUY", 100.0)
+    first.competition.settle(41, 100.5)
+    first.competition.enter(42, "SELL", 100.5)
+    first.competition.settle(42, 100.1)
+    first.stats.cycle_number = 42
+    first.outcomes.append(1.0, 5.0)
+    first.outcomes.append(1.0, 4.0)
+    first.dopamine.observe(5.0, 1.0, 0.6)
+    first._raw_outcomes.extend([1, 1])
+    first.emotions.tracker.restore_anchor({"sigma_anchor_bps": 9.5, "sigma_anchor_seeded": True})
+    written = first._persist_learned()
+    assert all(written[k] for k in ("competition", "picker", "dopamine", "triune", "outcomes", "stats", "guard", "emotions"))
+
+    second = CycleManager(local_stub=True)
+    assert second.competition.streak == 0 and len(second.outcomes) == 0
+    restored = second._restore_learned()
+    assert {"competition", "outcomes", "stats", "guard", "emotions", "dopamine"} <= set(restored)
+    assert second.competition.streak == 2
+    assert second.stats.cycle_number == 42          # window ids keep climbing
+    assert len(second.outcomes) == 2
+    assert list(second._raw_outcomes) == [1, 1]
+    assert second.emotions.tracker.sigma_anchor_bps == 9.5
+    # the live references are kept (state is adopted, objects not swapped)
+    assert second.competition is not first.competition
+
+    # a stale vault (older than the max age) is not a live streak
+    old = StateVault(tmp_path / "old")
+    old.save("competition", first.competition)
+    assert old.load("competition", max_age=10.0) is not None
+    import os, time
+    stamp = time.time() - 4 * 86_400
+    os.utime(old._path("competition"), (stamp, stamp))
+    # the age check reads the record's own clock, not the file's: rewrite it old
+    import pickle
+    with open(old._path("competition"), "rb") as fh:
+        rec = pickle.load(fh)
+    rec["saved_at"] = stamp
+    with open(old._path("competition"), "wb") as fh:
+        pickle.dump(rec, fh)
+    assert old.load("competition", max_age=3 * 86_400) is None
+    # the settlement path writes the vault, and the status payload reports it
+    import inspect
+    src = inspect.getsource(CycleManager)
+    assert "await asyncio.to_thread(self._persist_learned)" in src
+    assert '"vault":' in src
+    js = (ROOT / "backend/web/app.js").read_text()
+    assert "function vaultLabel" in js

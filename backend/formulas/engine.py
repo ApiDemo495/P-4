@@ -225,7 +225,7 @@ def provenance(snapshot, asset: str) -> dict:
         feeds["cross"] = _feed("simulated", "simulated pair", **desc)
     elif synced is not None and getattr(synced, "valid", False) and real:
         state = "derived" if desc.get("widened") else "live"
-        feeds["cross"] = _feed(state, desc.get("reason") or f"BTC/PAXG on a {desc.get('window_seconds', 60)} s grid",
+        feeds["cross"] = _feed(state, desc.get("reason") or f"BTC/PAXG on a {desc.get('window_seconds', cfg.SYNC_WINDOW_SECONDS)} s grid",
                                **desc)
     elif real and _pair_candles_ok(snapshot):
         # Round AP: the hedge formulas fall back to the last minute closes of
@@ -356,7 +356,7 @@ def _grade(feed_rows, real: bool, simulated: bool) -> str:
 def phase_of(timestamp: float) -> dict:
     """``¶gn`` - where in the window this pass sits, from the one clock every
     panel shares (the UTC minute grid)."""
-    period = float(cfg.SETTINGS.cycle_period_seconds or 60.0)
+    period = float(cfg.SETTINGS.cycle_period_seconds or cfg.SETTINGS.cycle_seconds)
     offset = float(timestamp) % period if timestamp else 0.0
     marks = sorted(float(m) for m in getattr(cfg.SETTINGS, "pulse_offsets", (15.0, 30.0, 45.0)))
     mark = max((m for m in marks if m <= offset + 1e-6), default=0.0)
@@ -454,7 +454,7 @@ def _readings(values: dict) -> dict:
 
 
 #: How many samples of each formula the engine remembers, per asset.
-#: 360 windows is six minutes at the 60-second cadence - exactly the 6x the
+#: 360 windows is ~5 minutes at the 53-second cadence - exactly the 6x the
 #: dashboard used to show - and it is what makes the per-formula statistics
 #: (mean, sigma, z-score, trend, zero rate) meaningful instead of decorative.
 FORMULA_HISTORY = 360

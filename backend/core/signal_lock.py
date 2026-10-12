@@ -169,7 +169,7 @@ def _seconds_remaining(valid_until: str) -> float | None:
 
 
 class SignalLockController:
-    """Manages the immutable signal for each 60-second cycle."""
+    """Manages the immutable signal for each 53-second cycle."""
 
     def __init__(self) -> None:
         self.state: LockState = LockState.COMPUTING
@@ -206,7 +206,7 @@ class SignalLockController:
         self.lock_timestamp = time.time()
         self.computed_at = self.lock_timestamp
         self.history.append(frozen)
-        # 1 440 locked windows: a full day at the 60-second cadence, and the
+        # 1 440 locked windows: ~21 h at the 53-second cadence, and the
         # 6x the dashboard now reads.  Bounded so a long-running engine cannot
         # grow without limit.
         if len(self.history) > 1440:

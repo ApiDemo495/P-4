@@ -5,6 +5,8 @@ import time
 
 import numpy as np
 
+from backend.core import config as cfg
+
 from backend.agents.gemini_agent import choose_model
 from backend.data.cross_asset_sync import synchronise
 from backend.formulas.engine import FEED_STATE_WEIGHT, provenance
@@ -25,7 +27,7 @@ def test_sync_widens_for_a_thin_paxg_tape():
     assert "widened" in s.reason
     # a dense pair stays on the 60 s spec grid
     dense = synchronise(btc, _ticks(now, 1, 900, 4000.0, lambda i: np.cos(i / 5.0)), now=now)
-    assert dense.valid and not dense.widened and dense.window_seconds == 60
+    assert dense.valid and not dense.widened and dense.window_seconds == cfg.SYNC_WINDOW_SECONDS == 53
 
 
 def test_sync_explains_an_empty_leg():

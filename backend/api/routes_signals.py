@@ -6,12 +6,12 @@
     SIGNAL            at the boundary: the LOCKED signal for the window that
                       just started, plus the same snapshot (one render pass)
     PULSE             on every mark of the window grid (t+15, t+30, t+45 of a
-                      60 s window): live formulas, news, agents, brain, accuracy
+                      53 s window): live formulas, news, agents, brain, accuracy
                       - all in ONE message, so every panel refreshes together
     CYCLE_START       only with SIGNAL_PIPELINE=0: signal cleared, "Computing..."
     EMERGENCY_OVERRIDE  critical news event -> the exit side (flip of the open
                         direction); the protocol is binary, so there is no HOLD
-    OUTCOME           60 s later: win/loss for the DRG learner
+    OUTCOME           53 s later: win/loss for the DRG learner
 
 Every message that carries a window also carries ``clock``: the absolute
 (window_started_at_ms, window_ends_at_ms, server_time_ms, cycle_id) block both

@@ -292,7 +292,7 @@ def kyle_lambda(ticks: np.ndarray, bucket_ms: float = 1000.0) -> dict:
     mid-price change (bps) on the signed volume of the bucket and ``r2`` how
     much of the price change the flow explains.  A big lambda with a good fit
     means a *pushable* tape - the crowd's own orders move the price, which is
-    exactly the condition under which a 60 s window is easy to manipulate.
+    exactly the condition under which a 53 s window is easy to manipulate.
     """
     out = {"lambda_bps": 0.0, "r2": 0.0, "buckets": 0, "impact_norm": 0.0}
     if ticks.shape[0] < 20:
