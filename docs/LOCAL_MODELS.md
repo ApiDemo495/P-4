@@ -36,7 +36,17 @@ Anything else → "Invalid file format. Please upload a valid .gguf or .onnx
 file." Upload ceiling 16 GB. Up to **3 model slots** can be loaded at once
 (their votes are merged). Files live in `backend/models/` (git-ignored).
 
-**Getting the file into the engine (three ways, best first):**
+**Getting the file into the engine (four ways, best first):**
+
+0. **Do nothing — `models.json`.** Every enabled entry in `models.json` (repo
+   root) is (a) baked into the dev-container image by the GitHub Action, so a
+   new Codespace starts with the weights already on disk under
+   `/opt/drosophila/models` (linked into `backend/models/` by `run.sh`), and
+   (b) if it is still missing at runtime, downloaded by the engine on start
+   and loaded as soon as the runtime imports. The settings page shows each
+   entry's phase. To change the model for all future Codespaces, edit
+   `models.json` on the branch (or tell the assistant which model) — a push
+   that touches it rebuilds the image. `MODEL_AUTOLOAD=0` disables.
 
 1. **Download INTO the Codespace** (`/settings` → "Download a model INTO the
    Codespace"): paste the Hugging Face link of the `.gguf` (the file page URL,
@@ -144,8 +154,11 @@ and the formulas carry that.
 it compiles llama.cpp with CMake — about 5–10 minutes on a 2-core Codespace
 and it needs `cmake` + `g++`. Until it is installed, an uploaded GGUF is
 validated and stored but the load step reports
-"Install llama-cpp-python (GGUF) or onnxruntime (ONNX)". Since Round AT `run.sh`
-builds it **automatically in the background** the first time the engine
+"Install llama-cpp-python (GGUF) or onnxruntime (ONNX)". The dev-container image
+now carries a prebuilt wheel of it (Round AV), so in a Codespace it is simply
+there. On other machines, since Round AT `run.sh`
+installs it **automatically in the background** (prebuilt CPU wheel first,
+source build only if no wheel matches) the first time the engine
 starts on a machine that has `cmake` and `g++` (Codespaces do); progress is in
 `logs/llama_runtime.log`, and the Load button tells you "being built in the
 background" until it is ready. `LOCAL_RUNTIME_AUTOINSTALL=0` opts out. On a
@@ -154,3 +167,19 @@ machine without the compilers run, once:
 ```
 .venv/bin/pip install llama-cpp-python
 ```
+
+
+## 8. Making a new Codespace start in seconds (Prebuilds)
+
+The image already holds the venv, the GGUF runtime, the connectome and the
+`models.json` weights, so a new Codespace only pulls one image (~2.5 GB, about
+a minute on GitHub's network). To remove even that: GitHub → repository
+**Settings → Codespaces → Prebuild configurations → Set up prebuild**, choose
+branch `arena/01a0c844-p-4`, your region, and "on configuration change". From
+then on GitHub keeps a ready-made Codespace snapshot and "Create codespace"
+hands you a running engine almost immediately. (Prebuild minutes are billed
+like Codespaces storage; the free tier covers one small configuration.)
+
+Alternatively keep **one** Codespace: the engine self-updates fast-forward
+from the branch on every start (`/api/update/status`), so nothing is lost by
+not recreating it.

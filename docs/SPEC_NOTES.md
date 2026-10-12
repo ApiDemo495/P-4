@@ -1971,3 +1971,24 @@ the VS Code explorer can be loaded with one click. The browser upload now
 streams to disk in chunks instead of `await file.read()`. Settings page: URL
 box + slot + progress line + on-disk chips; upload errors on big files point
 at the download box. Tests in `test_round_as.py`.
+
+## AV - the model travels with the image (nothing to upload, nothing to click)
+
+User: "I create a new Codespace every time, so everything is slow again - any
+way to use my own model?" `models.json` (repo root) lists the models every
+Codespace must carry. Three layers make them appear with zero actions:
+1. **Image**: `.devcontainer/Dockerfile` installs `llama-cpp-python` from the
+   prebuilt CPU wheel index (source build fallback), builds the FlyWire
+   arrays into `/opt/drosophila/connectome` and runs `tools/fetch_models.py`
+   into `/opt/drosophila/models`; the workflow also triggers on `models.json`
+   / fetch script / connectome loader changes (timeout 60 min).
+2. **run.sh `adopt_image_assets`**: links `/opt/drosophila/connectome` →
+   `data/connectome` and each seed model → `backend/models/` before the
+   engine starts; the background llama build prefers the wheel index too.
+3. **`ManifestAutoloader`** (`model_fetch.py`, started from
+   `CycleManager.start`, `MODEL_AUTOLOAD=0` disables): per entry link the
+   seed / keep the cache / download via `ModelFetcher`, then `load_path` as
+   soon as `llama_cpp` is importable (polls 30 s, up to 40 min while run.sh
+   builds). Status in `/api/agents/local/status → autoload / manifest`;
+   settings page "models.json" chips. Prebuild instructions in
+   `docs/LOCAL_MODELS.md §8`.

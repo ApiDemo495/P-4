@@ -421,6 +421,8 @@ async def local_model_status() -> dict:
     agent = manager.agents.local
     health = agent.health().to_dict()
     health["fetch"] = agent.fetcher.status()
+    health["autoload"] = agent.autoloader.status()
+    health["manifest"] = [dict(e) for e in agent.autoloader.entries]
     health["files_on_disk"] = agent.fetcher.files_on_disk()
     health["store_dir"] = str(agent.store_dir)
     health["memory"] = agent.check_memory()

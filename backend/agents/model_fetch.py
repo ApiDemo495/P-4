@@ -165,3 +165,123 @@ class ModelFetcher:
 
 class _Restart(Exception):
     pass
+
+
+# ---------------------------------------------------------------------------
+# Round AV: the manifest autoloader - models.json → on disk → loaded, with no
+# click.  Seeds baked into the dev-container image (/opt/drosophila/models)
+# are linked into the store first; whatever is still missing is downloaded.
+# ---------------------------------------------------------------------------
+
+IMAGE_SEED_DIR = Path("/opt/drosophila/models")
+
+
+def read_manifest(path: Path) -> list[dict]:
+    try:
+        import json
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for entry in data.get("models", []):
+        if not entry.get("enabled", True) or not entry.get("url"):
+            continue
+        try:
+            url = normalise_url(entry["url"])
+        except ValueError:
+            continue
+        out.append({"url": url, "file": Path(url.split("?", 1)[0]).name,
+                    "slot": int(entry.get("slot", 1) or 1), "note": entry.get("note", "")})
+    return out
+
+
+def runtime_available(kind: str = "gguf") -> bool:
+    import importlib
+    import importlib.util
+    importlib.invalidate_caches()
+    return importlib.util.find_spec("llama_cpp" if kind == "gguf" else "onnxruntime") is not None
+
+
+class ManifestAutoloader:
+    """Background task started with the engine: for every manifest entry
+    link the image seed / keep the cached file / download it, then load it
+    as soon as the runtime can be imported (run.sh may still be building
+    llama-cpp-python).  Progress in ``status()`` for the settings page."""
+
+    def __init__(self, pool, manifest_path: Path, seed_dir: Path = IMAGE_SEED_DIR) -> None:
+        self.pool = pool
+        self.manifest_path = Path(manifest_path)
+        self.seed_dir = Path(seed_dir)
+        self.entries = read_manifest(self.manifest_path)
+        self.state: dict = {"phase": "idle", "entries": [], "detail": ""}
+        self.task: asyncio.Task | None = None
+
+    def status(self) -> dict:
+        return dict(self.state)
+
+    def start(self) -> None:
+        if not self.entries or (self.task and not self.task.done()):
+            return
+        self.task = asyncio.create_task(self._run(), name="model-autoload")
+
+    def _seed(self, name: str) -> Path | None:
+        """Link a file baked into the image into the store (no copy)."""
+        src = self.seed_dir / name
+        dst = self.pool.store_dir / name
+        if dst.exists():
+            return dst
+        if src.exists() and src.stat().st_size > 0:
+            try:
+                dst.symlink_to(src)
+                return dst
+            except OSError:
+                return None
+        return None
+
+    async def _run(self) -> None:
+        rows = []
+        self.state = {"phase": "running", "entries": rows, "detail": ""}
+        for entry in self.entries:
+            row = {"file": entry["file"], "slot": entry["slot"], "phase": "checking", "detail": ""}
+            rows.append(row)
+            target = self.pool.store_dir / entry["file"]
+            kind = "onnx" if entry["file"].lower().endswith(".onnx") else "gguf"
+            try:
+                if not target.exists():
+                    seeded = self._seed(entry["file"])
+                    row["detail"] = "linked from the dev-container image" if seeded else ""
+                if not target.exists() or target.stat().st_size < 100 * 1024 * 1024:
+                    row["phase"] = "downloading"
+                    started = self.pool.fetcher.start(entry["url"], entry["slot"])
+                    if not started.get("started"):
+                        row["phase"], row["detail"] = "waiting", "another download is running"
+                    while self.pool.fetcher.active:
+                        await asyncio.sleep(1.0)
+                    fetched = self.pool.fetcher.status()
+                    if fetched.get("phase") == "done":
+                        row["phase"], row["detail"] = "loaded", "downloaded and loaded"
+                        continue
+                    if fetched.get("phase") == "failed":
+                        row["phase"], row["detail"] = "failed", fetched.get("error", "")
+                        continue
+                    # downloaded, but load failed (usually: runtime still building)
+                # On disk: load as soon as the runtime imports (up to 40 min).
+                for attempt in range(80):
+                    if runtime_available(kind):
+                        result = await self.pool.load_path(target, entry["slot"])
+                        if result.get("success"):
+                            row["phase"], row["detail"] = "loaded", result.get("model_name", "")
+                        else:
+                            row["phase"], row["detail"] = "load_failed", result.get("error", "")
+                        break
+                    row["phase"] = "waiting_runtime"
+                    row["detail"] = f"file ready; waiting for the {kind} runtime build ({attempt * 30}s)"
+                    await asyncio.sleep(30.0)
+                else:
+                    row["phase"], row["detail"] = "load_failed", "runtime never became importable; see logs/llama_runtime.log"
+            except asyncio.CancelledError:
+                row["phase"] = "cancelled"
+                raise
+            except Exception as exc:  # noqa: BLE001
+                row["phase"], row["detail"] = "failed", f"{type(exc).__name__}: {exc}"
+        self.state["phase"] = "done"

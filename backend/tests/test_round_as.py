@@ -193,3 +193,42 @@ async def test_load_path_refuses_missing_and_invalid_files(tmp_path):
     (tmp_path / "bad.gguf").write_bytes(b"not a model")
     bad = await pool.load_path("bad.gguf", 2)
     assert not bad["success"] and "GGUF" in bad["error"]
+
+
+# ------------------------------------------------------ Round AV: manifest
+def test_manifest_models_arrive_by_themselves(tmp_path):
+    from backend.agents.local_pool import LocalModelPool
+    from backend.agents.model_fetch import ManifestAutoloader, read_manifest
+
+    entries = read_manifest(ROOT / "models.json")
+    assert entries and entries[0]["file"].endswith(".gguf") and entries[0]["url"].startswith("https://huggingface.co/")
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"models": [{"url": "nonsense"}, {"url": "hf://a/b/c.gguf", "enabled": false}]}')
+    assert read_manifest(bad) == []
+    # the image seed is linked into the store without a copy
+    seed = tmp_path / "seed"; seed.mkdir()
+    (seed / "m.gguf").write_bytes(b"GGUF" + b"\0" * 32)
+    pool = LocalModelPool(store_dir=tmp_path / "store")
+    good = tmp_path / "good.json"
+    good.write_text('{"models": [{"url": "hf://a/b/m.gguf", "slot": 2}]}')
+    auto = ManifestAutoloader(pool, good, seed_dir=seed)
+    assert auto.entries[0]["slot"] == 2
+    linked = auto._seed("m.gguf")
+    assert linked is not None and linked.is_symlink() and linked.resolve() == (seed / "m.gguf").resolve()
+    assert auto.status()["phase"] == "idle"
+
+
+def test_image_bakes_runtime_connectome_and_models():
+    docker = (ROOT / ".devcontainer/Dockerfile").read_text()
+    for needle in ("llama-cpp-python", "abetlen.github.io/llama-cpp-python/whl/cpu", "/opt/drosophila/connectome",
+                   "/opt/drosophila/models", "tools/fetch_models.py", "ConnectomeData"):
+        assert needle in docker, needle
+    wf = (ROOT / ".github/workflows/devcontainer-image.yml").read_text()
+    assert "models.json" in wf and "tools/fetch_models.py" in wf
+    run_sh = (ROOT / "run.sh").read_text()
+    assert "adopt_image_assets()" in run_sh and "/opt/drosophila" in run_sh
+    assert "abetlen.github.io/llama-cpp-python/whl/cpu" in run_sh
+    cm = (ROOT / "backend/core/cycle_manager.py").read_text()
+    assert "self.agents.local.autoloader.start()" in cm and "MODEL_AUTOLOAD" in cm
+    html = (ROOT / "backend/web/settings.html").read_text()
+    assert 'id="autoload-status"' in html

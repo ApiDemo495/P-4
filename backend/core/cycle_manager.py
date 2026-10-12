@@ -283,6 +283,13 @@ class CycleManager:
         await self.brain.start()
         await self.news.start()
         await self.clock.sync(force=True)
+        # Round AV: the manifest models arrive by themselves (image seed,
+        # cache or download) and load when the runtime is importable.
+        if os.environ.get("MODEL_AUTOLOAD", "1").strip().lower() not in ("0", "false", "no"):
+            try:
+                self.agents.local.autoloader.start()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("model autoload not started: %s", exc)
         # Round AL: public minute history first (Kraken, then Gemini), then the
         # worker thread takes over from the live tape.
         try:

@@ -1,0 +1,11 @@
+{
+  "_comment": "Local models every Codespace should have WITHOUT uploading: baked into the dev-container image by .github/workflows/devcontainer-image.yml and, if missing at runtime, fetched by the engine on start (see docs/LOCAL_MODELS.md). URL forms: hf://org/repo/file.gguf or a direct https link.",
+  "models": [
+    {
+      "url": "hf://Qwen/Qwen2.5-1.5B-Instruct-GGUF/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+      "slot": 1,
+      "enabled": true,
+      "note": "Qwen2.5 1.5B Instruct Q4_K_M (~1.0 GB) - fits the 7 s vote budget on a 4-core Codespace"
+    }
+  ]
+}

@@ -79,6 +79,27 @@ REQUIRED_MODULES="fastapi uvicorn numpy scipy httpx feedparser websockets pydant
 PY=""
 
 py_ok() { "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' 2>/dev/null; }
+# Round AV: link the assets the dev-container image carries into the places
+# the engine reads, so a brand-new Codespace has the FlyWire arrays and the
+# manifest models before the first window (nothing to download or upload).
+adopt_image_assets() {
+  local seed="/opt/drosophila"
+  [ -d "$seed" ] || return 0
+  if [ -d "$seed/connectome" ] && [ ! -e "$REPO_ROOT/data/connectome" ]; then
+    mkdir -p "$REPO_ROOT/data"
+    ln -s "$seed/connectome" "$REPO_ROOT/data/connectome" 2>/dev/null && say "${DIM}   connectome: linked from the image${R}"
+  fi
+  if [ -d "$seed/models" ]; then
+    mkdir -p "$REPO_ROOT/backend/models"
+    local f
+    for f in "$seed"/models/*.gguf "$seed"/models/*.onnx; do
+      [ -f "$f" ] || continue
+      [ -e "$REPO_ROOT/backend/models/$(basename "$f")" ] || ln -s "$f" "$REPO_ROOT/backend/models/$(basename "$f")" 2>/dev/null || true
+    done
+    say "${DIM}   local models: linked from the image ($(ls "$seed"/models 2>/dev/null | wc -l) file(s))${R}"
+  fi
+}
+
 has_deps() {
   "$1" - "$REQUIRED_MODULES" <<'PYEOF' 2>/dev/null
 import importlib, sys
@@ -682,6 +703,9 @@ if [ "$BG" = 1 ]; then
     nohup bash "$SUPERVISOR" --supervise </dev/null >>"$LOG" 2>&1 9>&- &
   fi
   disown 2>/dev/null || true
+  # Round AV: assets baked into the dev-container image (connectome arrays,
+  # manifest models) are linked into place - no download, no upload.
+  adopt_image_assets
   # Round AT: the GGUF runtime (llama-cpp-python) ships as source on PyPI and
   # compiles for 5-10 min, so it is built here in the background, once, after
   # the engine is up - never on the critical path, never a command to type.
@@ -691,7 +715,7 @@ if [ "$BG" = 1 ]; then
       mkdir -p "$REPO_ROOT/logs"
       say "${DIM}   building the local GGUF runtime in the background (llama-cpp-python, ~5-10 min, log: logs/llama_runtime.log)${R}"
       ( flock -n 8 || exit 0
-        setsid nohup "$PY" -m pip install --quiet --progress-bar off llama-cpp-python </dev/null >"$REPO_ROOT/logs/llama_runtime.log" 2>&1 8>&- &
+        setsid nohup bash -c "\"$PY\" -m pip install --quiet --progress-bar off --prefer-binary --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu llama-cpp-python || \"$PY\" -m pip install --quiet --progress-bar off llama-cpp-python" </dev/null >"$REPO_ROOT/logs/llama_runtime.log" 2>&1 8>&- &
       ) 8>"$REPO_ROOT/logs/.llama_runtime.lock"
     else
       say "${DIM}   local GGUF runtime not built: cmake/g++ missing (the upload still validates; see docs/LOCAL_MODELS.md)${R}"

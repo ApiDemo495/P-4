@@ -220,6 +220,18 @@ function renderFetch(res) {
       f.phase === "connecting" ? `connecting to ${f.url}` : f.phase;
     line("fetch-status", text, f.phase === "done" ? "ok" : /failed/.test(f.phase) ? "err" : "warn");
   }
+  const auto = res.autoload || {};
+  const manifest = res.manifest || [];
+  const autoEl = $("autoload-status");
+  if (autoEl) {
+    if (!manifest.length) {
+      autoEl.textContent = "models.json lists no models - add one there (or tell the assistant which) and every new Codespace will carry it";
+    } else {
+      const rows = (auto.entries && auto.entries.length ? auto.entries : manifest.map((m) => ({ file: m.file, slot: m.slot, phase: "pending", detail: "" })));
+      autoEl.innerHTML = "models.json (arrive by themselves on every new Codespace): " + rows.map((r) =>
+        `<span class="chip ${r.phase === "loaded" ? "pos" : /fail/.test(r.phase) ? "neg" : ""}">${escapeHtml(r.file)} → slot ${r.slot}: <b>${escapeHtml(r.phase)}</b>${r.detail ? ` · ${escapeHtml(r.detail)}` : ""}</span>`).join(" ");
+    }
+  }
   const files = res.files_on_disk || [];
   const host = $("disk-files");
   if (!host) return;

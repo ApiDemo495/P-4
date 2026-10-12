@@ -32,6 +32,33 @@ RUN python3 -m venv /opt/venv \
  && sha256sum /tmp/requirements.txt | cut -d' ' -f1 > /opt/venv/.requirements.sha256 \
  && chown -R vscode:vscode /opt/venv
 
+# ---------------------------------------------------------------------------
+# Round AV: everything a fresh Codespace used to download or that the user
+# used to upload is baked in here, once, at image-build time:
+#   * the GGUF runtime (prebuilt CPU wheel; compiled only if no wheel matches)
+#   * the FlyWire v783 connectome (parquet + annotations + the built .npz)
+#   * every enabled model in models.json (1 GB-class weights)
+# run.sh links /opt/drosophila/{connectome,models} into the checkout.
+# ---------------------------------------------------------------------------
+RUN ( /opt/venv/bin/pip install --quiet --prefer-binary \
+        --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu llama-cpp-python \
+    || ( apt-get update -qq && apt-get install -y -qq --no-install-recommends cmake build-essential \
+         && CMAKE_ARGS="-DGGML_NATIVE=OFF" /opt/venv/bin/pip install --quiet llama-cpp-python \
+         && apt-get clean && rm -rf /var/lib/apt/lists/* ) ) \
+ && /opt/venv/bin/python -c "import llama_cpp; print('llama_cpp', llama_cpp.__version__)"
+
+COPY backend /tmp/src/backend
+COPY tools/fetch_models.py /tmp/src/tools/fetch_models.py
+COPY models.json /tmp/src/models.json
+RUN mkdir -p /opt/drosophila/connectome /opt/drosophila/models \
+ && cd /tmp/src \
+ && PYTHONPATH=/tmp/src CONNECTOME_DATA_DIR=/opt/drosophila/connectome \
+      /opt/venv/bin/python -c "from backend.brain.connectome_data import ConnectomeData; d = ConnectomeData(); assert d.ensure(), d.status.error; print(d.facts)" \
+ && PYTHONPATH=/tmp/src /opt/venv/bin/python tools/fetch_models.py --dest /opt/drosophila/models --quiet \
+ && rm -rf /tmp/src \
+ && chown -R vscode:vscode /opt/drosophila \
+ && du -sh /opt/drosophila/*
+
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH=/opt/venv/bin:$PATH
 ENV PYTHONUNBUFFERED=1

@@ -1189,3 +1189,6 @@ body.pulse .widget-panel, body.pulse .card { animation: pulse-breath .6s var(--e
 .comp-rung .bar i { display: block; height: 100%; background: #ffc400; }
 #disk-files .chip { display: inline-block; margin: 2px 4px 2px 0; padding: 2px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--line, #2a2f3a); }
 #disk-files .btn.mini { padding: 1px 6px; font-size: 10px; margin-left: 3px; }
+#autoload-status .chip { display: inline-block; margin: 2px 4px 2px 0; padding: 2px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--line, #2a2f3a); }
+#autoload-status .chip.pos { border-color: rgba(53,208,127,.5); color: var(--green, #35d07f); }
+#autoload-status .chip.neg { border-color: rgba(255,92,92,.5); color: var(--red, #ff5c5c); }

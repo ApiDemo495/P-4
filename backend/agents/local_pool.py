@@ -48,8 +48,11 @@ class LocalModelPool:
         self.last_results: dict[int, AgentResult] = {}
         # Round AU: server-side download (the browser upload dies in the
         # Codespaces proxy for gigabyte files).
-        from backend.agents.model_fetch import ModelFetcher
+        from backend.agents.model_fetch import ManifestAutoloader, ModelFetcher
         self.fetcher = ModelFetcher(self, self.store_dir)
+        # Round AV: models.json → downloaded / linked from the image → loaded,
+        # without a click, every new Codespace.
+        self.autoloader = ManifestAutoloader(self, cfg.REPO_ROOT / "models.json")
 
     # ------------------------------------------------------------------
     # Compatibility surface: the rest of the engine talks to "the local

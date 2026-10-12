@@ -657,8 +657,11 @@ tail -f server.log
   confidence on corroboration/split. `GET /api/brain/dopamine`,
   `GET /api/triune`.
 * **Offline model (local GGUF/ONNX).** Validated by magic bytes, loaded on
-  CPU, 7 s per vote, up to 3 slots; the GGUF runtime is compiled in the
-  background on first start. Which model fits which machine, the RAM
+  CPU, 7 s per vote, up to 3 slots. The models listed in `models.json` are
+  baked into the dev-container image together with the GGUF runtime and the
+  connectome, so a new Codespace has them without uploading or downloading;
+  anything missing is fetched by the engine itself (paste a Hugging Face link
+  in `/settings`, never through the browser). Which model fits which machine, the RAM
   arithmetic and candidates to research: `docs/LOCAL_MODELS.md`.
 * **News engine.** CryptoPanic every 30 s, NewsAPI/RSS every 60 s, an offline
   headline pack so the panel is never blank, and a critical-event detector that
