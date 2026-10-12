@@ -46,6 +46,10 @@ class LocalModelPool:
         ]
         self.last_result: AgentResult | None = None
         self.last_results: dict[int, AgentResult] = {}
+        # Round AU: server-side download (the browser upload dies in the
+        # Codespaces proxy for gigabyte files).
+        from backend.agents.model_fetch import ModelFetcher
+        self.fetcher = ModelFetcher(self, self.store_dir)
 
     # ------------------------------------------------------------------
     # Compatibility surface: the rest of the engine talks to "the local
@@ -107,6 +111,25 @@ class LocalModelPool:
 
     async def load(self, path: Path, slot: int = 1) -> dict:
         return await self.slot(slot).load(path)
+
+    async def load_path(self, path: Path, slot: int = 1) -> dict:
+        """Round AU: validate + load a file that is already on disk (downloaded
+        by the engine, or dropped into ``backend/models/`` by the user)."""
+        from backend.agents.local_model_agent import validate_file
+
+        path = Path(path)
+        if not path.is_absolute():
+            path = self.store_dir / path.name
+        if not path.exists():
+            return {"success": False, "error": f"{path.name} is not in {self.store_dir}"}
+        agent = self.slot(slot)
+        validation = await asyncio.to_thread(validate_file, path)
+        agent.validation = validation
+        if not validation.ok:
+            return {"success": False, "error": validation.error, "validation": validation.to_dict()}
+        result = await agent.load(path)
+        result["slot"] = min(max(int(slot), 1), MAX_MODELS)
+        return result
 
     def unload(self, delete_file: bool = False, slot: int | None = None) -> dict:
         if slot is None:

@@ -50,6 +50,17 @@ class UnloadPayload(BaseModel):
     slot: int | None = None
 
 
+class FetchPayload(BaseModel):
+    """Round AU: download a model server-side instead of through the browser."""
+    url: str = ""
+    slot: int = 1
+
+
+class LoadPathPayload(BaseModel):
+    file: str = ""
+    slot: int = 1
+
+
 @router.get("/api/agents")
 async def agent_status() -> dict:
     manager = get_manager()
@@ -310,13 +321,33 @@ async def upload_local_model(file: UploadFile = File(...), slot: int = 1) -> dic
     if not 1 <= int(slot) <= 3:
         raise HTTPException(status_code=400, detail="slot must be 1, 2 or 3")
 
-    payload = await file.read()
-    if not payload:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    if len(payload) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="File exceeds the 16 GB upload ceiling")
+    # Round AU: stream to disk in 1 MB chunks - a gigabyte file no longer has
+    # to fit in memory.  (The Codespaces port-forwarding proxy still caps
+    # browser uploads; /api/agents/local/fetch is the path for big models.)
+    from pathlib import Path as _Path
 
-    result = await agent.upload(file.filename or "model.gguf", payload, slot=int(slot))
+    safe_name = _Path(file.filename or "model.gguf").name
+    target = agent.slot(int(slot)).store_dir / safe_name
+    part = target.with_name(safe_name + ".upload")
+    written = 0
+    try:
+        with part.open("wb") as handle:
+            while True:
+                chunk = await file.read(1 << 20)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail="File exceeds the 16 GB upload ceiling")
+                handle.write(chunk)
+    except HTTPException:
+        part.unlink(missing_ok=True)
+        raise
+    if not written:
+        part.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    part.replace(target)
+    result = await agent.load_path(target, int(slot))
     if not result.get("success"):
         # A validation failure is a 422 with a human-readable message, which is
         # what the v1.0 upload flow never produced.
@@ -351,11 +382,47 @@ async def unload_local_model(payload: UnloadPayload | None = None) -> dict:
     return manager.agents.local.unload(delete_file=delete, slot=slot)
 
 
+@router.post("/api/agents/local/fetch")
+async def fetch_local_model(payload: FetchPayload) -> dict:
+    """Round AU: the engine downloads the model itself (Hugging Face URL,
+    ``hf://org/repo/file.gguf`` or any https .gguf/.onnx link), with
+    resume, progress in ``/api/agents/local/status`` → ``fetch``, then
+    validates and loads it into the slot."""
+    manager = get_manager()
+    if not 1 <= int(payload.slot) <= 3:
+        raise HTTPException(status_code=400, detail="slot must be 1, 2 or 3")
+    try:
+        return manager.agents.local.fetcher.start(payload.url, int(payload.slot))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/api/agents/local/fetch/cancel")
+async def cancel_fetch() -> dict:
+    return get_manager().agents.local.fetcher.cancel()
+
+
+@router.post("/api/agents/local/load-path")
+async def load_local_path(payload: LoadPathPayload) -> dict:
+    """Round AU: load a file that is already in ``backend/models/`` (dropped
+    there via the VS Code explorer or downloaded earlier)."""
+    manager = get_manager()
+    if not 1 <= int(payload.slot) <= 3:
+        raise HTTPException(status_code=400, detail="slot must be 1, 2 or 3")
+    result = await manager.agents.local.load_path(payload.file, int(payload.slot))
+    if not result.get("success"):
+        raise HTTPException(status_code=422, detail=result.get("error", "Model load failed"))
+    return result
+
+
 @router.get("/api/agents/local/status")
 async def local_model_status() -> dict:
     manager = get_manager()
     agent = manager.agents.local
     health = agent.health().to_dict()
+    health["fetch"] = agent.fetcher.status()
+    health["files_on_disk"] = agent.fetcher.files_on_disk()
+    health["store_dir"] = str(agent.store_dir)
     health["memory"] = agent.check_memory()
     health["slots"] = agent.slots_payload()
     health["models_loaded"] = len(agent.loaded)
