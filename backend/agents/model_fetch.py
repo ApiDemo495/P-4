@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import ssl
 import time
 from pathlib import Path
 
@@ -98,7 +99,7 @@ class ModelFetcher:
         return self.status()
 
     # ------------------------------------------------------------------
-    async def _run(self, url: str, name: str, slot: int) -> None:
+    async def _run(self, url: str, name: str, slot: int, verify=True) -> None:
         target = self.store_dir / name
         part = self.store_dir / (name + ".part")
         try:
@@ -106,7 +107,7 @@ class ModelFetcher:
             offset = part.stat().st_size if part.exists() else 0
             headers = {"Range": f"bytes={offset}-"} if offset else {}
             timeout = httpx.Timeout(connect=30.0, read=120.0, write=30.0, pool=30.0)
-            async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=timeout, verify=verify) as client:
                 async with client.stream("GET", url, headers=headers) as resp:
                     if resp.status_code == 416:            # range beyond the file: start over
                         offset = 0
@@ -151,6 +152,12 @@ class ModelFetcher:
         except asyncio.CancelledError:
             self.state.update({"phase": "cancelled", "error": "cancelled (the .part file is kept so the next attempt resumes)"})
         except Exception as exc:  # noqa: BLE001
+            # httpx ships its own CA bundle; some sandboxes only trust the
+            # system store (same fallback as the connectome downloader).
+            if verify is True and "CERTIFICATE_VERIFY_FAILED" in str(exc):
+                self.state.update({"phase": "connecting", "error": ""})
+                self.task = asyncio.create_task(self._run(url, name, slot, verify=ssl.create_default_context()))
+                return
             self.state.update({"phase": "failed", "error": f"{type(exc).__name__}: {exc}"})
         finally:
             self.state["active"] = False

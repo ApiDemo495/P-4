@@ -175,6 +175,8 @@ async function refreshLocal() {
     (mem.rss_human ? ` · RAM ${mem.rss_human}` : "") +
     (res.detail ? ` · ${res.detail}` : "");
   line("local-status", text, ready ? "ok" : "");
+  renderFetch(res);
+  if (res.fetch && res.fetch.active) watchFetch();
   (res.slots || []).forEach((slot) => {
     const el = $(`model-status-${slot.slot}`);
     if (!el) return;
@@ -193,6 +195,85 @@ async function refreshLocal() {
   });
 }
 
+/* Round AU: server-side download + files already on disk */
+function fmtBytes(n) {
+  if (!n && n !== 0) return "?";
+  const units = ["B", "KB", "MB", "GB"];
+  let v = Number(n), i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+  return `${v.toFixed(i >= 2 ? 2 : 0)} ${units[i]}`;
+}
+
+function renderFetch(res) {
+  const f = res.fetch || {};
+  if (f.phase && f.phase !== "idle") {
+    const pct = f.percent !== null && f.percent !== undefined ? `${f.percent}%` : fmtBytes(f.bytes);
+    const speed = f.speed_bps ? ` · ${fmtBytes(f.speed_bps)}/s` : "";
+    const eta = f.eta_seconds ? ` · ~${Math.ceil(f.eta_seconds / 60)} min left` : "";
+    const text =
+      f.phase === "downloading" ? `⬇ ${f.file} → slot ${f.slot}: ${pct} of ${fmtBytes(f.total)}${speed}${eta}` :
+      f.phase === "validating" ? `✔ downloaded ${f.file} · validating magic bytes and loading (up to 3 min)…` :
+      f.phase === "done" ? `✅ ${f.file} loaded into slot ${f.slot}` + (f.result && f.result.parameter_count ? ` · ${f.result.parameter_count} · test inference ${f.result.test_inference_ms} ms` : "") :
+      f.phase === "load_failed" ? `❌ downloaded but not loaded: ${f.error}` :
+      f.phase === "failed" ? `❌ download failed: ${f.error}` :
+      f.phase === "cancelled" ? `cancelled · ${f.error || ""}` :
+      f.phase === "connecting" ? `connecting to ${f.url}` : f.phase;
+    line("fetch-status", text, f.phase === "done" ? "ok" : /failed/.test(f.phase) ? "err" : "warn");
+  }
+  const files = res.files_on_disk || [];
+  const host = $("disk-files");
+  if (!host) return;
+  if (!files.length) {
+    host.innerHTML = `<span class="muted">no model files in ${escapeHtml(res.store_dir || "backend/models")} yet — you can also drag a .gguf into that folder in the VS Code explorer (that path is not limited by the proxy) and load it from here</span>`;
+    return;
+  }
+  host.innerHTML = `on disk in ${escapeHtml(res.store_dir || "backend/models")}: ` + files.map((f) =>
+    `<span class="chip">${escapeHtml(f.file)} (${f.size_human}) ` +
+    [1, 2, 3].map((n) => `<button class="btn ghost mini" data-loadpath="${escapeHtml(f.file)}" data-slot="${n}">→ slot ${n}</button>`).join("") +
+    `</span>`).join(" ");
+  host.querySelectorAll("[data-loadpath]").forEach((btn) => {
+    btn.onclick = async () => {
+      const slot = Number(btn.dataset.slot);
+      line(`model-status-${slot}`, `loading ${btn.dataset.loadpath} from disk into slot ${slot}…`, "warn");
+      const res2 = await getJSON("/api/agents/local/load-path", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file: btn.dataset.loadpath, slot }),
+      });
+      line(`model-status-${slot}`, res2.error ? `❌ ${res2.error}` : `✅ ${res2.model_name} (${res2.parameter_count}) ready · test inference ${res2.test_inference_ms} ms`, res2.error ? "err" : "ok");
+      refreshLocal();
+    };
+  });
+}
+
+let fetchWatch = null;
+function watchFetch() {
+  if (fetchWatch) return;
+  fetchWatch = setInterval(async () => {
+    const res = await getJSON("/api/agents/local/status");
+    if (res.error) return;
+    renderFetch(res);
+    if (!(res.fetch && res.fetch.active)) { clearInterval(fetchWatch); fetchWatch = null; refreshLocal(); }
+  }, 2000);
+}
+
+$("fetch-start").onclick = async () => {
+  const url = $("fetch-url").value.trim();
+  const slot = Number($("fetch-slot").value);
+  if (!url) return line("fetch-status", "paste the model file's URL first", "warn");
+  line("fetch-status", "starting the download inside the Codespace…", "warn");
+  const res = await getJSON("/api/agents/local/fetch", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, slot }),
+  });
+  if (res.error) return line("fetch-status", `❌ ${res.error}`, "err");
+  if (!res.started) return line("fetch-status", `❌ ${res.error || "not started"}`, "err");
+  watchFetch();
+};
+$("fetch-cancel").onclick = async () => {
+  await getJSON("/api/agents/local/fetch/cancel", { method: "POST" });
+  refreshLocal();
+};
+
 document.querySelectorAll("[data-upload]").forEach((btn) => {
   btn.onclick = async () => {
     const slot = btn.dataset.upload;
@@ -204,7 +285,7 @@ document.querySelectorAll("[data-upload]").forEach((btn) => {
     form.append("file", file);
     const res = await getJSON(`/api/agents/local/upload?slot=${slot}`, { method: "POST", body: form });
     btn.disabled = false;
-    if (res.error) line(`model-status-${slot}`, `❌ ${res.error}`, "err");
+    if (res.error) line(`model-status-${slot}`, `❌ ${res.error}${/^(5\d\d|HTTP 5)/.test(String(res.error)) || file.size > 200 * 1048576 ? " — the Codespaces proxy cuts off large browser uploads; use \"Download a model INTO the Codespace\" above instead" : ""}`, "err");
     else if (res.success) {
       line(`model-status-${slot}`,
         `✅ ${res.model_name} (${res.parameter_count}) ready · test inference ${res.test_inference_ms}ms`, "ok");

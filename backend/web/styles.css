@@ -1187,3 +1187,5 @@ body.pulse .widget-panel, body.pulse .card { animation: pulse-breath .6s var(--e
 .comp-rung.next { outline: 1px solid rgba(255, 196, 0, 0.6); }
 .comp-rung .bar { height: 3px; border-radius: 2px; background: rgba(255,255,255,0.08); margin-top: 4px; overflow: hidden; }
 .comp-rung .bar i { display: block; height: 100%; background: #ffc400; }
+#disk-files .chip { display: inline-block; margin: 2px 4px 2px 0; padding: 2px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--line, #2a2f3a); }
+#disk-files .btn.mini { padding: 1px 6px; font-size: 10px; margin-left: 3px; }

@@ -1954,3 +1954,20 @@ background (setsid, flock, `logs/llama_runtime.log`) right after the engine is
 up whenever `import llama_cpp` fails and `cmake`/`g++` exist;
 `LOCAL_RUNTIME_AUTOINSTALL=0` disables. `LocalModelAgent.load` reports the
 state of that build instead of "install it".
+
+## AU - models are fetched by the engine, not pushed through the browser
+
+User report: HTTP 5xx ("541") uploading `qwen2.5-1.5b-instruct-q4_k_m.gguf`
+(~1 GB). Cause: the Codespaces port-forwarding proxy limits request body size
+/ duration; the bytes never reached uvicorn. `backend/agents/model_fetch.py`
+(`ModelFetcher`): `normalise_url` (hf:// shorthand, HF blob page → resolve
+link, must end in .gguf/.onnx), one background download at a time streamed in
+1 MB chunks to `<name>.part` with Range resume, progress/speed/ETA in
+`/api/agents/local/status → fetch`, certifi → system-trust-store fallback,
+then `LocalModelPool.load_path` (validate + load). Routes
+`POST /api/agents/local/fetch`, `/fetch/cancel`, `/load-path`; status lists
+`files_on_disk` + `store_dir` so a file dropped into `backend/models/` via
+the VS Code explorer can be loaded with one click. The browser upload now
+streams to disk in chunks instead of `await file.read()`. Settings page: URL
+box + slot + progress line + on-disk chips; upload errors on big files point
+at the download box. Tests in `test_round_as.py`.

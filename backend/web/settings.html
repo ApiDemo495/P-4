@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Settings · Drosophila Trader v2.0</title>
-<link rel="stylesheet" href="/static/styles.css?v=2.29.0" />
+<link rel="stylesheet" href="/static/styles.css?v=2.30.0" />
 </head>
 <body>
 <header class="topbar">
@@ -190,6 +190,17 @@
       Every loaded model answers every cycle in parallel; their answers are merged into one local
       opinion (confidence-weighted majority, trimmed when they disagree). All three slots are optional.
     </div>
+    <div class="field" id="model-fetch">
+      <label>Download a model INTO the Codespace (recommended for anything over ~200 MB — the browser upload is cut off by the Codespaces proxy and shows a 5xx)</label>
+      <div class="row">
+        <input type="text" id="fetch-url" placeholder="https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf   or   hf://Qwen/Qwen2.5-1.5B-Instruct-GGUF/qwen2.5-1.5b-instruct-q4_k_m.gguf" style="flex:1" />
+        <select id="fetch-slot"><option value="1">slot 1</option><option value="2">slot 2</option><option value="3">slot 3</option></select>
+        <button class="btn" id="fetch-start">Download &amp; load</button>
+        <button class="btn ghost" id="fetch-cancel">Cancel</button>
+      </div>
+      <div class="status-line" id="fetch-status">paste the file's URL (on Hugging Face: the model's "Files" tab → the .gguf → copy the download link) · see docs/LOCAL_MODELS.md for which size fits your machine</div>
+      <div class="status-line" id="disk-files">—</div>
+    </div>
     <div class="field model-slot" id="model-slot-1">
       <label>Model 1 — .gguf or .onnx, validated, loaded, then test-inferred</label>
       <div class="row">
@@ -273,6 +284,6 @@
   </div>
 </main>
 
-<script src="/static/settings.js?v=2.29.0"></script>
+<script src="/static/settings.js?v=2.30.0"></script>
 </body>
 </html>

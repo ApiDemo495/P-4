@@ -148,3 +148,48 @@ def test_local_runtime_is_built_in_the_background_and_documented():
         assert needle in doc, needle
     from backend.agents.local_model_agent import LocalModelAgent
     assert "LOCAL_MODELS.md" in LocalModelAgent._runtime_build_hint() or "background" in LocalModelAgent._runtime_build_hint()
+
+
+# --------------------------------------------------------- Round AU: fetch
+def test_model_urls_are_normalised_to_direct_file_links():
+    from backend.agents.model_fetch import normalise_url
+
+    direct = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+    assert normalise_url("hf://Qwen/Qwen2.5-1.5B-Instruct-GGUF/qwen2.5-1.5b-instruct-q4_k_m.gguf") == direct
+    assert normalise_url("https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/main/qwen2.5-1.5b-instruct-q4_k_m.gguf") == direct
+    assert normalise_url(direct + "?download=true") == direct + "?download=true"
+    with pytest.raises(ValueError):
+        normalise_url("https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF")      # the repo page, not a file
+    with pytest.raises(ValueError):
+        normalise_url("Qwen2.5-1.5B")
+
+
+def test_big_models_bypass_the_browser(tmp_path):
+    """User report: HTTP 5xx from the Codespaces proxy on a 1 GB upload."""
+    from backend.agents.local_pool import LocalModelPool
+
+    pool = LocalModelPool(store_dir=tmp_path)
+    (tmp_path / "tiny.gguf").write_bytes(b"GGUF" + b"\0" * 64)
+    (tmp_path / "notes.txt").write_text("x")
+    files = pool.fetcher.files_on_disk()
+    assert [f["file"] for f in files] == ["tiny.gguf"]
+    assert pool.fetcher.status()["phase"] == "idle" and not pool.fetcher.active
+    routes = (ROOT / "backend/api/routes_agents.py").read_text()
+    for needle in ("/api/agents/local/fetch", "/api/agents/local/load-path", "await file.read(1 << 20)"):
+        assert needle in routes, needle
+    html = (ROOT / "backend/web/settings.html").read_text()
+    assert 'id="fetch-url"' in html and 'id="disk-files"' in html
+    js = (ROOT / "backend/web/settings.js").read_text()
+    assert "/api/agents/local/fetch" in js and "/api/agents/local/load-path" in js
+
+
+@pytest.mark.asyncio
+async def test_load_path_refuses_missing_and_invalid_files(tmp_path):
+    from backend.agents.local_pool import LocalModelPool
+
+    pool = LocalModelPool(store_dir=tmp_path)
+    missing = await pool.load_path("nope.gguf", 1)
+    assert not missing["success"] and "not in" in missing["error"]
+    (tmp_path / "bad.gguf").write_bytes(b"not a model")
+    bad = await pool.load_path("bad.gguf", 2)
+    assert not bad["success"] and "GGUF" in bad["error"]

@@ -36,7 +36,23 @@ Anything else → "Invalid file format. Please upload a valid .gguf or .onnx
 file." Upload ceiling 16 GB. Up to **3 model slots** can be loaded at once
 (their votes are merged). Files live in `backend/models/` (git-ignored).
 
-Upload path: `/settings` → "Local model" → choose file → slot 1–3 → Upload.
+**Getting the file into the engine (three ways, best first):**
+
+1. **Download INTO the Codespace** (`/settings` → "Download a model INTO the
+   Codespace"): paste the Hugging Face link of the `.gguf` (the file page URL,
+   the `resolve` download link, or `hf://org/repo/file.gguf`) and press
+   *Download & load*. The engine streams it to `backend/models/` with
+   progress/ETA, resumes an interrupted download, validates and loads it.
+   Use this for anything over ~200 MB. `POST /api/agents/local/fetch`.
+2. **Drag the file into `backend/models/` in the VS Code explorer** (that
+   channel is not limited by the port proxy), then press "→ slot N" next to
+   it in the "on disk" list. `POST /api/agents/local/load-path`.
+3. **Browser upload** (the file picker per slot). Works for small files
+   only: the Codespaces port-forwarding proxy cuts off large/long uploads and
+   the browser shows an HTTP 5xx (you may see 541/502/504) that never
+   reached the engine.
+
+Legacy upload path: `/settings` → "Local model" → choose file → slot 1–3 → Upload.
 The engine stores → validates → loads → runs a test prompt → reports
 `name / parameters / size / load time / inference ms` or a red error.
 `POST /api/agents/local/upload?slot=N`, `GET /api/agents/local/status`,
