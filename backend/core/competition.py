@@ -49,10 +49,10 @@ import numpy as np
 
 #: The ladder, as the user described it.
 PRIZE_LADDER: tuple[tuple[int, str], ...] = (
-    (5, "$1 fee coupon (after a $50 trade)"),
-    (20, "$10 coupon (after a $100 trade)"),
-    (50, "$30 cash - withdrawable"),
-    (72, "$500"),
+    (5, "$1 fee coupon - only usable on a $50 trade, expires"),
+    (20, "$10 coupon - only usable on a $100 trade, expires"),
+    (50, "$30 real cash - withdrawable (the goal)"),
+    (72, "$500 (designed to be unreachable)"),
 )
 
 
