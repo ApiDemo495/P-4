@@ -382,7 +382,7 @@ def fuse(
     raw_confidence *= calibration
 
     # --- crowd emotion -----------------------------------------------
-    # The user's premise is the whole reason this term exists: a 60-second
+    # The user's premise is the whole reason this term exists: a 53-second
     # window is easy to push when the crowd is emotional.  The manipulation
     # score therefore scales the confidence down - it never touches the side.
     crowd_adjustment = 1.0

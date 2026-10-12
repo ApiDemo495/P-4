@@ -115,7 +115,7 @@ def describe(
         "window_started_at_ms": int(round(started * 1000)),
         "window_ends_at_ms": int(round(ends * 1000)),
         "server_time_ms": int(round(moment * 1000)),
-        # Microsecond truth for the same instants: a 60-second window with a
+        # Microsecond truth for the same instants: a 53-second window with a
         # 0.9 ms publication latency is not the same thing as one that
         # started late, and only the µs fields can tell the difference.
         "window_started_at_us": int(round(started * 1e6)),

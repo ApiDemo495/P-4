@@ -93,6 +93,15 @@ def compute(
 
     outcomes = outcomes[-OUTCOMES:]
     r = outcomes.shape[0]
+    # Round AW: magnitudes are *normalised* to the window's own typical |P&L|
+    # (median of the buffer, floored at 1 bp).  The spec's GAIN = 0.1 was
+    # written for unit-sized rewards; with raw basis points (a 53 s window
+    # ordinarily moves 5-15 bps) the TD error ran to -14, the dopamine term to
+    # -24 and tanh pinned at -0.985 after a single ordinary loss - the gate
+    # closed fully on every miss and taught nothing about *runs* of misses.
+    scale = float(np.median(np.abs(outcomes[:, 1])))
+    scale = max(scale, 1.0)
+    outcomes = np.column_stack([outcomes[:, 0], np.clip(np.abs(outcomes[:, 1]) / scale, 0.0, 3.0)])
 
     # V_R uses the whole window; V_{R-1} drops the newest observation so that the
     # TD error measures genuine surprise rather than the value including itself.
@@ -119,7 +128,8 @@ def compute(
     state.last_drg = drg
     state.samples = r
     trace(ctx, "outcomes in the window", r, "cycles")
-    trace(ctx, "newest outcome (m * o)", newest_m * newest_o, "magnitude x result")
+    trace(ctx, "magnitude scale", scale, "median |P&L| of the window, bps (m = |pnl| / scale, capped at 3)")
+    trace(ctx, "newest outcome (m * o)", newest_m * newest_o, "normalised magnitude x result")
     trace(ctx, "discounted value V_R", value_r, "gamma = 0.95")
     trace(ctx, "value V_{R-1} (before the newest)", value_prev, "gamma = 0.95")
     trace(ctx, "TD error (delta)", delta, "(m*o + gamma V_R) - V_{R-1}")

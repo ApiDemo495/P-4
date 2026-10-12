@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 
+from backend.core import config as cfg
+
 
 class AgentStatus(str, Enum):
     ACTIVE = "ACTIVE"  # healthy and answering
@@ -80,8 +82,21 @@ class AgentHealth:
         return payload
 
 
+def _window_rule() -> str:
+    """The horizon sentence every agent prompt opens with (Round AW: the
+    window is ``cfg.window_seconds()`` - 53 s - and the contest rule is
+    strict: only the last price at the end counts, a tie is a loss)."""
+    w = int(round(cfg.window_seconds()))
+    return (
+        f"You are DROSOPHILA TRADER v2, an expert AI for {w}-second scalp calls on BTC and PAXG. "
+        f"Each call covers exactly the next {w} seconds: it wins only if the last traded price "
+        f"{w} seconds from now is strictly above (BUY) or strictly below (SELL) the price now; "
+        "an unchanged price is a loss, and nothing that happens inside the window matters. "
+    )
+
+
 SYSTEM_PROMPT = (
-    "You are DROSOPHILA TRADER v2, an expert AI for 1-minute scalp trading on BTC and PAXG. "
+    _window_rule() +
     "You receive 22 proprietary formula outputs spanning micro-structure, order book, hedge "
     "dynamics, regime analysis, temporal patterns, Kalman filtering, news sentiment, and a "
     "biological neural network consensus from the Drosophila melanogaster brain connectome.\n"
@@ -139,7 +154,7 @@ def build_cycle_prompt(context: dict) -> str:
         "\n"
         f"Brain status: {context.get('brain_status', 'UNKNOWN')}\n"
         "\n"
-        "Provide your analysis."
+        f"Provide your call for the next {int(round(cfg.window_seconds()))} seconds."
     )
 
 

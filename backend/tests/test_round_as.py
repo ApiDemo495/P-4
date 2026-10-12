@@ -341,3 +341,26 @@ def test_everything_learned_survives_a_restart(tmp_path, monkeypatch):
     assert '"vault":' in src
     js = (ROOT / "backend/web/app.js").read_text()
     assert "function vaultLabel" in js
+
+
+# -------------------------------------------- Round AW: the window reaches the agents and the formulas
+def test_agents_and_formulas_speak_the_53_second_window():
+    from backend.agents import base, local_model_agent
+    from backend.core import config as cfg
+
+    w = int(round(cfg.window_seconds()))
+    assert f"{w}-second" in base.SYSTEM_PROMPT and "unchanged price is a loss" in base.SYSTEM_PROMPT
+    assert "1-minute" not in base.SYSTEM_PROMPT and "1-minute" not in local_model_agent.SYSTEM_PROMPT_LOCAL
+    assert f"next {w} seconds" in base.build_cycle_prompt({"formulas": {}})
+    from backend.formulas.category_c_hedge import shrp
+    assert shrp.FLOW_SECONDS == cfg.window_seconds()
+    from backend.core.signal_lock import FrozenSignal
+    assert FrozenSignal._field_defaults["window_seconds"] == 53.0
+    # DRG no longer pins at -0.98 on one ordinary loss (magnitudes are normalised)
+    import numpy as np
+    from backend.formulas import drg
+
+    class Snap:
+        drg_outcomes = np.array([[1.0, 8.0], [-1.0, 9.0]])
+    value = drg.compute(Snap(), drg.State(), None, {})
+    assert -0.5 < value < 0.0, value

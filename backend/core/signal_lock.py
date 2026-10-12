@@ -90,7 +90,7 @@ class FrozenSignal(NamedTuple):
     previous countdown*, which is the whole point: the user never waits."""
     valid_from: str = ""
     valid_until: str = ""
-    window_seconds: float = 60.0
+    window_seconds: float = 53.0   # callers pass cfg.window_seconds(); the default is the Round AW window
     preview: bool = False
     """True for the bootstrap signal published at cold start before the first
     pipelined window exists."""

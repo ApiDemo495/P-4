@@ -460,7 +460,7 @@ function countdownSubLine() {
   const t = state.clock?.ticks || [];
   const next = t.find((mark) => !mark.done && mark.seconds_until > 0);
   const parts = next ? (next.parts || []).join(" + ") : "";
-  const every = state.clock?.minuteAligned ? "minute-aligned" : `every ${Math.round(state.cyclePeriod)}s`;
+  const every = state.clock?.minuteAligned ? `${Math.round(state.cyclePeriod || 53)} s grid, epoch-aligned` : `every ${Math.round(state.cyclePeriod)}s`;
   if (next) {
     return `next refresh t+${Math.round(next.offset_seconds)}s <b>${Math.round(next.seconds_until)}s</b>` +
       (parts ? ` · ${parts}` : "") + ` · ${every}`;
@@ -830,7 +830,7 @@ function deepLockedHtml(deep) {
 
 /* ------------------------------------------------------------ emotions --
    Round J.  The card answers, live: which emotion is dominant, on which
-   timescale, for how long, how crowded the minute is, and what the crowd was
+   timescale, for how long, how crowded the window is, and what the crowd was
    feeling when the locked signal was computed.  The data arrives in the
    EMOTION stream (twice a second) and in every PULSE / snapshot; the client
    only draws it - it never measures anything itself. */

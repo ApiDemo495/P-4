@@ -146,8 +146,8 @@ def ornstein_uhlenbeck(snapshot) -> dict:
     sharpe = abs(expected) / math.sqrt(var60) if var60 > 0 else 0.0
     # Round AJ: a reversion is only tradeable inside the window if its
     # half-life sits between 5 s and 10 min (faster is bid/ask bounce, slower
-    # never arrives within 60 s) and the expected move clears the cost of
-    # crossing the spread.  The edge is capped at one 60-second sigma - the
+    # never arrives within one window) and the expected move clears the cost of
+    # crossing the spread.  The edge is capped at one window-sigma (53 s) - the
     # old 20 bp cap let a thin-tape fit dominate the Kelly blend.
     half_life_s = math.log(2.0) / kappa_s if kappa_s > 0 else float("inf")
     tradeable = 5.0 <= half_life_s <= 600.0

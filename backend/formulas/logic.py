@@ -289,10 +289,10 @@ register(
     Logic(
         name="HRDD",
         expression="d_beta = (beta_now - EMA_60(beta)) / scale;  HRDD = -tanh(d_beta) for BTC",
-        reads=("synchronised 1-second BTC and PAXG return grid", "60-cycle EMA of the hedge ratio"),
+        reads=("synchronised 1-second BTC and PAXG return grid", "60-window (~53 min) EMA of the hedge ratio"),
         steps=(
             "Regress PAXG returns on BTC returns over the synchronised grid -> instantaneous beta.",
-            "Compare beta with its 60-minute EMA baseline.",
+            "Compare beta with its 60-window (~53 min) EMA baseline.",
             "Normalise the drift by the historical dispersion of beta.",
             "Negate for BTC: if the hedge ratio is drifting, BTC is the leg that is out of line.",
         ),
@@ -312,7 +312,7 @@ register(
         ),
         reads=("synchronised BTC and PAXG returns", "tick flow per leg"),
         steps=(
-            "Dollar flow per leg = sum of (i/T)^2 * volume * side * price over the last 60 s, a recency-weighted net flow in dollars.",
+            "Dollar flow per leg = sum of (i/T)^2 * volume * side * price over the last window (53 s), a recency-weighted net flow in dollars.",
             "Normalise each leg by the flow *that leg* normally does (EMA of its own |flow|, floored at half of the pair's typical flow) - dividing a window by itself would always give +/-1.",
             "Rotation R = half the difference of the two normalised flows: +1 is a complete rotation into PAXG, -1 a complete rotation into BTC.",
             "Sign it for the asset under analysis: money leaving BTC for gold is bearish BTC.",
@@ -715,7 +715,7 @@ DETAIL: dict[str, dict] = {
     },
     "HRDD": {
         "units": "-1 … +1 relative-value score (BTC leg)",
-        "sensitivity": "a beta one scale-unit from its 60-window EMA reads ±0.76",
+        "sensitivity": "a beta one scale-unit from its 60-window (~53 min) EMA reads ±0.76",
         "misleads": (
             "a single-leg news event moves beta without any relative-value story",
             "the EMA needs ~60 windows before the baseline is trustworthy",
@@ -850,7 +850,7 @@ DETAIL: dict[str, dict] = {
     },
     "DRG": {
         "units": "-1 … +1 reward trace (not directional)",
-        "sensitivity": "a +10 bps win reads about +0.095; a -10 bps loss about -0.16 (asymmetric by design)",
+        "sensitivity": "magnitudes are |P&L| / the window median (capped at 3x): a typical first win reads about +0.17, a typical first loss about -0.22, a loss after wins about -0.24 and a loss that was already expected (after losses) near 0 - it is a prediction error, not a tally",
         "misleads": (
             "it lags: the last outcome is already priced into the DAN gate",
             "a lucky streak on a random tape looks like edge",

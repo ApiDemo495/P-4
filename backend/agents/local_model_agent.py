@@ -43,7 +43,9 @@ TEST_PROMPT = (
 )
 
 SYSTEM_PROMPT_LOCAL = (
-    "You are a 1-minute scalping assistant for BTC and PAXG. "
+    f"You are a {int(round(cfg.window_seconds()))}-second scalping assistant for BTC and PAXG: "
+    f"each call covers exactly the next {int(round(cfg.window_seconds()))} seconds and wins only if "
+    "the last price then is strictly on your side (unchanged = loss). "
     "Respond with JSON only: {\"decision\":\"BUY\"|\"SELL\","
     "\"confidence\":0.0-1.0,\"reasoning\":\"one sentence\"}. "
     "HOLD is not an option: always name a side, and lower the confidence when the "

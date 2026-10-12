@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from backend.core import config as cfg
+
 from backend.formulas._util import EPS, SelfScale, finite, trace
 
 NAME = "SHRP"
@@ -31,7 +33,7 @@ DIRECTIONAL = True
 LATENCY_MS = 0.15
 DESCRIPTION = "Recency-weighted dollar-flow rotation between BTC (risk) and PAXG (safety)."
 
-FLOW_SECONDS = 60.0
+FLOW_SECONDS = float(cfg.window_seconds())   # one window of flow (53 s)
 
 
 class State:

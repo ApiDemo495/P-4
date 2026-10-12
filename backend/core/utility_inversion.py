@@ -38,6 +38,8 @@ from typing import Any
 
 import numpy as np
 
+from backend.core import config as cfg
+
 BUCKET_MS = 1000.0
 MIN_BUCKETS = 24
 TAIL_SIGMA = 2.0
@@ -222,7 +224,7 @@ def analyze(tape: Any, asset: str, sigma_window_bps: float = 0.0) -> dict:
         gam = risk_aversion(rets, notional)
         mid = float(ticks[-1, 1])
         sigma = float(sigma_window_bps) if sigma_window_bps and sigma_window_bps > 0 else (
-            float(np.std(rets)) * math.sqrt(60.0) if rets.size > 2 else 0.0)
+            float(np.std(rets)) * math.sqrt(cfg.window_seconds()) if rets.size > 2 else 0.0)
         alpha = probability_weighting(tape.book(asset.upper()), mid, sigma)
         live = sum(1 for d in (lam, gam, alpha) if d.get("available"))
         bits = [d["read"] for d in (lam, gam, alpha) if d.get("available")]

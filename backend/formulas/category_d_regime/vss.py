@@ -1,6 +1,6 @@
 """FORMULA 13 - Volatility Surprise Score (VSS).
 
-Compares realised volatility over the last minute with the 5-minute baseline
+Compares realised volatility over the last window (53 s) with the 5-window baseline
 that the market has "priced in".  A positive surprise means the tape is waking
 up - large moves are becoming likely.  The magnitude is then multiplied by the
 sign of the recent mean return, so a volatility spike *with* upward drift reads
@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from backend.core import config as cfg
+
 from backend.formulas._util import EPS, finite, tanh, trace
 
 NAME = "VSS"
@@ -24,7 +26,7 @@ TITLE = "Volatility Surprise Score"
 BRAIN_NODE = "Giant Fiber (GF)"
 DIRECTIONAL = True
 LATENCY_MS = 0.2
-DESCRIPTION = "Realised 1-minute volatility vs. the 5-minute baseline, signed by drift."
+DESCRIPTION = "Realised one-window volatility vs. the 5-window baseline, signed by drift."
 
 SHORT_WINDOW = 60
 LONG_WINDOW = 300
@@ -69,8 +71,33 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     if returns.size < 10:
         return 0.0
 
-    short = returns[-min(SHORT_WINDOW, returns.size) :]
-    long = returns[-min(LONG_WINDOW, returns.size) :]
+    # Round AW: the windows are *time*, not tick counts.  "60 ticks" was 6 s
+    # on a 10 Hz tape and a minute on a thin one - the surprise then compared
+    # whatever the feed rate happened to be.  Short = the last window (53 s),
+    # long = the last five windows, both on the tape's own timestamps; the
+    # tick counts are only the fallback when the tape carries no clock.
+    n_short, n_long = min(SHORT_WINDOW, returns.size), min(LONG_WINDOW, returns.size)
+    try:
+        times_s = np.asarray(snapshot.ticks(asset))[:, 0] / 1000.0
+        if times_s.size == prices.size and times_s.size > 2:
+            now_s = float(times_s[-1])
+            w = float(cfg.window_seconds())
+            n_short = int(np.count_nonzero(times_s[1:] > now_s - w))
+            n_long = int(np.count_nonzero(times_s[1:] > now_s - 5.0 * w))
+    except Exception:  # noqa: BLE001 - a tape without a time column keeps the tick counts
+        pass
+    n_long = max(10, min(n_long, returns.size))
+    # a tape shorter than two windows cannot hold a window *and* a baseline:
+    # keep the 1:5 ratio inside whatever span there is (and say so)
+    if n_short > 0.6 * n_long:
+        n_short = max(10, n_long // 5)
+        trace(ctx, "baseline note", 1, "tape shorter than two windows - short window = a fifth of the span")
+    n_short = max(10, min(n_short, returns.size))
+    n_long = max(n_short, n_long)
+    short = returns[-n_short:]
+    long = returns[-n_long:]
+    trace(ctx, "short window", n_short, f"returns inside the last {cfg.window_seconds():.0f} s")
+    trace(ctx, "baseline window", n_long, f"returns inside the last {5 * cfg.window_seconds():.0f} s")
 
     sigma_real = float(np.sqrt(np.mean(short**2)))
     sigma_exp = float(np.sqrt(np.mean(long**2)))
@@ -84,8 +111,8 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     t_stat = abs(drift) * float(np.sqrt(long.size)) / (sigma_exp + EPS)
     direction = float(np.sign(drift)) if t_stat >= MIN_T_STAT else 0.0
 
-    trace(ctx, "realised vol (1 min)", sigma_real, "per tick")
-    trace(ctx, "baseline vol (5 min)", sigma_exp, "per tick")
+    trace(ctx, "realised vol (window)", sigma_real, "per tick")
+    trace(ctx, "baseline vol (5 windows)", sigma_exp, "per tick")
     trace(ctx, "vol surprise", surprise, "sigma_short / sigma_long - 1")
     trace(ctx, "drift (baseline window)", drift, "mean log return per tick")
     trace(ctx, "drift t-statistic", t_stat, "|mean| / (sigma / sqrt(n))")

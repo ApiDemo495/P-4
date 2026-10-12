@@ -344,8 +344,9 @@ class CompetitionLedger:
             ladder.append({
                 "streak": rung, "prize": prize, "hit": self.milestones_hit[rung],
                 "probability_per_attempt": streak_probability(p_est, rung),
-                "expected_minutes": None if ew is None or ew > 1e12 else round(ew, 0),
-                "expected_hours": None if ew is None or ew > 1e12 else round(ew / 60.0, 1),
+                "expected_windows": None if ew is None or ew > 1e12 else round(ew, 0),
+                "expected_minutes": None if ew is None or ew > 1e12 else round(ew * cfg.window_seconds() / 60.0, 0),
+                "expected_hours": None if ew is None or ew > 1e12 else round(ew * cfg.window_seconds() / 3600.0, 1),
                 "reached": self.streak >= rung,
             })
         recent = [r.as_dict() for r in list(self.rows)[-30:]]

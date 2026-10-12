@@ -2041,3 +2041,24 @@ turbulent).  A stateless `features()` read has no memory and stays neutral.
 Drivers say "last window moved 12.3× its hourly norm".
 
 Tests: `test_round_as.py` (+ violent-market, + restart-survival), 336 pass.
+
+### AW.1 - the window reaches the agents, the models and the formulas
+
+The user found parts still coded for 60 s.  Fixed: the AI/agent prompts
+(`SYSTEM_PROMPT`, `build_cycle_prompt`, `SYSTEM_PROMPT_LOCAL`) now state the
+53 s horizon and the contest rule (strictly above/below, unchanged = loss) so
+Gemini, GitHub Models and the local GGUF model all answer the right question;
+the API description; `FrozenSignal.window_seconds` default; SHRP's flow
+window; the utility-inversion sigma scaling (√60 → √window); the competition
+ladder's expected time (windows × 53 s, not minutes); dashboard "minute"
+labels and the "minute-aligned" clock caption; HRDD/VSS descriptions.
+
+Formula fixes: **VSS** measured "60 ticks vs 300 ticks" - 6 s vs 30 s on a
+10 Hz tape, a minute on a thin one - it now measures the last 53 s against the
+last 265 s on the tape's own timestamps (tick-count fallback; a tape shorter
+than two windows keeps a 1:5 split and says so).  **DRG** fed raw basis
+points into a formula written for unit rewards: one ordinary 9 bps loss gave
+TD error −14, dopamine −24 and tanh pinned at −0.985 ("heavy losses" after one
+miss).  Magnitudes are now |P&L| / the buffer's median |P&L| (capped at 3×),
+so a typical first loss reads about −0.22 and the gate reflects *surprise*,
+as the TD rule intends.  Double-check rules unchanged; all 23 still verify.
