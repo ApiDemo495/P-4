@@ -89,7 +89,7 @@ def size_levels(
     *,
     edge: float = 0.0,
     spread_bps: float = 0.0,
-    horizon_seconds: float = 60.0,
+    horizon_seconds: float | None = None,
     settings=None,
     moves: dict | None = None,
 ) -> RiskLevels:
@@ -105,8 +105,8 @@ def size_levels(
     sigma = float(volatility_bps)
     if not math.isfinite(sigma) or sigma <= 0:
         sigma = float(settings.default_volatility_bps)
-    horizon = max(float(horizon_seconds or 60.0), 1.0)
-    base_horizon = float(getattr(settings, "cycle_seconds", 60) or 60)
+    base_horizon = float(getattr(settings, "cycle_seconds", 53) or 53)      # the 53 s window
+    horizon = max(float(horizon_seconds or base_horizon), 1.0)
     sigma_t = sigma * math.sqrt(horizon / base_horizon)
 
     spread_floor = SPREAD_MULT * max(float(spread_bps or 0.0), 0.0)

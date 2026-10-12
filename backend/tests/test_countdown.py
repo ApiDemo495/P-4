@@ -51,22 +51,25 @@ async def manager():
 # ---------------------------------------------------------------------------
 
 
-def test_the_countdown_is_sixty_seconds():
+def test_the_countdown_is_fifty_three_seconds():
+    """Round AW: the user's window is 53 s, epoch-aligned."""
     production = cfg.Settings(time_scale=1.0)
-    assert production.cycle_seconds == 60.0
-    assert production.cycle_period_seconds == 60.0
+    assert production.cycle_seconds == 53.0
+    assert production.cycle_period_seconds == 53.0
     assert production.use_world_clock is True
-    # 60 s windows are what the dashboard labels, and the clock block reports.
-    assert production.prediction_expired == 65.0
+    assert production.prediction_expired == 58.0
+    assert cfg.window_seconds() == 53.0
 
 
-def test_windows_are_locked_to_the_utc_minute():
-    """Every window starts on a minute boundary, so two viewers agree."""
+def test_windows_are_locked_to_the_epoch_grid():
+    """Every window starts on a multiple of the period since the epoch, so
+    two viewers (two Codespaces) agree on the boundaries."""
     for start in (1_700_000_000.0, 1_700_000_012.5, 1_700_000_059.9):
-        snapped = CycleManager._snap_to_minute(start)
-        assert snapped % 60.0 == pytest.approx(0.0, abs=1e-6)
+        snapped = CycleManager._snap_to_minute(start, 53.0)
+        assert snapped % 53.0 == pytest.approx(0.0, abs=1e-6)
         assert snapped > start
-        assert snapped - start <= 60.0
+        assert snapped - start <= 53.0
+    assert CycleManager._snap_to_minute(1_700_000_012.5, 60.0) % 60.0 == 0
 
 
 async def test_the_clock_block_starts_at_sixty_and_only_counts_down(manager: CycleManager):

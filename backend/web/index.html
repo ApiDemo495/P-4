@@ -6,7 +6,7 @@
 <title>Drosophila Trader v2.0</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" />
-<link rel="stylesheet" href="/static/styles.css?v=2.29.0" />
+<link rel="stylesheet" href="/static/styles.css?v=2.30.0" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪰</text></svg>" />
 </head>
 <body>
@@ -109,7 +109,7 @@
   </section>
 
   <!-- ============ WIDGET PANEL (fixed layout, rows 1 and 2) ============ -->
-  <!-- Row 1: prediction | countdown 1-60 | signal + conviction box       -->
+  <!-- Row 1: prediction | countdown 1-53 | signal + conviction box       -->
   <!-- Row 2: take profit / stop loss | prediction accuracy                  -->
   <section class="card widget-panel" data-panel="window">
     <div class="widget-row row-top">
@@ -123,9 +123,9 @@
         <div class="prediction-value" id="w-prediction">—</div>
         <div class="prediction-sub" id="w-prediction-sub">waiting for the first lock…</div>
         <!-- Round I: what the prediction is *for*.  Every prediction covers the
-             60 seconds that follow its release; this line states the release
+             53 seconds that follow its release; this line states the release
              instant in microseconds, the target instant and what is left. -->
-        <div class="horizon-line" id="w-horizon-line">forecast: the next 60 seconds — waiting for the first release</div>
+        <div class="horizon-line" id="w-horizon-line">forecast: the next 53 seconds — waiting for the first release</div>
         <div class="micro-line" id="w-micro-line">tape resolution — waiting for the first tick</div>
         <!-- Round L: the crowd *as it was at the lock*.  Nothing inside the
              prediction cell may move during a window, so this line is the
@@ -183,7 +183,7 @@
 
     <div class="widget-row row-bottom">
       <div class="widget-cell competition-cell" id="competition-cell">
-        <div class="cell-label">THE COMPETITION <span class="muted">last trade :00 → :60 · tie = loss · every window called</span></div>
+        <div class="cell-label">THE COMPETITION <span class="muted">last trade at the open → at the close of the 53 s window · tie = loss · every window called</span></div>
         <div class="comp-streak"><b id="c-streak">—</b><span id="c-streak-label" class="muted">consecutive wins</span></div>
         <div class="comp-ladder" id="c-ladder"></div>
         <div class="kv-grid">
@@ -238,7 +238,7 @@
          of the panel; only the realised path moves. -->
     <div class="widget-row row-branches">
       <div class="widget-cell wide">
-        <div class="cell-label">PROBABILITY BRANCHES · next 60 s <span class="muted" id="w-branch-note">waiting for the first lock…</span></div>
+        <div class="cell-label">PROBABILITY BRANCHES · next 53 s <span class="muted" id="w-branch-note">waiting for the first lock…</span></div>
         <canvas id="w-branches" class="branch-canvas" width="900" height="170" aria-label="probability branches of the next window"></canvas>
         <div class="branch-odds" id="w-branch-odds"></div>
       </div>
@@ -284,7 +284,7 @@
   </section>
 
   <!-- ===================== CROWD EMOTION (live) ===================== -->
-  <!-- The user's premise: a 60-second market is easily pushed around by
+  <!-- The user's premise: a 53-second market is easily pushed around by
        retail emotion.  This card says which emotion is dominant right now,
        on which timescale (µs → minutes), how long it has held, how crowded /
        manipulated the minute looks, and what the crowd was feeling when the
@@ -375,7 +375,7 @@
       <div class="divider"></div>
       <div class="card-head" data-panel="hedge"><h2>📊 Hedge Outcomes</h2><span class="muted" id="hedge-regime">—</span></div>
       <div class="hedge-best" id="hedge-best">waiting for the first locked window…</div>
-      <div class="hedge-grid hedge-joint" title="probability of each joint BTC / PAXG outcome over the 60 s window (bivariate normal from the synchronised grid)">
+      <div class="hedge-grid hedge-joint" title="probability of each joint BTC / PAXG outcome over the 53 s window (bivariate normal from the synchronised grid)">
         <div class="hedge-item"><span>BTC ↑ · PAXG ↑</span><b id="hj-uu">—</b><div class="bar tiny"><div class="bar-fill neutral" id="hj-uu-bar"></div></div></div>
         <div class="hedge-item"><span>BTC ↑ · PAXG ↓</span><b id="hj-ud">—</b><div class="bar tiny"><div class="bar-fill pos" id="hj-ud-bar"></div></div></div>
         <div class="hedge-item"><span>BTC ↓ · PAXG ↑</span><b id="hj-du">—</b><div class="bar tiny"><div class="bar-fill neg" id="hj-du-bar"></div></div></div>
@@ -608,6 +608,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=2.29.0"></script>
+<script src="/static/app.js?v=2.30.0"></script>
 </body>
 </html>

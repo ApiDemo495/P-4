@@ -13,7 +13,7 @@ const state = {
   pendingAsset: null,
   lockState: "COMPUTING",
   cycleNumber: 0,
-  cyclePeriod: 60,
+  cyclePeriod: 53,
   secondsIntoMinute: 0,
   lastCycleAt: null,
   signal: null,
@@ -237,7 +237,7 @@ function handle(msg) {
 /* ------------------------------------------------------------------ clock */
 /* ONE clock, ONE tick.
 
-   The backend owns the schedule: a 60-second window aligned to the UTC minute,
+   The backend owns the schedule: a 53-second window aligned to the epoch grid,
    with refresh marks at fixed offsets inside it (t+15, t+30, t+45).  It sends
    the window as absolute instants and the client counts down to a fixed point
    in time - so the digits are smooth, they never jump when an unrelated message
@@ -333,7 +333,7 @@ function renderPanelRails() {
   const feed = panelFeedClass();
   const src = state.tape?.source || "none";
   const phase = state.clock ? (() => {
-    const p = 1 - windowRemaining() / (state.cyclePeriod || 60);
+    const p = 1 - windowRemaining() / (state.cyclePeriod || 53);
     return p < 0.1 ? "opening" : p < 0.4 ? "early" : p < 0.7 ? "mid" : p < 0.9 ? "late" : "closing";
   })() : "—";
   document.querySelectorAll("[data-panel]").forEach((panel) => {
@@ -345,7 +345,7 @@ function renderPanelRails() {
       rail = document.createElement("div");
       rail.className = "panel-rail";
       rail.innerHTML = `<span class="rail-feed" title="&b - the internet source behind this panel right now"></span>` +
-        `<span class="rail-phase" title="¶gn - where in the 60 s window we are"></span>` +
+        `<span class="rail-phase" title="¶gn - where in the ${state.cyclePeriod || 53} s window we are"></span>` +
         `<span class="rail-age" title="seconds since this panel last repainted"></span>`;
       head.appendChild(rail);
     }
@@ -381,7 +381,7 @@ function pulseBreath() {
 function renderRingMarks() {
   const g = $("w-ring-marks");
   if (!g) return;
-  const period = state.cyclePeriod || 60;
+  const period = state.cyclePeriod || 53;
   const ticks = state.clock?.ticks || [];
   const key = ticks.map((t) => `${t.offset_seconds}:${t.done ? 1 : 0}`).join("|") + `@${period}`;
   if (g.dataset.key === key) return;
@@ -396,7 +396,7 @@ function renderRingMarks() {
 }
 
 function windowRemaining() {
-  if (!state.clock) return state.cyclePeriod || 60;
+  if (!state.clock) return state.cyclePeriod || 53;
   return Math.max(0, (state.clock.endsAtMs - serverNowMs()) / 1000);
 }
 
@@ -411,7 +411,7 @@ function anchorWindow(window) {
    written only when the whole second changes, so nothing flickers. */
 function frame() {
   const remaining = windowRemaining();
-  const period = state.cyclePeriod || 60;
+  const period = state.cyclePeriod || 53;
   const secs = clamp(Math.ceil(remaining - 1e-6), 0, Math.ceil(period));
   const ring = $("w-ring");
   if (ring) {
@@ -614,7 +614,7 @@ function fmtClockUs(iso) {
   return match ? match[1] : String(iso);
 }
 
-/* What the prediction is *for*: the 60 seconds that start when it is released.
+/* What the prediction is *for*: the 53 seconds that start when it is released.
    This is the Round-I contract made visible - release instant to the
    microsecond, the instant it targets, and how much of the window is left. */
 function renderHorizon(prediction) {
@@ -622,7 +622,7 @@ function renderHorizon(prediction) {
   if (!el) return;
   const h = prediction?.horizon;
   if (!h || !h.released_at_us) {
-    el.textContent = "forecast: the next 60 seconds — waiting for the first release";
+    el.textContent = `forecast: the next ${state.cyclePeriod || 53} seconds — waiting for the first release`;
     el.className = "horizon-line muted";
     return;
   }
@@ -641,7 +641,7 @@ function renderHorizon(prediction) {
   // the only countdown; this line states the fixed instants of the forecast
   // and how the window is scored.  (``left``/``scored`` stay in the tooltip.)
   el.innerHTML =
-    `forecast <b>${escapeHtml(h.forecast_for || h.label || "the next 60 seconds")}</b>` +
+    `forecast <b>${escapeHtml(h.forecast_for || h.label || `the next ${state.cyclePeriod || 53} seconds`)}</b>` +
     ` · released <b>${fmtClockUs(h.released_at_precise || h.released_at)}</b>` +
     ` · targets <b>${fmtClockUs(h.target_at_precise || h.target_at)}</b>` +
     ` · <span class="muted">side, confidence and levels are frozen until then</span>`;
@@ -856,7 +856,7 @@ function toneClass(tone) {
 }
 
 function emotionTimescaleLabel(key) {
-  return { micro: "µs", seconds: "sec", window: "60 s", minutes: "min", news: "news" }[key] || key;
+  return { micro: "µs", seconds: "sec", window: `${state.cyclePeriod || 53} s`, minutes: "min", news: "news" }[key] || key;
 }
 
 /* Round AR: the brain's own dopamine - how it felt the last scored window
@@ -1267,7 +1267,7 @@ function renderPipelineProgress() {
   const fill = $("w-pipeline-fill");
   const ready = !!w.prefetch_ready;
   const lead = state.config?.lock_deadline_seconds || 8;
-  const period = state.cyclePeriod || 60;
+  const period = state.cyclePeriod || 53;
   // Progress of the *next* window's computation: idle until the prefetch lead
   // window opens (the engine deliberately computes late so its snapshot is
   // fresh), then 0 -> 100 %.
@@ -1386,7 +1386,7 @@ function renderWindowStrip() {
   $("w-window-span").textContent =
     `${(w.valid_from || "").substr(11, 8)}–${(w.valid_until || "").substr(11, 8)}Z`;
   const bootstrap = !state.signal || state.signal.preview;
-  const period = state.clock?.period || state.cyclePeriod || 60;
+  const period = state.clock?.period || state.cyclePeriod || 53;
   const cadence = state.clock?.minuteAligned
     ? `${Math.round(period)}s window, minute-aligned`
     : `${Math.round(period)}s window`;
@@ -1541,7 +1541,7 @@ function renderBranches() {
     return;
   }
   const fan = br.fan;
-  const T = br.horizon_seconds || 60;
+  const T = br.horizon_seconds || state.cyclePeriod || 53;
   const path = state.path || [];
   const t0 = path.length ? path[0].at : null;
   const pts = path.map((r) => ({ t: r.t ?? (t0 ? (r.at - t0) / 1000 : 0), p: r.p })).filter((r) => r.t >= 0 && r.t <= T);
@@ -1592,7 +1592,7 @@ function renderBranches() {
   }
   ctx.fillStyle = "rgba(255,255,255,0.45)"; ctx.font = "10px monospace";
   ctx.fillText(fmtMoney(hi), 2, 10); ctx.fillText(fmtMoney(lo), 2, H - 4);
-  [0, 15, 30, 45, 60].filter((t) => t <= T).forEach((t) => ctx.fillText(`${t}s`, X(t) - 6, H - 4));
+  [0, Math.round(T / 4), Math.round(T / 2), Math.round(3 * T / 4), Math.round(T)].forEach((t) => ctx.fillText(`${t}s`, X(t) - 6, H - 4));
   if (note) {
     note.textContent = `drift ${Number(br.drift_bps).toFixed(1)} bps · σ ${Number(br.sigma_bps).toFixed(1)} bps · ` +
       `P(close ${buy ? "up" : "down"}) ${fmtPct(br.p_close_for)} · P(target before stop) ${fmtPct(br.p_tp_first)}` +
@@ -1816,10 +1816,10 @@ function renderWidgetPanel() {
   const src = state.tape?.source || state.config?.market_source || "live feed";
   const engine = (state.tape ? state.tape.simulated : state.config?.simulated)
     ? `simulated market data · ${src}`
-    : `${src} · ${state.config?.cycle_period_seconds || 60}s windows`;
+    : `${src} · ${state.config?.cycle_period_seconds || 53}s windows`;
   $("w-engine").textContent =
     `${engine}${state.window?.pipeline ? " · pipelined" : ""}` +
-    ` · ${Math.round(state.window?.window_seconds || state.cyclePeriod || 60)}s predictions` +
+    ` · ${Math.round(state.window?.window_seconds || state.cyclePeriod || 53)}s predictions` +
     ` · build ${state.config?.build || "?"}`;
   renderBranches();
 }
@@ -2306,7 +2306,7 @@ function renderGenesis(payload) {
     `${states.DECAYING || 0} decaying · ${st.graveyard || 0} autopsied · ${st.bred || 0} bred`;
   const nextG = st.next_genesis_in_s;
   $("gn-gen").textContent = `generation ${st.generation ?? 0} · ` +
-    "votes on every 60 s window · " + (nextG == null ? "breeds new formulas after the first scoring" : nextG <= 0 ? "breeding new formulas now" : `breeds the next 50 formulas in ${Math.round(nextG / 60)} min (4 h cadence - not the signal timer)`);
+    `votes on every ${state.cyclePeriod || 53} s window · ` + (nextG == null ? "breeds new formulas after the first scoring" : nextG <= 0 ? "breeding new formulas now" : `breeds the next 50 formulas in ${Math.round(nextG / 60)} min (4 h cadence - not the signal timer)`);
   const nextR = st.next_rescore_in_candles;
   $("gn-candles").textContent = `${cs.minutes ?? 0} min (${cs.live_minutes ?? 0} live${cs.bootstrapped_from ? `, history ${cs.bootstrapped_from}` : ""}) · ` +
     (nextR == null ? "first scoring at 240" : `re-score in ${nextR} candles`) +
@@ -3096,7 +3096,7 @@ window.addEventListener("load", pollReadiness, { once: true });
 async function boot() {
   state.config = await getJSON("/api/system/config");
   if (state.config && !state.config.error) {
-    state.cyclePeriod = state.config.cycle_period_seconds || 60;
+    state.cyclePeriod = state.config.cycle_period_seconds || 53;
     state.asset = (state.config.assets || ["BTC"])[0];
   } else {
     state.config = {};

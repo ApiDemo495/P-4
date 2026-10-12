@@ -58,6 +58,8 @@ from typing import Any
 
 import numpy as np
 
+from backend.core import config as cfg
+
 from backend.core import geometry, utility_inversion
 from backend.core.timebase import format_us, now_us
 
@@ -588,7 +590,7 @@ def _evidence(
     the formulas' view, they never out-vote it (the fusion gives the formulas
     the vote and the crowd only a bounded confidence modifier).
     """
-    z1 = _safe(f.get("z_1s")); z5 = _safe(f.get("z_5s")); z60 = _safe(f.get("z_60s"))
+    z1 = _safe(f.get("z_1s")); z5 = _safe(f.get("z_5s")); z60 = _safe(f.get("z_win"))
     geo = deep.get("geometry") or {}
     util = ((deep.get("utility") or {}).get("intensity") or {})
     bands = deep["bands"]
@@ -899,7 +901,7 @@ def analyze(
     kyle = kyle_lambda(ticks)
     memory = sign_memory(sides)
     spectrum = haar_spectrum(tick_returns[-512:], resolution_us)
-    regime = regime_filter(one_s[-60:], typical_1s)
+    regime = regime_filter(one_s[-int(cfg.window_seconds()):], typical_1s)
     book = microprice(tape.book(asset))
     ign = ignition(times_ms, prices, typical_1s)
     stuffing = quote_stuffing(times_ms, prices, _safe(f.get("tick_rate_hz")))

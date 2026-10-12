@@ -44,7 +44,8 @@ class PhysicsEngine:
         self.passes = 0
 
     # ------------------------------------------------------------------
-    def compute(self, snapshot, asset: str, seconds_left: float = 60.0) -> dict:
+    def compute(self, snapshot, asset: str, seconds_left: float | None = None) -> dict:
+        seconds_left = float(seconds_left or cfg.window_seconds())
         started = time.perf_counter()
         now = time.time()
         tele = get_telemetry()

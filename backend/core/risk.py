@@ -32,13 +32,14 @@ from backend.core.risk_engine import size_levels
 from backend.formulas._util import EPS
 
 
-def realized_volatility_bps(snapshot, asset: str, horizon_seconds: float = 60.0) -> float:
+def realized_volatility_bps(snapshot, asset: str, horizon_seconds: float | None = None) -> float:
     """Realised 1-minute volatility in basis points.
 
     Prefers the 1-minute candle closes (exactly the horizon we care about).
     Falls back to tick returns, rescaled to one minute using the observed tick
     span, which is what a scalper actually has in the first seconds of a tape.
     """
+    horizon_seconds = float(horizon_seconds or cfg.window_seconds())
     closes = np.asarray(snapshot.candles(asset), dtype=np.float64)
     if closes.size >= 8:
         rets = np.diff(closes) / np.where(np.abs(closes[:-1]) > EPS, closes[:-1], np.nan)
@@ -93,7 +94,7 @@ SIZE_HINT = {
 }
 
 
-def minute_move_quantiles(snapshot, asset: str, horizon_seconds: float = 60.0) -> dict:
+def minute_move_quantiles(snapshot, asset: str, horizon_seconds: float | None = None) -> dict:
     """Round AN: what the tape has ACTUALLY done over one horizon, measured.
 
     Overlapping ``horizon_seconds`` windows are laid over the tick tape every
@@ -104,6 +105,7 @@ def minute_move_quantiles(snapshot, asset: str, horizon_seconds: float = 60.0) -
     target the minute almost never reaches.  Falls back to the 1-minute
     candle closes when the tick tape is shorter than three horizons.
     """
+    horizon_seconds = float(horizon_seconds or cfg.window_seconds())
     out = {"n": 0, "q50": 0.0, "q80": 0.0, "q90": 0.0, "q95": 0.0, "mae80": 0.0,
            "exc50": 0.0, "exc80": 0.0, "source": "none"}
     try:
@@ -178,7 +180,7 @@ def risk_levels(
     entry: float,
     volatility_bps: float,
     settings=None,
-    horizon_seconds: float = 60.0,
+    horizon_seconds: float | None = None,
     conviction: str = "HIGH",
     emergency_exit: bool = False,
     edge: float = 0.0,
@@ -186,6 +188,7 @@ def risk_levels(
     moves: dict | None = None,
 ) -> dict:
     """Build the risk block embedded in every locked signal."""
+    horizon_seconds = float(horizon_seconds or cfg.window_seconds())
     settings = settings or cfg.SETTINGS
 
     sigma = float(volatility_bps)

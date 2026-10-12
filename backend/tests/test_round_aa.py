@@ -21,7 +21,7 @@ def test_risk_engine_stop_is_the_mae_quantile_and_target_grows_with_edge():
     assert strong.sl_bps == flat.sl_bps and strong.rr > flat.rr and strong.rr <= risk_engine.RR_CEIL
     wide = risk_engine.size_levels("BTC", 2.0, spread_bps=4.0, settings=cfg.SETTINGS)
     assert wide.sl_bps >= 12.0 and "spread floor" in wide.method
-    longer = risk_engine.size_levels("BTC", 20.0, horizon_seconds=240.0, settings=cfg.SETTINGS)
+    longer = risk_engine.size_levels("BTC", 20.0, horizon_seconds=4 * cfg.SETTINGS.cycle_seconds, settings=cfg.SETTINGS)
     assert longer.sigma_window_bps == pytest.approx(40.0)
 
 

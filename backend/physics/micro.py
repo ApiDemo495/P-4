@@ -12,6 +12,8 @@ import math
 
 import numpy as np
 
+from backend.core import config as cfg
+
 from backend.physics import constants as K
 
 
@@ -138,8 +140,9 @@ def ornstein_uhlenbeck(snapshot) -> dict:
     sigma_s = float(resid.std()) / math.sqrt(dt) if resid.size > 2 else 0.0
     p0 = float(p[-1])
     gap = p_bar - p0
-    expected = gap * (1.0 - math.exp(-60.0 * kappa_s))
-    var60 = sigma_s ** 2 * (1.0 - math.exp(-120.0 * kappa_s)) / (2.0 * kappa_s) if kappa_s > 0 else 0.0
+    W = cfg.window_seconds()
+    expected = gap * (1.0 - math.exp(-W * kappa_s))
+    var60 = sigma_s ** 2 * (1.0 - math.exp(-2.0 * W * kappa_s)) / (2.0 * kappa_s) if kappa_s > 0 else 0.0
     sharpe = abs(expected) / math.sqrt(var60) if var60 > 0 else 0.0
     # Round AJ: a reversion is only tradeable inside the window if its
     # half-life sits between 5 s and 10 min (faster is bid/ask bounce, slower
@@ -170,7 +173,7 @@ def ornstein_uhlenbeck(snapshot) -> dict:
         "expected_move": expected, "sharpe": sharpe, "execute": execute, "samples": int(p.size),
         "logic": (f"dP = κ(P̄−P)dt + σdW on {p.size} prints; P̄ (VWAP-300 s) = {p_bar:.4f}, P₀ = {p0:.4f}; "
                   f"κ = −ln φ/Δt = {kappa_s * 60:.3f}/min, σ = {sigma_s:.5f}/√s; "
-                  f"half-life {half_life_s:.0f} s; E[ΔP₆₀] = (P̄−P₀)(1−e^(−60κ)) = {expected:+.5f} = {expected_bps:.2f} bp vs cost {cost_bps:.2f} bp; "
+                  f"half-life {half_life_s:.0f} s; E[ΔP_W] = (P̄−P₀)(1−e^(−{W:g}κ)) = {expected:+.5f} = {expected_bps:.2f} bp vs cost {cost_bps:.2f} bp; "
                   f"SR₆₀ = {sharpe:.2f} {'>' if sharpe > K.OU_MIN_SHARPE else '≤'} {K.OU_MIN_SHARPE} ⇒ {why}"),
     }
 
@@ -213,9 +216,9 @@ def pendulum(snapshot) -> dict:
     else:
         omega0_sq, beta, fitted = K.PENDULUM_OMEGA0 ** 2, 1.0 / 600.0, False
     y0, v0 = float(y[-1]), float((y[-1] - y[-2]) / dt)
-    # Integrate 60 s ahead (semi-implicit Euler, 1 s steps)
+    # Integrate one window ahead (semi-implicit Euler, 1 s steps)
     yy, vv = y0, v0
-    for _ in range(60):
+    for _ in range(int(round(cfg.window_seconds()))):
         acc = -2.0 * beta * vv - omega0_sq * yy
         vv += acc
         yy += vv
@@ -228,12 +231,13 @@ def pendulum(snapshot) -> dict:
         "bins": int(rei.size),
         "logic": (f"REI = V_BTC/(V_BTC+V_PAXG) over {rei.size} bins of {dt:.0f} s = {rei_now:.3f}; "
                   f"R̈EI + 2β·ṘEI + ω₀²(REI−½) = F, {'AR(2) fit' if fitted else 'prior'} ω₀ = {math.sqrt(omega0_sq):.5f} rad/s, β = {beta:.5f}; "
-                  f"REI(t+60) = {rei_next:.3f} ⇒ {'expansion: BTC' if direction > 0 else 'compression: PAXG' if direction < 0 else 'flat'}"),
+                  f"REI(t+{cfg.window_seconds():g}) = {rei_next:.3f} ⇒ {'expansion: BTC' if direction > 0 else 'compression: PAXG' if direction < 0 else 'flat'}"),
     }
 
 
 # ------------------------------------------------- 8.5 Avellaneda-Stoikov
-def avellaneda_stoikov(snapshot, seconds_left: float = 60.0) -> dict:
+def avellaneda_stoikov(snapshot, seconds_left: float | None = None) -> dict:
+    seconds_left = float(seconds_left or cfg.window_seconds())
     t, p = _ratio_series(snapshot)
     base = {"key": "as_spread", "section": "8.5", "name": "Avellaneda–Stoikov quote", "source": "tape",
             "direction": 0}
@@ -257,7 +261,7 @@ def avellaneda_stoikov(snapshot, seconds_left: float = 60.0) -> dict:
     half = sigma ** 2 * seconds_left / 2.0 + (1.0 / gamma) * math.log(1.0 + gamma / kappa_book)
     half_bps = half * 1e4
     fill_rate = min(arrival, 2.0) * 0.1                    # a tenth of prints lift our quote (model)
-    income_bps = fill_rate * 2.0 * half_bps * 60.0 / max(1.0, p.size)   # per unit of inventory
+    income_bps = fill_rate * 2.0 * half_bps * cfg.window_seconds() / max(1.0, p.size)   # per unit of inventory
     kappa_arrival = arrival
     return {
         **base, "value": half_bps, "edge_bps": min(income_bps, 3.0), "active": True, "cost_bps": half_bps,

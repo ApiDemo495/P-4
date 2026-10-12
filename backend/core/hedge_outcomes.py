@@ -30,6 +30,8 @@ import math
 
 import numpy as np
 
+from backend.core import config as cfg
+
 SQRT2 = math.sqrt(2.0)
 
 
@@ -88,7 +90,7 @@ def _joint(mu_b: float, mu_p: float, s_b: float, s_p: float, rho: float) -> dict
 
 
 def build(snapshot, formulas: dict, side: str, confidence: float, asset: str = "BTC",
-          horizon_s: float = 60.0) -> dict:
+          horizon_s: float | None = None) -> dict:
     """The outcome report (never raises; returns ``valid: False`` with a reason)."""
     f = {k: float(v) for k, v in (formulas or {}).items() if isinstance(v, (int, float))}
     hsi, hrdd, shrp, gcdv = f.get("HSI", 0.0), f.get("HRDD", 0.0), f.get("SHRP", 0.0), f.get("GCDV", 0.0)
@@ -99,14 +101,15 @@ def build(snapshot, formulas: dict, side: str, confidence: float, asset: str = "
             "formulas": {"hsi": round(hsi, 4), "hrdd": round(hrdd, 4), "shrp": round(shrp, 4), "gcdv": round(gcdv, 4)}}
     synced = getattr(snapshot, "synced", None)
     rb = rp = np.zeros(0)
-    window = 60.0
+    horizon_s = float(horizon_s or cfg.window_seconds())
+    window = float(horizon_s)
     basis = ""
     if synced is not None and getattr(synced, "valid", False):
         rb = np.asarray(synced.btc_returns, dtype=float)
         rp = np.asarray(synced.paxg_returns, dtype=float)
         ok = np.isfinite(rb) & np.isfinite(rp)
         rb, rp = rb[ok], rp[ok]
-        window = float(getattr(synced, "window_seconds", 60) or 60)
+        window = float(getattr(synced, "window_seconds", horizon_s) or horizon_s)
         basis = f"{rb.size} tick-grid returns"
     if rb.size < 10 or rb.std() <= 0 or rp.std() <= 0:
         # Round AP: the hedge maths must always run.  When the tick grid is
@@ -126,7 +129,7 @@ def build(snapshot, formulas: dict, side: str, confidence: float, asset: str = "
             rp = np.diff(cp) / cp[:-1]
             ok = np.isfinite(rb) & np.isfinite(rp)
             rb, rp = rb[ok], rp[ok]
-            window = 60.0 * max(1, rb.size)
+            window = 60.0 * max(1, rb.size)   # exchange candles are 1-minute data
             basis = f"{rb.size} one-minute candle returns (tick grid thin)"
     n = int(rb.size)
     if n < 10 or rb.std() <= 0 or rp.std() <= 0:

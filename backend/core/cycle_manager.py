@@ -463,7 +463,7 @@ class CycleManager:
                 deadline = boundary + index * period
                 if self.settings.use_world_clock:
                     # Stay phase-locked to the UTC minute even across restarts.
-                    deadline = self._snap_to_minute(deadline)
+                    deadline = self._snap_to_minute(deadline, self.settings.cycle_period_seconds)
 
                 # --- compute the NEXT window while this one is still running --
                 # Happens at the very end of the countdown (``lead`` seconds
@@ -514,9 +514,11 @@ class CycleManager:
 
     # ------------------------------------------------------------------
     @staticmethod
-    def _snap_to_minute(timestamp: float) -> float:
-        """Round a wall-clock timestamp up to the next UTC minute boundary."""
-        return math.ceil((timestamp - 1e-6) / 60.0) * 60.0
+    def _snap_to_minute(timestamp: float, period: float | None = None) -> float:
+        """Round a wall-clock timestamp up to the next epoch-aligned window
+        boundary (53 s grid by default; the UTC minute when CYCLE_SECONDS=60)."""
+        period = float(period or cfg.SETTINGS.cycle_period_seconds)
+        return math.ceil((timestamp - 1e-6) / period) * period
 
     async def _sleep_until(self, deadline_wall: float) -> None:
         """Sleep until an absolute wall-clock deadline, without drift."""
@@ -890,7 +892,7 @@ class CycleManager:
             self._cycle_started = True
             return
         if self.settings.use_world_clock:
-            await asyncio.sleep(max(0.01, self.clock.seconds_until_next_minute()))
+            await asyncio.sleep(max(0.01, self.clock.seconds_until_next_minute(self.settings.cycle_period_seconds)))
         else:
             await asyncio.sleep(max(0.01, self.settings.cycle_period_seconds))
 
@@ -987,9 +989,10 @@ class CycleManager:
         if bootstrap and self.settings.use_world_clock:
             # A cold start lands mid-minute: run a short first window and end it
             # on the UTC boundary, so every later countdown is minute-aligned.
-            until_wall = math.floor(from_wall / 60.0) * 60.0 + 60.0
+            period = float(self.settings.cycle_period_seconds)
+            until_wall = math.floor(from_wall / period) * period + period
             if until_wall - from_wall < 1.0:
-                until_wall += 60.0
+                until_wall += period
         elif bootstrap:
             # 15-second cadence: the first window is simply a full period long,
             # so the countdown the user sees is the one they will keep seeing.
@@ -1863,7 +1866,7 @@ class CycleManager:
             "clock": {
                 "utc": self.clock.iso(),
                 "ntp_synced": self.clock.ntp_synced,
-                "seconds_into_minute": round(self.clock.seconds_into_minute(), 3),
+                "seconds_into_minute": round(self.clock.seconds_into_minute(self.settings.cycle_period_seconds), 3),
                 "cycle_period_seconds": self.settings.cycle_period_seconds,
                 "time_scale": self.settings.time_scale,
             },

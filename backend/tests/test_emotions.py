@@ -138,7 +138,7 @@ def test_the_scales_are_the_tapes_own_not_absolute() -> None:
     """A move counts in multiples of the tape's typical move, so the same
     reading cannot be bought by simply being a more volatile asset."""
     f = E.features(_last("IMPULSE_DOWN"), "BTC")
-    assert f["scale_1s_bps"] > 0 and f["scale_5s_bps"] > 0 and f["scale_60s_bps"] > 0
+    assert f["scale_1s_bps"] > 0 and f["scale_5s_bps"] > 0 and f["scale_win_bps"] > 0
     assert f["z_1s"] == pytest.approx(f["return_1s_bps"] / f["scale_1s_bps"], rel=1e-6)
     assert f["z_5s"] < -2.0, "an impulse is several typical moves"
     flat = E.features(_last("FLAT"), "BTC")

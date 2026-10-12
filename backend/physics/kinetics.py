@@ -35,10 +35,12 @@ import math
 
 import numpy as np
 
+from backend.core import config as cfg
+
 HAWKES_BIN_S = 1.0
 HAWKES_WINDOW_S = 300.0
 HAWKES_CRITICAL = 0.95
-KINETIC_WINDOW_S = 60.0
+KINETIC_WINDOW_S = 60.0   # historical name; the live value is cfg.window_seconds()
 KINETIC_BASE_S = 600.0
 ENTROPY_BLOCK = 3
 ENTROPY_PRINTS = 240
@@ -80,7 +82,8 @@ def hawkes(snapshot) -> dict:
     # bins much longer than the kernel.  Invert for n, floor at Poisson.
     vmr = var / mean
     n = max(0.0, min(0.999, 1.0 - 1.0 / math.sqrt(max(1.0, vmr))))
-    last = _recent(win, 60.0)
+    W = cfg.window_seconds()
+    last = _recent(win, W)
     vol = np.abs(last[:, 2])
     flow = float(np.sum(vol * np.sign(last[:, 3])) / max(1e-12, vol.sum())) if last.shape[0] else 0.0
     critical = n >= HAWKES_CRITICAL
@@ -99,7 +102,7 @@ def hawkes(snapshot) -> dict:
         "critical": critical,
         "logic": (f"λ(t) = μ + Σ α·e^(−β(t−tᵢ)); {win.shape[0]} arrivals in {span:.0f} s binned at {HAWKES_BIN_S:.0f} s: "
                   f"mean {mean:.2f}, Var/Mean = {vmr:.2f} ⇒ n = 1 − 1/√(Var/Mean) = {n:.3f}; "
-                  f"signed flow (60 s) {flow:+.3f} ⇒ {regime}"),
+                  f"signed flow ({W:g} s) {flow:+.3f} ⇒ {regime}"),
     }
 
 
@@ -139,7 +142,7 @@ def kinetic(snapshot) -> dict:
     return {
         "key": key, "section": sec, "name": name, "value": z, "unit": " σ", "direction": direction, "edge_bps": edge,
         "active": True, "source": "tape", "momentum_now": p_now, "momentum_sigma": scale, "ke_ratio": heat,
-        "logic": (f"p = Σ side·v·|Δln P| over 60 s = {p_now:+.3e}; σ_p from {sums.size} trailing windows = {scale:.3e} ⇒ z = {z:+.2f}; "
+        "logic": (f"p = Σ side·v·|Δln P| over {cfg.window_seconds():g} s = {p_now:+.3e}; σ_p from {sums.size} trailing windows = {scale:.3e} ⇒ z = {z:+.2f}; "
                   f"KE = ½Σ v·(Δln P)² = {ke_now:.3e} ({heat:.2f}× the 10-min average); "
                   f"{'|z| ≥ 1 ⇒ follow the flux' if direction else '|z| < 1 ⇒ no net momentum'}"),
     }
@@ -245,10 +248,11 @@ def temperature(snapshot) -> dict:
     lr = np.diff(np.log(base[:, 1]))
     t = t[1:]
     t_end = t[-1]
-    now = lr[t >= t_end - 60.0]
-    span = max(60.0, t_end - t[0])
+    W = cfg.window_seconds()
+    now = lr[t >= t_end - W]
+    span = max(W, t_end - t[0])
     var_now = float(np.sum(now ** 2)) if now.size else 0.0
-    var_base = float(np.sum(lr ** 2)) * 60.0 / span
+    var_base = float(np.sum(lr ** 2)) * W / span
     if var_base <= 0:
         return _inactive(key, sec, name, "no price variance in the baseline", value=1.0)
     t_rel = var_now / var_base
@@ -257,7 +261,7 @@ def temperature(snapshot) -> dict:
     return {
         "key": key, "section": sec, "name": name, "value": t_rel, "unit": " T", "direction": 0, "edge_bps": 0.0,
         "active": True, "source": "tape", "drag": drag, "sigma_60s_bps": sigma60_bps, "prints_60s": int(now.size),
-        "logic": (f"½k·T ≡ ½⟨v²⟩: realised variance last 60 s = {var_now:.3e} ({now.size} prints) vs 60 s share of the 10-min baseline "
+        "logic": (f"½k·T ≡ ½⟨v²⟩: realised variance last {W:g} s = {var_now:.3e} ({now.size} prints) vs {W:g} s share of the 10-min baseline "
                   f"{var_base:.3e} ⇒ T_rel = {t_rel:.2f}; σ₆₀ = {sigma60_bps:.1f} bp; "
                   f"drag on every directional vote = {drag:.2f}" + (" (shock: votes shrink)" if drag > 0 else " (cool tape)")),
     }

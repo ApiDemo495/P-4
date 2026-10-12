@@ -47,11 +47,15 @@ class WorldClock:
     def iso(self) -> str:
         return self.now_dt().strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    def seconds_into_minute(self) -> float:
-        return self.now() % 60.0
+    def seconds_into_minute(self, period: float = 60.0) -> float:
+        """Seconds since the last epoch-aligned boundary of ``period``."""
+        return self.now() % float(period or 60.0)
 
-    def seconds_until_next_minute(self) -> float:
-        return 60.0 - self.seconds_into_minute()
+    def seconds_until_next_minute(self, period: float = 60.0) -> float:
+        """Seconds to the next epoch-aligned boundary of ``period`` (Round AW:
+        the name is historical - the grid is 53 s by default)."""
+        period = float(period or 60.0)
+        return period - self.seconds_into_minute(period)
 
     # -- maintenance -----------------------------------------------------
     async def sync(self, force: bool = False) -> bool:

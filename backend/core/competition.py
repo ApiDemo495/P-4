@@ -47,6 +47,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from backend.core import config as cfg
+
 #: The ladder, as the user described it.
 PRIZE_LADDER: tuple[tuple[int, str], ...] = (
     (5, "$1 fee coupon - only usable on a $50 trade, expires"),
@@ -348,7 +350,7 @@ class CompetitionLedger:
             })
         recent = [r.as_dict() for r in list(self.rows)[-30:]]
         return {
-            "rule": "BUY wins if the last trade at :60 is strictly above the last trade at :00; SELL strictly below; a tie is a loss; every window must be called",
+            "rule": f"BUY wins if the last trade at the end of the {cfg.window_seconds():g} s window is strictly above the last trade at its start; SELL strictly below; a tie is a loss; every window must be called",
             "scored": n,
             "wins": sum(1 for r in self.rows if r.won),
             "ties": self.ties,

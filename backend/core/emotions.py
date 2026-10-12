@@ -13,7 +13,7 @@ are measured at microsecond resolution but aggregated over five bands:
 ===========  ==========================================================
 ``micro``    µs - ms: inter-tick intervals, jitter, quote lifetime, burst
 ``seconds``  1 - 15 s: velocity, aggression, spread blow-out
-``window``   the 60-second window: range position, drawdown, volume climax
+``window``   the 53-second window (the engine period): range position, drawdown, volume climax
 ``minutes``  1-minute candles: trend, run-up, drawdown from the high
 ``news``     the headlines: sentiment and how much of it there is
 ===========  ==========================================================
@@ -50,6 +50,8 @@ from typing import Any
 
 import numpy as np
 
+from backend.core import config as cfg
+
 from backend.core import deep_micro
 from backend.core.prediction import consensus
 from backend.core.timebase import format_us, now_us, us_to_iso
@@ -73,6 +75,17 @@ EMOTIONS: dict[str, tuple[str, str]] = {
 
 #: The five bands every emotion is decomposed into.
 TIMESCALES: tuple[str, ...] = ("micro", "seconds", "window", "minutes", "news")
+
+#: Round AW: the window-length horizon of the velocity ladder - read from the
+#: engine period (53 s) at call time, never hard-coded.
+WIN = 53.0
+
+
+def _window_horizon() -> float:
+    try:
+        return float(cfg.window_seconds())
+    except Exception:  # noqa: BLE001
+        return 53.0
 
 #: The emotional families, for the one-line summary the UI prints.
 FAMILIES: dict[str, str] = {
@@ -150,7 +163,7 @@ def _terms(parts: list[tuple[float, str, float]]) -> tuple[float, list[dict]]:
 #: own typical move, so the emotions are surprise measures, not volatility.
 EMOTION_FORMULAS: dict[str, str] = {
     "FEAR": (
-        "FEAR = [0.30·sell + 0.25·vol_rise + 0.20·max(down_5s, down_60s) "
+        "FEAR = [0.30·sell + 0.25·vol_rise + 0.20·max(down_5s, down_win) "
         "+ 0.15·bid_thin + 0.10·blowout] × (1 − 0.50·top)"
     ),
     "PANIC": "PANIC = 0.30·down_1s + 0.25·surge + 0.20·blowout + 0.15·jitter + 0.10·climax",
@@ -163,7 +176,7 @@ EMOTION_FORMULAS: dict[str, str] = {
         "divergence = news_pos·down_5s,  dip_buying = min(buy, down_5s)"
     ),
     "HOPE": (
-        "HOPE = [0.35·recovery + 0.25·max(up_1s, up_60s) + 0.20·buy "
+        "HOPE = [0.35·recovery + 0.25·max(up_1s, up_win) + 0.20·buy "
         "+ 0.20·max(news_pos, vol_calm)] × (1 − 0.60·top)"
     ),
     "EUPHORIA": (
@@ -189,8 +202,8 @@ TERM_DEFINITIONS: dict[str, str] = {
     "up_1s": "ramp(+z_1s; 1.2, 3.5)",
     "down_5s": "ramp(−z_5s; 1.0, 3.0)",
     "up_5s": "ramp(+z_5s; 1.0, 3.0)",
-    "down_60s": "ramp(−z_60s; 0.8, 2.5)",
-    "up_60s": "ramp(+z_60s; 0.8, 2.5)",
+    "down_win": "ramp(−z_win; 0.8, 2.5)",
+    "up_win": "ramp(+z_win; 0.8, 2.5)",
     "vol_rise": "ramp(σ_now/σ_baseline; 1.15, 1.80)",
     "vol_calm": "1 − ramp(σ_now/σ_baseline; 0.85, 1.30)",
     "climax": "ramp(volume / its own pace; 2.0, 8.0)",
@@ -199,7 +212,7 @@ TERM_DEFINITIONS: dict[str, str] = {
     "jitter": "ramp(inter-arrival jitter; 5 ms, 200 ms)",
     "blowout": "ramp(spread / its baseline; 1.6, 4.0) × min(1, movement) × (½ if spread < 1 bp)",
     "tight": "max(1 − ramp(spread/baseline; 0.9, 1.8), 1 − ramp(spread_bps; 1, 8))",
-    "calm_moves": "1 − ramp(max|z_1s, z_5s, z_60s|; 0.8, 2.5)",
+    "calm_moves": "1 − ramp(max|z_1s, z_5s, z_win|; 0.8, 2.5)",
     "no_aggression": "1 − ramp(|aggression_5s|; 0.10, 0.50)",
     "top": "ramp(range_position; 0.70, 0.98)",
     "bottom": "1 − ramp(range_position; 0.05, 0.35)",
@@ -365,7 +378,7 @@ class EmotionTracker:
         if len(self.history) > self.history_size:
             del self.history[: -self.history_size]
 
-        window = [s for s in self.history if now - s["at_us"] <= 60_000_000]
+        window = [s for s in self.history if now - s["at_us"] <= int(_window_horizon() * 1_000_000)]
         switches = sum(
             1 for a, b in zip(window, window[1:]) if a["dominant"] != b["dominant"]
         )
@@ -836,9 +849,11 @@ def features(
     out["last"] = last
 
     # --- velocity on five horizons, each in its own surprise units --------
+    global WIN
+    WIN = _window_horizon()
     scale = {
         seconds: _typical_move_bps(times_ms, prices, seconds)
-        for seconds in (0.25, 1.0, 5.0, 15.0, 60.0)
+        for seconds in (0.25, 1.0, 5.0, 15.0, WIN)
     }
     for seconds, typical in scale.items():
         base = _price_at(times_ms, prices, seconds, now_ms)
@@ -856,13 +871,18 @@ def features(
         scale[5.0] = scale[1.0] * 2.236
     if scale.get(15.0, 0.0) <= 1e-6 and scale.get(5.0, 0.0) > 1e-6:
         scale[15.0] = scale[5.0] * 1.732
-    if scale.get(60.0, 0.0) <= 1e-6 and scale.get(15.0, 0.0) > 1e-6:
-        scale[60.0] = scale[15.0] * 2.0
+    if scale.get(WIN, 0.0) <= 1e-6 and scale.get(15.0, 0.0) > 1e-6:
+        scale[WIN] = scale[15.0] * float(np.sqrt(WIN / 15.0))
     for seconds, typical in scale.items():
         out[f"scale_{seconds:g}s_bps"] = typical
         base = _price_at(times_ms, prices, seconds, now_ms)
         bps = (last - base) / base * 10_000.0 if base else 0.0
         out[f"z_{seconds:g}s"] = bps / typical if typical > 1e-6 else 0.0
+    # Round AW: horizon-independent aliases for the window-length reading
+    # (53 s by default) so every reader stops hard-coding "60".
+    out["return_win_bps"] = out[f"return_{WIN:g}s_bps"]
+    out["scale_win_bps"] = out[f"scale_{WIN:g}s_bps"]
+    out["z_win"] = out[f"z_{WIN:g}s"]
 
     out["velocity_bps_per_s"] = out["return_1s_bps"]
     out["acceleration_bps"] = out["return_5s_bps"] - out["return_1s_bps"]
@@ -906,9 +926,9 @@ def features(
     out["range_position"] = (last - low) / (high - low) if high > low else 0.5
     out["drawdown_bps"] = (high - last) / high * 10_000.0 if high else 0.0
     out["run_up_bps"] = (last - low) / low * 10_000.0 if low else 0.0
-    scale_60 = scale.get(60.0, 0.0)
-    out["z_drawdown"] = out["drawdown_bps"] / scale_60 if scale_60 > 1e-6 else 0.0
-    out["z_run_up"] = out["run_up_bps"] / scale_60 if scale_60 > 1e-6 else 0.0
+    scale_win = scale.get(WIN, 0.0)
+    out["z_drawdown"] = out["drawdown_bps"] / scale_win if scale_win > 1e-6 else 0.0
+    out["z_run_up"] = out["run_up_bps"] / scale_win if scale_win > 1e-6 else 0.0
     out["reversals"] = float(_reversals(recent_slice[-min(recent_slice.size, 120) :]))
 
     # --- the order book ---------------------------------------------------
@@ -1014,8 +1034,8 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
     up_1s = _ramp(f.get("z_1s", 0.0), 1.2, 3.5)
     down_5s = _ramp(-f.get("z_5s", 0.0), 1.0, 3.0)
     up_5s = _ramp(f.get("z_5s", 0.0), 1.0, 3.0)
-    down_60s = _ramp(-f.get("z_60s", 0.0), 0.8, 2.5)
-    up_60s = _ramp(f.get("z_60s", 0.0), 0.8, 2.5)
+    down_win = _ramp(-f.get("z_win", 0.0), 0.8, 2.5)
+    up_win = _ramp(f.get("z_win", 0.0), 0.8, 2.5)
 
     # --- who is crossing the spread --------------------------------------
     sell = _ramp(-f.get("aggression_5s", 0.0), 0.15, 0.65)
@@ -1054,7 +1074,7 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
     # the tape: every horizon is inside its own normal range, and neither side is
     # crossing the spread with conviction.
     surprise = max(
-        abs(f.get("z_1s", 0.0)), abs(f.get("z_5s", 0.0)), abs(f.get("z_60s", 0.0))
+        abs(f.get("z_1s", 0.0)), abs(f.get("z_5s", 0.0)), abs(f.get("z_win", 0.0))
     )
     calm_moves = 1.0 - _ramp(surprise, 0.8, 2.5)
     no_aggression = 1.0 - _ramp(abs(f.get("aggression_5s", 0.0)), 0.10, 0.50)
@@ -1091,7 +1111,7 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
     # --- FEAR: sellers in control, volatility rising, the bid thinning ----
     fear, fear_terms = _terms([
         (0.30, "sell", sell), (0.25, "vol_rise", vol_rise),
-        (0.20, "max(down_5s, down_60s)", max(down_5s, down_60s)),
+        (0.20, "max(down_5s, down_win)", max(down_5s, down_win)),
         (0.15, "bid_thin", bid_thin), (0.10, "blowout", blowout),
     ])
     # --- PANIC: the acute form, on the fast bands -------------------------
@@ -1117,7 +1137,7 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
     # --- HOPE: a constructive drift, still under the mean -----------------
     recovery = min(up_5s, 1.0 - _ramp(pos, 0.45, 0.80))
     hope, hope_terms = _terms([
-        (0.35, "recovery", recovery), (0.25, "max(up_1s, up_60s)", max(up_1s, up_60s)),
+        (0.35, "recovery", recovery), (0.25, "max(up_1s, up_win)", max(up_1s, up_win)),
         (0.20, "buy", buy), (0.20, "max(news_pos, vol_calm)", max(news_pos, vol_calm)),
     ])
     # --- EUPHORIA: "happy" - pinned at the highs, calm, still buying ------

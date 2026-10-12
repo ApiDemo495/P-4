@@ -22,12 +22,13 @@ from __future__ import annotations
 import math
 import time
 
+from backend.core import config as cfg
 from backend.core.timebase import now_us, us_to_iso
 
 #: The forecast window the specification asks for: every prediction covers the
 #: 60 seconds that follow its release.  ``Settings(time_scale=...)`` can compress
 #: that for tests; this constant is the *intended* window and is always published.
-BASE_HORIZON_SECONDS = 60.0
+BASE_HORIZON_SECONDS = float(cfg.SETTINGS.cycle_seconds)   # Round AW: 53 s
 
 #: How a prediction is labelled once its age passes the contract.
 LIVE = "LIVE"
@@ -600,7 +601,7 @@ def branches(risk: dict, side: str, confidence: float, horizon_seconds: float) -
     sigma_bps = float(risk.get("volatility_bps") or 0.0)
     tp_bps = float(risk.get("tp_bps") or 0.0)
     sl_bps = float(risk.get("sl_bps") or 0.0)
-    T = max(1.0, float(horizon_seconds or 60.0))
+    T = max(1.0, float(horizon_seconds or cfg.window_seconds()))
     if entry <= 0 or sigma_bps <= 0 or side not in ("BUY", "SELL"):
         return {"available": False, "fan": [], "branches": []}
     sign = 1.0 if side == "BUY" else -1.0

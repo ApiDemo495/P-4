@@ -325,8 +325,11 @@ class Settings:
     #:
     #: ``CYCLE_SECONDS`` still overrides it for compressed demos, and
     #: ``TIME_SCALE`` compresses it further for the test suite.
+    #: Round AW: the window is **53 seconds** (user), epoch-aligned - every
+    #: boundary is a multiple of 53 s since the Unix epoch, so two Codespaces
+    #: see the same boundaries.  ``CYCLE_SECONDS`` overrides.
     cycle_seconds: float = field(
-        default_factory=lambda: _env_float("CYCLE_SECONDS", 60.0)
+        default_factory=lambda: _env_float("CYCLE_SECONDS", 53.0)
     )
     #: Freshness contract for a published prediction.  ``0`` (the default) means
     #: "as long as its own window": the signal rendered on screen is the signal
@@ -411,11 +414,10 @@ class Settings:
 
     @property
     def use_world_clock(self) -> bool:
-        """True only for the literal v2.0 draft timing: 60 s, minute-aligned."""
-        return (
-            abs(self.cycle_seconds - 60.0) < 1e-9
-            and abs(self.time_scale - 1.0) < 1e-9
-        )
+        """True at real time (TIME_SCALE 1): windows are phase-locked to the
+        epoch grid of ``cycle_seconds`` (53 s by default; the UTC minute when
+        CYCLE_SECONDS=60) via the NTP-corrected world clock."""
+        return abs(self.time_scale - 1.0) < 1e-9 and self.cycle_seconds >= 5.0
 
     @property
     def prediction_expired(self) -> float:
@@ -435,3 +437,15 @@ class Settings:
 
 
 SETTINGS = Settings()
+
+
+def window_seconds() -> float:
+    """Round AW: the ONE number every horizon-bound feature reads - emotions,
+    physics, risk, prediction, hedge outcomes, the competition rule, the UI.
+    53 s by default (``CYCLE_SECONDS``).  This is the *market* horizon the
+    formulas reason about, so it is NOT compressed by ``TIME_SCALE`` (the
+    schedule is - see ``Settings.cycle_period_seconds``)."""
+    try:
+        return float(SETTINGS.cycle_seconds)
+    except Exception:  # noqa: BLE001 - import-time fallback
+        return 53.0
