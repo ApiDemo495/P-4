@@ -1942,3 +1942,15 @@ OUTCOME broadcast and snapshots carry `competition` / `boundary_pick`.
 ladder (progress, per-attempt probability, expected time), per-pick rate,
 best/ties, the boundary-pick line and the reading; TP/SL demoted to
 "secondary". Tests `backend/tests/test_round_as.py`.
+
+## AT - local model documentation and the background GGUF runtime build
+
+`docs/LOCAL_MODELS.md` documents the offline-model path end to end (what the
+model is asked, the 7 s budget, accepted formats and magic bytes, the RAM
+arithmetic per quantisation, which Codespace machine fits which model size,
+candidate models, what a local vote realistically adds). Because
+`llama-cpp-python` is source-only on PyPI, `run.sh` now builds it in the
+background (setsid, flock, `logs/llama_runtime.log`) right after the engine is
+up whenever `import llama_cpp` fails and `cmake`/`g++` exist;
+`LOCAL_RUNTIME_AUTOINSTALL=0` disables. `LocalModelAgent.load` reports the
+state of that build instead of "install it".

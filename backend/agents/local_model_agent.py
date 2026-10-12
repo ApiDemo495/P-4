@@ -304,6 +304,20 @@ class LocalModelAgent:
         self.stub = os.environ.get("LOCAL_AGENT_STUB", "0") in ("1", "true", "yes")
         self._health_task: asyncio.Task | None = None
 
+    @staticmethod
+    def _runtime_build_hint() -> str:
+        """run.sh builds llama-cpp-python in the background on first start;
+        tell the user where that build stands instead of 'install it'."""
+        log_path = cfg.REPO_ROOT / "logs" / "llama_runtime.log"
+        if log_path.exists():
+            tail = log_path.read_text(errors="replace").strip().splitlines()[-1:] or [""]
+            if "error" in tail[0].lower():
+                return f"The background build failed ({tail[0][:120]}); see logs/llama_runtime.log and docs/LOCAL_MODELS.md."
+            return ("The GGUF runtime (llama-cpp-python) is being built in the background "
+                    "(5-10 min on a 2-core Codespace, logs/llama_runtime.log) - the file is stored; "
+                    "press Load again when the build has finished.")
+        return "Run once: .venv/bin/pip install llama-cpp-python (GGUF) or onnxruntime (ONNX). See docs/LOCAL_MODELS.md."
+
     # ------------------------------------------------------------------
     @property
     def ready(self) -> bool:
@@ -367,8 +381,8 @@ class LocalModelAgent:
             return {
                 "success": False,
                 "error": (
-                    f"Required runtime is not installed: {exc}. "
-                    "Install llama-cpp-python (GGUF) or onnxruntime (ONNX)."
+                    f"Required runtime is not installed yet: {exc}. "
+                    + self._runtime_build_hint()
                 ),
             }
         except Exception as exc:  # noqa: BLE001

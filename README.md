@@ -656,6 +656,10 @@ tail -f server.log
   is reliably wrong (Wilson lower bound over ≥15 windows) and raises/lowers
   confidence on corroboration/split. `GET /api/brain/dopamine`,
   `GET /api/triune`.
+* **Offline model (local GGUF/ONNX).** Validated by magic bytes, loaded on
+  CPU, 7 s per vote, up to 3 slots; the GGUF runtime is compiled in the
+  background on first start. Which model fits which machine, the RAM
+  arithmetic and candidates to research: `docs/LOCAL_MODELS.md`.
 * **News engine.** CryptoPanic every 30 s, NewsAPI/RSS every 60 s, an offline
   headline pack so the panel is never blank, and a critical-event detector that
   only trusts Tier ≤2 sources for lock-breaking events.

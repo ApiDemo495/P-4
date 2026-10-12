@@ -682,6 +682,21 @@ if [ "$BG" = 1 ]; then
     nohup bash "$SUPERVISOR" --supervise </dev/null >>"$LOG" 2>&1 9>&- &
   fi
   disown 2>/dev/null || true
+  # Round AT: the GGUF runtime (llama-cpp-python) ships as source on PyPI and
+  # compiles for 5-10 min, so it is built here in the background, once, after
+  # the engine is up - never on the critical path, never a command to type.
+  # LOCAL_RUNTIME_AUTOINSTALL=0 opts out.
+  if [ "${LOCAL_RUNTIME_AUTOINSTALL:-1}" != "0" ] && ! "$PY" -c "import llama_cpp" >/dev/null 2>&1; then
+    if command -v cmake >/dev/null 2>&1 && command -v g++ >/dev/null 2>&1; then
+      mkdir -p "$REPO_ROOT/logs"
+      say "${DIM}   building the local GGUF runtime in the background (llama-cpp-python, ~5-10 min, log: logs/llama_runtime.log)${R}"
+      ( flock -n 8 || exit 0
+        setsid nohup "$PY" -m pip install --quiet --progress-bar off llama-cpp-python </dev/null >"$REPO_ROOT/logs/llama_runtime.log" 2>&1 8>&- &
+      ) 8>"$REPO_ROOT/logs/.llama_runtime.lock"
+    else
+      say "${DIM}   local GGUF runtime not built: cmake/g++ missing (the upload still validates; see docs/LOCAL_MODELS.md)${R}"
+    fi
+  fi
   printf '   starting'
   READY=0
   for _ in $(seq 1 60); do

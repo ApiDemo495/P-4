@@ -137,3 +137,14 @@ def test_a_key_in_any_slot_counts_as_configured_everywhere():
     assert "async function refreshKeyStates" in app_js
     assert app_js.count("await refreshKeyStates()") >= 1
     assert len(re.findall(r"setInterval\(", app_js)) == 1
+
+
+def test_local_runtime_is_built_in_the_background_and_documented():
+    run_sh = (ROOT / "run.sh").read_text()
+    assert "llama-cpp-python" in run_sh and "LOCAL_RUNTIME_AUTOINSTALL" in run_sh
+    assert "setsid nohup" in run_sh and "llama_runtime.log" in run_sh
+    doc = (ROOT / "docs/LOCAL_MODELS.md").read_text()
+    for needle in ("7 s", "Q4_K_M", "GGUF", "n_ctx", "Codespaces", "Qwen2.5-0.5B-Instruct"):
+        assert needle in doc, needle
+    from backend.agents.local_model_agent import LocalModelAgent
+    assert "LOCAL_MODELS.md" in LocalModelAgent._runtime_build_hint() or "background" in LocalModelAgent._runtime_build_hint()
