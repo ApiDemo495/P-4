@@ -26,6 +26,29 @@ async def brain_connectome() -> dict:
     return payload
 
 
+@router.get("/api/brain/matrix/flywire")
+async def brain_matrix_flywire() -> dict:
+    """Round AZ: the real brain matrix.  Population x population blocks of
+    the measured FlyWire v783 connectome - the mushroom body (28 formula
+    input channels -> Kenyon cells -> MBONs, with PAM/PPL1 dopamine and the
+    lateral horn) and the whole brain by super-class - plus the latest
+    whole-brain read-out.  ``loaded`` false means the connectome is still
+    downloading/building and the 80x80 stand-in is in use."""
+    brain = get_manager().brain
+    out = {"loaded": brain.connectome_ready, "status": brain.status.value, "message": brain.message,
+           "data": brain.data.to_dict(), "error": brain.connectome_error,
+           "fallback_in_use": not brain.connectome_ready}
+    if brain.mb is not None:
+        out["mushroom_body"] = brain.mb.block_matrix()
+        out["mushroom_body"]["passes"] = brain.mb_passes
+        out["mushroom_body"]["last_pass_us"] = brain.mb_last_us
+    if brain.whole is not None:
+        out["whole_brain"] = brain.whole.block_matrix()
+        out["whole_brain"]["passes"] = brain.whole_passes
+        out["whole_brain"]["readout"] = brain.whole_readout.to_dict() if brain.whole_readout else None
+    return out
+
+
 @router.get("/api/brain/dopamine")
 async def brain_dopamine() -> dict:
     """Round AR: the brain's own dopamine - reward prediction error, mood,

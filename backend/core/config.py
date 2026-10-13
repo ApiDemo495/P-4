@@ -36,7 +36,13 @@ def _load_dotenv() -> None:
                 continue
             key, _, value = line.partition("=")
             key, value = key.strip(), value.strip().strip('"').strip("'")
-            os.environ.setdefault(key, value)
+            # Round AZ: a key saved on /settings (written to .env) must win
+            # over an *empty* variable of the same name in the environment
+            # (Codespaces exports every secret, including ones left blank).
+            if value and not os.environ.get(key, "").strip():
+                os.environ[key] = value
+            else:
+                os.environ.setdefault(key, value)
 
 
 _load_dotenv()

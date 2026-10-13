@@ -540,6 +540,10 @@ async function safetyNet() {
   updateTick += 1;
   lockWatchdog();
   if (updateTick % 3 === 1) refreshSystemHealth();   // 15 s
+  // Round AZ: the key badges and the "add your keys" banner re-read the
+  // engine every 30 s (and on tab focus below), so keys saved on /settings
+  // or restored from .env after a restart never read "not set" here.
+  if (updateTick % 6 === 2) refreshKeyStates();
   if (updateTick % 60 === 1) checkForUpdate();   // 5 s x 60 = every 5 min, first at boot
   // A socket that is OPEN but silent is the proxy keeping our side alive
   // after the backend side died or stalled (Codespaces does exactly this):
@@ -3136,6 +3140,7 @@ async function pollReadiness() {
 }
 
 window.addEventListener("load", pollReadiness, { once: true });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshKeyStates(); });
 
 async function boot() {
   state.config = await getJSON("/api/system/config");

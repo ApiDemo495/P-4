@@ -18,50 +18,75 @@
 </header>
 
 <main class="wrap">
+  <section class="card" id="flywire-card">
+    <div class="card-head">
+      <h2>The real brain — FlyWire FAFB v783, the whole Drosophila connectome</h2>
+      <span class="muted" id="fw-state">—</span>
+    </div>
+    <p class="muted" style="margin-top:0" id="fw-summary">loading the connectome state…</p>
+    <div class="row" style="flex-wrap:wrap;gap:14px;font-size:12px" id="fw-populations"></div>
+  </section>
+
   <section class="card">
     <div class="card-head">
-      <h2>The 80 × 80 mushroom-body adjacency matrix</h2>
-      <span class="muted" id="matrix-source">—</span>
+      <h2>Mushroom-body block matrix — 28 formula channels → Kenyon cells → MBONs</h2>
+      <span class="muted" id="mb-stats">—</span>
     </div>
     <p class="muted" style="margin-top:0">
-      20 projection neurons (one per formula) · 50 Kenyon Cell clusters (spectrally clustered from ~2000) ·
-      3 dopamine/octopamine neurons · 4 MBON outputs · 3 lateral horn neurons.
-      Green = excitatory, red = inhibitory. Propagation is 3 graph-convolution layers.
+      Every row/column is a real population of the FlyWire mushroom body (counts in brackets). A cell is the summed,
+      input-fraction-normalised signed drive from the column population onto the row population — measured synapses,
+      not a stand-in. The 28 PN rows are the formula channels the engine injects (ON + OFF glomerular groups); the
+      engine reads the answer at the MBON approach / avoid rows. Green = excitatory, red = inhibitory. Hover a cell.
     </p>
     <div class="legend">
       <span><i class="swatch" style="background:#22c55e"></i> excitatory</span>
       <span><i class="swatch" style="background:#ef4444"></i> inhibitory</span>
       <span><i class="swatch" style="background:#0f1826"></i> no connection</span>
-      <span class="muted" id="matrix-stats"></span>
     </div>
-    <div class="matrix-wrap"><div class="matrix-grid" id="matrix-grid"></div></div>
-    <div class="row" style="margin-top:12px;flex-wrap:wrap;gap:14px">
-      <span class="muted">PN order:</span><span class="muted mono" id="pn-order"></span>
-    </div>
+    <div class="matrix-wrap"><div class="block-grid" id="mb-grid"></div></div>
   </section>
 
-  <section class="card">
-    <div class="card-head"><h2>Neurons &amp; synapses — the coded Drosophila circuit</h2><span class="muted" id="neuron-totals">—</span></div>
-    <div class="muted" id="neuron-source" style="font-size:11px;margin-bottom:8px">—</div>
-    <div style="max-height:360px;overflow:auto">
-      <table>
-        <thead><tr><th>#</th><th>neuron</th><th>hemibrain type</th><th>population</th><th>compartment</th><th>transmitter</th><th>cells</th><th>syn in</th><th>syn out</th><th>role</th></tr></thead>
-        <tbody id="neuron-body"></tbody>
-      </table>
+  <section class="grid-2">
+    <div class="card">
+      <div class="card-head"><h2>Whole-brain block matrix — 138,639 neurons by super-class</h2><span class="muted" id="wb-stats">—</span></div>
+      <div class="matrix-wrap"><div class="block-grid" id="wb-grid"></div></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Latest whole-brain read-out</h2><span class="muted" id="wb-when">—</span></div>
+      <table><tbody id="wb-readout"></tbody></table>
     </div>
   </section>
 
   <section class="grid-2">
     <div class="card">
-      <div class="card-head"><h2>Last activation trace</h2></div>
+      <div class="card-head"><h2>Last activation trace (the pass the engine used)</h2></div>
       <table><tbody id="trace-body"></tbody></table>
     </div>
     <div class="card">
-      <div class="card-head"><h2>Strongest synaptic connections</h2><span class="muted">by synapse count</span></div>
+      <div class="card-head"><h2>Strongest population → population pathways</h2><span class="muted">mushroom body · by |drive|</span></div>
       <div style="max-height:320px;overflow:auto">
-        <table><thead><tr><th>from</th><th>to</th><th>synapses</th><th>pathway</th><th>weight</th></tr></thead><tbody id="edge-body"></tbody></table>
+        <table><thead><tr><th>from</th><th>to</th><th>drive</th><th>sign</th></tr></thead><tbody id="edge-body"></tbody></table>
       </div>
     </div>
+  </section>
+
+  <section class="card" id="fallback-card">
+    <div class="card-head">
+      <h2>The 80 × 80 stand-in (fallback only)</h2>
+      <span class="muted" id="matrix-source">—</span>
+    </div>
+    <p class="muted" style="margin-top:0" id="fallback-note">
+      Used only while the real connectome is still downloading or building. 20 projection neurons · 50 Kenyon-cell
+      clusters · 3 dopamine/octopamine neurons · 4 MBONs · 3 lateral-horn neurons, 3 graph-convolution layers.
+    </p>
+    <details id="fallback-details">
+      <summary class="muted">show the stand-in matrix</summary>
+      <div class="legend"><span class="muted" id="matrix-stats"></span></div>
+      <div class="matrix-wrap"><div class="matrix-grid" id="matrix-grid"></div></div>
+      <div class="row" style="margin-top:12px;flex-wrap:wrap;gap:14px">
+        <span class="muted">PN order:</span><span class="muted mono" id="pn-order"></span>
+      </div>
+    </details>
   </section>
 
   <div class="row" style="justify-content:center;margin:20px 0 60px">

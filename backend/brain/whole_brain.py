@@ -164,6 +164,74 @@ class ConnectomeGraph:
                                for i in range(N_FORMULAS)],
         }
 
+    # ------------------------------------------------------------------
+    # Round AZ: the real brain matrix - population x population blocks of
+    # the measured connectome, for the Brain Matrix page (the 80x80 stand-in
+    # used to be the only matrix anyone could see).
+    # ------------------------------------------------------------------
+    def block_populations(self) -> list[tuple[str, np.ndarray]]:
+        """Named populations whose pairwise summed weights form the block
+        matrix.  Mushroom body: the 28 formula input channels (ON+OFF
+        glomerular groups), then KC, MBON+/-/other, PAM, PPL1, LH, the rest.
+        Whole brain: FlyWire super-classes."""
+        if "whole" in self.name:
+            out = []
+            for code, label in enumerate(cd.SUPER_CLASSES):
+                idx = np.flatnonzero(self.super_class == code)
+                if idx.size:
+                    out.append((label or "unclassified", idx))
+            return out
+        out = []
+        used = np.zeros(self.n, dtype=bool)
+        for i in range(N_FORMULAS):
+            idx = np.concatenate([self.on_groups[i], self.off_groups[i]])
+            used[idx] = True
+            out.append((f"PN {gc.BRAIN_INPUT_NAMES[i]}", idx))
+        named = [("Kenyon cells", self.kc), ("MBON approach", self.mbon_approach), ("MBON avoid", self.mbon_avoid),
+                 ("MBON other", self.mbon_other), ("PAM (reward DAN)", self.pam), ("PPL1 (punish DAN)", self.ppl1),
+                 ("lateral horn", self.lh)]
+        for label, idx in named:
+            idx = idx[~used[idx]]
+            used[idx] = True
+            if idx.size:
+                out.append((label, idx))
+        rest = np.flatnonzero(~used)
+        if rest.size:
+            out.append(("other MB neurons", rest))
+        return out
+
+    def block_matrix(self) -> dict:
+        """Signed, input-fraction-normalised drive summed over every (source
+        population -> target population) pair: ``M[t, s] = sum W[rows t, cols s]``.
+        Computed once from the sparse matrix and cached."""
+        cached = getattr(self, "_block_cache", None)
+        if cached is not None:
+            return cached
+        import scipy.sparse as sp
+
+        pops = self.block_populations()
+        k = len(pops)
+        rows = np.concatenate([idx for _, idx in pops]) if pops else np.array([], dtype=int)
+        cols = np.concatenate([np.full(idx.size, j, dtype=np.int32) for j, (_, idx) in enumerate(pops)]) if pops else np.array([], dtype=int)
+        P = sp.csr_matrix((np.ones(rows.size, dtype=np.float32), (rows, cols)), shape=(self.n, k))
+        M = (P.T @ self.W @ P).toarray().astype(np.float64)          # M[target, source]
+        edges = []
+        for t in range(k):
+            for s_ in range(k):
+                v = float(M[t, s_])
+                if v != 0.0:
+                    edges.append({"source": s_, "target": t, "weight": round(v, 6)})
+        edges.sort(key=lambda e: -abs(e["weight"]))
+        out = {
+            "name": self.name, "labels": [label for label, _ in pops], "sizes": [int(idx.size) for _, idx in pops],
+            "matrix": [[round(float(x), 6) for x in row] for row in M], "edges": edges[:400],
+            "neurons": self.n, "connections": self.connections, "synapses": self.synapses_total,
+            "excitatory_blocks": int((M > 0).sum()), "inhibitory_blocks": int((M < 0).sum()),
+            "note": "M[target, source] = sum of input-fraction-normalised signed weights from every neuron of the source population onto every neuron of the target population; measured FlyWire v783 synapses, not a stand-in",
+        }
+        self._block_cache = out
+        return out
+
     def _inject(self, vector: np.ndarray, hsi: float) -> np.ndarray:
         h = np.zeros(self.n, dtype=np.float32)
         gain = 1.0 + 0.3 * float(np.clip(hsi, 0.0, 1.0))      # octopamine arousal

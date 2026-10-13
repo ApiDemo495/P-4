@@ -208,34 +208,36 @@ def build_arrays(data_dir: Path = DATA_DIR, status: DataStatus | None = None) ->
     status = status or DataStatus()
     t0 = time.perf_counter()
     status.phase, status.detail = "building", "reading 15 M connections"
-    table = pq.read_table(
-        data_dir / "Connectivity_783.parquet",
-        columns=["Presynaptic_ID", "Presynaptic_Index", "Postsynaptic_ID", "Postsynaptic_Index",
-                 "Excitatory x Connectivity"],
-    )
-    pre = table["Presynaptic_Index"].to_numpy().astype(np.int64)
-    post = table["Postsynaptic_Index"].to_numpy().astype(np.int64)
-    signed = table["Excitatory x Connectivity"].to_numpy().astype(np.float32)
-    pre_id = table["Presynaptic_ID"].to_numpy()
-    post_id = table["Postsynaptic_ID"].to_numpy()
-    del table
+    # Round AZ: memory-lean build.  The first version read five columns at
+    # once, kept int64 copies and built |W| separately - a 1.7 GB peak that
+    # the OOM killer took down on a 4 GB Codespace (the engine with it, so
+    # the 80x80 stand-in was all the user ever saw).  Now: one column at a
+    # time, int32 indices, in-place scaling; peak ~0.6 GB.
+    pf = pq.ParquetFile(data_dir / "Connectivity_783.parquet")
+
+    def column(name: str, dtype) -> np.ndarray:
+        return pf.read(columns=[name])[name].to_numpy().astype(dtype, copy=False)
+
+    pre = column("Presynaptic_Index", np.int32)
+    post = column("Postsynaptic_Index", np.int32)
     n = int(max(pre.max(), post.max())) + 1
     root_ids = np.zeros(n, dtype=np.int64)
-    root_ids[pre] = pre_id
-    root_ids[post] = post_id
-    del pre_id, post_id
+    root_ids[pre] = column("Presynaptic_ID", np.int64)
+    root_ids[post] = column("Postsynaptic_ID", np.int64)
+    signed = column("Excitatory x Connectivity", np.float32)
+    synapses_total = int(np.abs(signed).sum(dtype=np.float64))
 
     status.detail = "input-fraction normalisation"
     # W[post, pre]: activity flows pre -> post with h_next = W @ h
-    raw = sp.csr_matrix((signed, (post, pre)), shape=(n, n), dtype=np.float32)
-    raw.sum_duplicates()
-    total_in = np.asarray(abs(raw).sum(axis=1)).ravel().astype(np.float32)
-    scale = np.where(total_in > 0, 1.0 / np.maximum(total_in, 1e-9), 0.0).astype(np.float32)
-    whole = sp.diags(scale) @ raw
-    whole = whole.tocsr()
+    whole = sp.csr_matrix((signed, (post, pre)), shape=(n, n), dtype=np.float32)
+    del pre, post, signed
+    whole.sum_duplicates()
     whole.sort_indices()
-    synapses_total = int(np.abs(signed).sum())
-    del raw, signed, pre, post
+    row_of = np.repeat(np.arange(n, dtype=np.int32), np.diff(whole.indptr))
+    total_in = np.bincount(row_of, weights=np.abs(whole.data), minlength=n).astype(np.float32)
+    scale = np.where(total_in > 0, 1.0 / np.maximum(total_in, 1e-9), 0.0).astype(np.float32)
+    whole.data *= scale[row_of]          # in place: no second 15 M-entry matrix
+    del row_of, scale
 
     status.detail = "annotating 139 k neurons"
     ann = _read_annotations(data_dir / "neuron_annotations_783.tsv")
@@ -289,6 +291,38 @@ def build_arrays(data_dir: Path = DATA_DIR, status: DataStatus | None = None) ->
     return facts
 
 
+def build_in_worker(data_dir: Path, status: DataStatus) -> dict:
+    """Round AZ: run ``build_arrays`` in a *separate process*.  On a 4 GB
+    Codespace the build is the engine's memory peak; if the kernel's OOM
+    killer strikes, it now takes a short-lived worker, not the engine (which
+    used to restart and fall back to the 80x80 stand-in forever).  The
+    worker prints the facts as JSON; a non-zero exit is reported and
+    retried by the caller's back-off."""
+    import json
+    import subprocess
+    import sys
+
+    if os.environ.get("CONNECTOME_BUILD_INPROCESS", "").strip() in ("1", "true"):
+        return build_arrays(data_dir, status)
+    status.detail = "building in a worker process (139 k neurons, 15 M connections)"
+    code = ("import json,sys;from pathlib import Path;from backend.brain import connectome_data as cd;"
+            "print(json.dumps(cd.build_arrays(Path(sys.argv[1]))))")
+    try:
+        proc = subprocess.run([sys.executable, "-c", code, str(data_dir)], cwd=str(cfg.REPO_ROOT),
+                              capture_output=True, text=True, timeout=1800)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("connectome build worker timed out after 30 min") from exc
+    if proc.returncode != 0:
+        tail = (proc.stderr or "").strip().splitlines()[-1:] or [""]
+        killed = proc.returncode < 0 or proc.returncode == 137
+        raise RuntimeError(("build worker killed (signal %d - out of memory? a 4 GB machine needs ~0.8 GB free)"
+                            % abs(proc.returncode)) if killed else f"build worker failed: {tail[0][:200]}")
+    for line in reversed((proc.stdout or "").strip().splitlines()):
+        if line.startswith("{"):
+            return json.loads(line)
+    return {}
+
+
 # ---------------------------------------------------------------------------
 # orchestration (runs on a worker thread; never blocks the engine loop)
 # ---------------------------------------------------------------------------
@@ -329,7 +363,7 @@ class ConnectomeData:
                     self.status.detail = f"{name} from GitHub"
                     _download(name, dest, self.status)
                 self.status.phase = "building"
-                self.facts = build_arrays(self.data_dir, self.status)
+                self.facts = build_in_worker(self.data_dir, self.status)
                 self.status.phase, self.status.detail = "ready", "built"
                 self.status.finished_at = time.time()
                 return True

@@ -2193,3 +2193,35 @@ tracked file is referenced; nothing was deleted on a hunch.
   `read_manifest()` (the engine's autoloader) applies the core filter, so a
   2-core Codespace links and loads the 0.5B from `/opt/drosophila/models`
   and a 4-core one the 1.5B — through the same validate → load → test path.
+
+### AZ — the real brain everywhere, the stand-in demoted, key badges honest
+
+* **Root cause of "always 80×80".** The engine prefers the FlyWire v783
+  connectome (mushroom body every pass, whole brain every 2–5 s) whenever
+  `data/connectome/*.npz` exists. On a brand-new machine without the
+  prebuilt image it downloads ~130 MB from GitHub and builds the arrays
+  once; that build read five parquet columns at once with int64 copies and
+  built |W| separately — a **1.7 GB peak** inside the engine process. On a
+  4 GB Codespace (VS Code server + pip + the llama build running at the
+  same time) the OOM killer took the engine, the supervisor restarted it,
+  and the brain came back as the 80×80 stand-in every time. Fix: column-
+  by-column int32 read, in-place input-fraction scaling (peak 0.77 GB,
+  arrays byte-identical), and the build runs in a **worker process**
+  (`build_in_worker`) so a kill is reported as "build worker killed
+  (signal 9 — out of memory?)" and retried, while the engine keeps running.
+* **Brain Matrix page rebuilt FlyWire-first.** `/api/brain/matrix/flywire`
+  returns `ConnectomeGraph.block_matrix()`: `M[target, source]` = summed
+  signed input-fraction weights between named populations — mushroom body:
+  28 `PN <formula>` channels (ON+OFF glomerular groups), Kenyon cells, MBON
+  approach / avoid / other, PAM, PPL1, lateral horn, other MB neurons;
+  whole brain: the 11 FlyWire super-classes — plus the latest whole-brain
+  read-out. The page shows these first; the 80×80 is a collapsed
+  "stand-in (fallback only)" card whose note states IN USE / not in use.
+  The old "neurons & synapses" table (hemibrain typical counts, "live
+  neuPrint counts replace them when a token is set") — the line that read
+  as "Drosophila not connected" — is gone from the page.
+* **Keys "not set" on the dashboard.** Two causes closed: `_load_dotenv`
+  used `setdefault`, so an *empty* `GEMINI_API_KEY` exported by Codespaces
+  beat the value saved to `.env`; and the dashboard only re-read key states
+  at boot / when the modal opened. Now `.env` wins over an empty variable,
+  and the badges refresh every 30 s and on tab focus.

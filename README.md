@@ -686,6 +686,19 @@ tail -f server.log
   imbalance, LAI large-aggressor imbalance and ANA nearest-analogue outcome.
   When PIN is high the boundary pick follows the microstructure instead of the
   trend, and the competition cell prints the TIE RISK.
+* **The real brain everywhere (Round AZ).** The engine has run on the
+  FlyWire v783 connectome since Round AQ, but on a 4 GB Codespace the
+  one-time array build peaked at 1.7 GB, the OOM killer took the engine
+  down with it and the 80×80 stand-in was all anyone saw. The build is now
+  memory-lean (~0.8 GB peak, identical arrays) and runs in a worker
+  process, so a kill costs a retry, not the engine. The Brain Matrix page
+  is FlyWire-first: a 36-population block matrix of the measured mushroom
+  body (28 formula channels → Kenyon cells → MBON approach/avoid, PAM,
+  PPL1, lateral horn), the whole brain by super-class, the latest
+  whole-brain read-out — and the 80×80 stand-in is a collapsed "fallback
+  only" section that says plainly whether it is in use. Keys written to
+  `.env` now beat an empty Codespaces variable of the same name, and the
+  dashboard re-reads the key badges every 30 s and on tab focus.
 * **The local model on a small machine (Round AY).** The baked Qwen2.5-1.5B
   is picked on four cores and Qwen2.5-0.5B on two (`models.json` `min_cores` / `max_cores`, both baked into the image); if the engine still measures
   that one vote cannot fit the 9 s budget, it says so in the agents panel and
