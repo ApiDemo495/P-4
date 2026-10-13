@@ -53,6 +53,8 @@
       "settings": {
         "python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python",
         "task.allowAutomaticTasks": "on",
+        "workbench.startupEditor": "none",
+        "markdown.preview.openMarkdownLinks": "inEditor",
         "python.testing.pytestEnabled": true,
         "python.testing.pytestArgs": ["backend/tests"],
         "files.exclude": { "**/__pycache__": true }

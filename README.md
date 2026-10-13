@@ -12,7 +12,7 @@ exchange or your API keys do not.
    │            t=15  ⚡ PULSE ─▶ formulas · news · agents · brain · rates │
    │            t=30  ⚡ PULSE ─▶ the same, plus a fresh news poll         │
    │            t=45  ⚡ PULSE ─▶ the same                                 │
-   │            t=60  boundary ─▶ next signal; this one is scored         │
+   │            t=53  boundary ─▶ next signal; this one is scored         │
    └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -30,8 +30,8 @@ retail emotion, so the engine reads the crowd continuously - eight emotions
 (fear, panic, capitulation, denial, hope, euphoria, FOMO, complacency), each
 measured from microseconds to minutes - and the dashboard says **which emotion
 is dominant right now**, how long it has held, how crowded / manipulated the
-minute looks, and what the crowd was feeling when the locked signal was
-computed. A crowded minute sizes the confidence down; it never flips the side.
+window looks, and what the crowd was feeling when the locked signal was
+computed. A crowded window sizes the confidence down; it never flips the side.
 
 **Deep reasoning under the emotions.** The reading is not a rule of thumb: under
 every emotion sit fourteen market-microstructure formulas run on the same tape
@@ -41,7 +41,7 @@ pushable the tape is), Lo-MacKinlay variance ratios, the Hurst exponent,
 Bandt-Pompe permutation entropy, Lillo-Farmer trade-sign memory, a Haar wavelet
 energy spectrum (which timescale carries the action), a three-state regime
 filter, and momentum-ignition / quote-stuffing / spoofing detectors - each on
-three bands from ticks to the minute. A discrete Bayesian filter with sticky
+three bands from ticks to the whole 53 s window. A discrete Bayesian filter with sticky
 transitions turns that evidence into a *belief* over the eight emotions, and the
 dashboard renders the whole **reasoning chain**: formula, inputs, value, what it
 reads as, and which emotions it argues for. The belief is blended into the bars,
@@ -105,6 +105,21 @@ still running — open `/settings` → **Codespace self-start**, or run:
 ```bash
 cat .run/logs/autostart.journal
 ```
+
+### "Could not open markdown preview: command 'markdown.sh…'"
+
+That message comes from VS Code's built-in Markdown extension in the browser
+editor (it has not finished activating when the Codespace first opens); it is
+not the app. You do not need the preview: the engine renders this README
+itself at
+
+```text
+https://<your-codespace>-8000.app.github.dev/readme
+```
+
+(or `http://localhost:8000/readme`). If you still want the editor preview,
+reload the browser tab once (`Ctrl/Cmd+R`) and press `Ctrl/Cmd+Shift+V` on
+`README.md`.
 
 ### Slow to open (10–20 minutes)? That is GitHub, not the engine — fix it with a prebuild
 
@@ -600,13 +615,13 @@ tail -f server.log
   once and applied to both sides, so `tp_bps == sl_bps` and the ratio is exactly
   `1.00:1` (`RR_TARGET` changes it, the default is 1.0). Levels are re-stamped
   at the window boundary with the live price, so they track the market instead
-  of the previous minute.
+  of the previous window.
 * **Microseconds, not seconds.** The engine times every formula and the whole
   pass in µs (`timings_us`), measures the tape between quotes (interval mean /
   p95, jitter, tick rate, quote lifetime, aggression), and publishes its own
   clock as epoch microseconds. The dashboard prints `812 µs`, `4.31 ms`,
   `1.204 s` — never a rounded "0.0 ms".
-* **Every prediction covers the minute that follows its release.** The payload
+* **Every prediction covers the 53 seconds that follow its release.** The payload
   carries `horizon` with `released_at` / `target_at` (six-digit ISO *and* epoch
   µs), `microseconds_to_target`, `scored_in_seconds`, and the words "the next
   53 seconds" — so a side is never mistaken for "now". The dashboard shows that
@@ -648,9 +663,9 @@ tail -f server.log
   `GET /api/brain/connectome` has the full read-out; the brain card shows which
   circuit answered.
 * **The competition scoreboard and the boundary pick (Round AS).** The app is
-  played in a streak competition: every 60 s window must be called BUY or
+  played in a streak competition: every 53 s window must be called BUY or
   SELL, entry is the exchange's last trade at :00, settlement the last trade
-  at :60, strictly higher/lower wins, **a tie loses**, and the ladder pays on
+  at :53, strictly higher/lower wins, **a tie loses**, and the ladder pays on
   5 / 20 / 50 / 72 consecutive wins. The engine now scores every window by
   exactly that rule (`/api/competition`, the gold card at the top of the
   prediction panel: streak, ladder with per-attempt probability and expected
@@ -705,20 +720,20 @@ excluded from the blend) instead of voting 0.00.
 
 | § | mechanism | what it measures |
 |---|---|---|
-| 8.3 | Ornstein-Uhlenbeck bridge | reversion of the BTC/PAXG ratio to its 5-min VWAP; tradeable only if the half-life is 5-600 s and E[ΔP] clears the spread; edge capped at one 60 s σ |
+| 8.3 | Ornstein-Uhlenbeck bridge | reversion of the BTC/PAXG ratio to its 5-min VWAP; tradeable only if the half-life is 5-600 s and E[ΔP] clears the spread; edge capped at one window σ (53 s) |
 | 8.1 | VPIN | flow toxicity; above 0.40 the dominant side is informed |
 | 8.6 | Hawkes self-excitation | branching ratio n of trade arrivals; clustered flow carries its sign, n ≥ 0.95 is a cascade about to exhaust |
-| 8.7 | Momentum flux (kinetic energy) | p = Σ side·v·\|Δln P\| over 60 s, z-scored against ten minutes |
+| 8.7 | Momentum flux (kinetic energy) | p = Σ side·v·\|Δln P\| over one window (53 s), z-scored against ten minutes |
 | 8.8 | Trade-sign entropy | Shannon entropy of sign blocks; low entropy = an order being worked |
 | 8.9 | Cross-leg diffusion | lagged BTC↔PAXG cross-correlation on a 5 s grid; the leader's last move predicts the follower |
-| 8.4 | REI pendulum | BTC share of pair notional as a damped oscillator, integrated 60 s ahead |
+| 8.4 | REI pendulum | BTC share of pair notional as a damped oscillator, integrated one window (53 s) ahead |
 | 8.10 | Tape temperature | realised variance of the last minute vs ten minutes; a hot tape drags every vote |
 | 8.5 | Avellaneda-Stoikov | the spread cost the blend must beat |
 | 8.2 / 10 | fragmentation · peg | only when 2+ venue quotes / a gold-spot quote are live |
 | 11 | Kelly | Σ⁻¹μ over the active mechanisms, temperature drag, spread-cost gate |
 
 The planetary sections of the original document (Landauer valve, solar flux,
-E = mc², AMM surface) were retired: inside a 60-second window the global
+E = mc², AMM surface) were retired: inside a 53-second window the global
 hashrate is a constant, so they printed 0.00 and "balanced" every window.
 
 Dashboard card "Physics layer" (every mechanism with its numbers and reason),
@@ -730,7 +745,7 @@ estimates; no "cannot lose" claim is made anywhere.
 
 The "Hedge Status" tiles were replaced by an outcome system. For the locked
 side the engine prints the distribution it is trading on: σ of each leg over
-60 s, ρ, the dollar hedge ratio β and the variance a hedge removes; the
+one window (53 s), ρ, the dollar hedge ratio β and the variance a hedge removes; the
 **joint outcome matrix** P(BTC↑/↓ × PAXG↑/↓) from a bivariate normal; the
 four pair actions consistent with the lock (outright, hedged at β,
 pair-neutral, mirror leg) with expected bp, σ and P(profit), the best by μ/σ;
@@ -780,7 +795,12 @@ profitable in some regimes is resurrected with a regime gate (two lives max).
 Every 4 hours a **genesis** breeds 50 children by crossover / mutation of
 expression trees over frame columns and the survivors' signals (no `eval`).
 
-**Every minute.** The regime (trending / mean-reverting / high-vol / low-vol /
+**Every exchange candle, read every window.** The 200+ generated formulas
+live on real 1-minute exchange candles (that is the resolution Kraken and
+Gemini publish), so the pool re-scores when a candle closes; the fusion reads
+the latest composite at every 53 s boundary and the ledger scores that vote
+on the 53 s outcome, so the genesis weight is earned on the contest's own
+horizon. The regime (trending / mean-reverting / high-vol / low-vol /
 cascade, from Hurst, vol percentile and 3-minute σ-moves) gates the active
 set to 80 / 70 / 60 / 50 / 40 formulas, preferring the domains the spec names
 for that regime. Layer-4 formulas (homology, algorithmic) run every fifth
@@ -833,4 +853,4 @@ engine does this itself):
   v2.0 draft, with symptom → cause → decision → verification → escape hatch.
 
 **Nothing here is financial advice.** The engine is a research instrument: it
-emits a locked directional opinion every minute and scores itself afterwards.
+emits a locked directional opinion every 53 s window and scores itself afterwards.
