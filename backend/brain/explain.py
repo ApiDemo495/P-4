@@ -80,6 +80,28 @@ def wiring() -> dict:
     for spec in ALL_FORMULAS:
         if spec.category == "H":
             continue
+        if spec.category == "I":
+            # Round AX: the window formulas are projection-neuron channels of the
+            # real FlyWire mushroom body only (gc.BRAIN_INPUT_NAMES); the 80x80
+            # fallback matrix has the specification's 20 and no room for more.
+            in_brain = spec.name in gc.WINDOW_INPUT_NAMES
+            pn_rows.append(
+                {
+                    "pn": (20 + gc.WINDOW_INPUT_NAMES.index(spec.name)) if in_brain else None,
+                    "neuron": ("FlyWire ALPN ON/OFF glomerular channel (real connectome only)"
+                               if in_brain else "none - PIN is a tie risk, not a side"),
+                    "cell_type": "ALPN" if in_brain else "-",
+                    "glomerulus": "assigned on load" if in_brain else "-",
+                    "synapses_out": 0,
+                    "formula": spec.name,
+                    "title": spec.title,
+                    "category": spec.category,
+                    "brain_node": spec.brain_node,
+                    "directional": spec.directional,
+                    "latency_ms": spec.latency_ms,
+                }
+            )
+            continue
         neuron = circuit.neurons[spec.order - 1]
         pn_rows.append(
             {

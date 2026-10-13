@@ -717,7 +717,10 @@ if [ "$BG" = 1 ]; then
       mkdir -p "$REPO_ROOT/logs"
       say "${DIM}   building the local GGUF runtime in the background (llama-cpp-python, ~5-10 min, log: logs/llama_runtime.log)${R}"
       ( flock -n 8 || exit 0
-        setsid nohup bash -c "\"$PY\" -m pip install --quiet --progress-bar off --prefer-binary --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu llama-cpp-python || \"$PY\" -m pip install --quiet --progress-bar off llama-cpp-python" </dev/null >"$REPO_ROOT/logs/llama_runtime.log" 2>&1 8>&- &
+        # Round AY: lowest CPU priority and a single compiler job - on a 2-core
+        # Codespace the source build used to take both cores for ten minutes
+        # and the dashboard read as "not starting".
+        CMAKE_BUILD_PARALLEL_LEVEL=1 MAX_JOBS=1 setsid nohup nice -n 19 bash -c "\"$PY\" -m pip install --quiet --progress-bar off --prefer-binary --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu llama-cpp-python || \"$PY\" -m pip install --quiet --progress-bar off llama-cpp-python" </dev/null >"$REPO_ROOT/logs/llama_runtime.log" 2>&1 8>&- &
       ) 8>"$REPO_ROOT/logs/.llama_runtime.lock"
     else
       say "${DIM}   local GGUF runtime not built: cmake/g++ missing (the upload still validates; see docs/LOCAL_MODELS.md)${R}"

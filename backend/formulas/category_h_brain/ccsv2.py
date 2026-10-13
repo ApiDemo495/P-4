@@ -37,7 +37,7 @@ DIRECTIONAL = True
 LATENCY_MS = 0.8
 DESCRIPTION = "3-layer graph convolution over the 80-node mushroom body, read at the lateral horn."
 
-FORMULA_ORDER = gc.PN_NAMES
+FORMULA_ORDER = gc.BRAIN_INPUT_NAMES   # 28 channels; the 80x80 fallback reads the first 20
 
 
 class State:
@@ -133,6 +133,8 @@ def prepare(snapshot, asset: str, state: State, params: dict, ctx: dict) -> gc.A
     if conv is None:
         state.ready = False
         return None
+    # the specification's 80x80 matrix has exactly 20 projection neurons
+    vector = vector[: gc.N_FORMULAS]
     trace = conv.propagate(vector, drg=drg, hsi=hsi)
 
     # --- push-pull read-out (Deviation 22-D, SPEC_NOTES.md) --------------
@@ -148,7 +150,7 @@ def prepare(snapshot, asset: str, state: State, params: dict, ctx: dict) -> gc.A
     # which makes the score an odd function of the input (f(-x) = -f(x)),
     # removes the resting offset exactly, and leaves every bullish response
     # unchanged in magnitude.
-    mirror = conv.propagate(-vector, drg=drg, hsi=hsi)
+    mirror = conv.propagate(-vector, drg=drg, hsi=hsi)  # same 20-entry vector
     approach = 0.5 * (float(trace.lh_approach) + float(mirror.lh_avoid))
     avoid = 0.5 * (float(trace.lh_avoid) + float(mirror.lh_approach))
     neutral = 0.5 * (float(trace.lh_neutral) + float(mirror.lh_neutral))

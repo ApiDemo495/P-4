@@ -53,7 +53,7 @@ import numpy as np
 from backend.brain import connectome_data as cd
 from backend.brain import graph_convolution as gc
 
-N_FORMULAS = len(gc.PN_NAMES)
+N_FORMULAS = len(gc.BRAIN_INPUT_NAMES)   # 28 input channels (Round AX)
 KC_SPARSITY = 0.05
 VALENCE_HOPS = 3   # PN -> KC -> MBON -> LH: where the valence is read
 EPS = 1e-9
@@ -158,7 +158,7 @@ class ConnectomeGraph:
             "mbon_approach": int(self.mbon_approach.size), "mbon_avoid": int(self.mbon_avoid.size),
             "dan": int(self.dan.size), "pam": int(self.pam.size), "ppl1": int(self.ppl1.size),
             "lateral_horn": int(self.lh.size), "descending": int(self.descending.size),
-            "formula_groups": [{"formula": gc.PN_NAMES[i], "on": int(self.on_groups[i].size),
+            "formula_groups": [{"formula": gc.BRAIN_INPUT_NAMES[i], "on": int(self.on_groups[i].size),
                                 "off": int(self.off_groups[i].size),
                                 "glomeruli": sorted({str(t).split("_")[0] for t in self.cell_type[self.on_groups[i]]})[:6]}
                                for i in range(N_FORMULAS)],

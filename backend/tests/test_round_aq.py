@@ -21,12 +21,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _tiny_connectome(tmp_path: Path) -> Path:
-    """40 ALPNs (20 ON/OFF pairs), 60 KCs, 6 MBONs (3 ACh approach, 3 Glu avoid),
+    """56 ALPNs (28 ON/OFF pairs - the 20 spec formulas + 8 window formulas), 60 KCs, 6 MBONs (3 ACh approach, 3 Glu avoid),
     2 DANs, 2 descending neurons; wiring chosen so ON odours reach the approach
     MBONs and OFF odours the avoid MBONs."""
     import scipy.sparse as sp
 
-    n_alpn, n_kc, n_mbon, n_dan, n_dn = 40, 60, 6, 2, 2
+    n_alpn, n_kc, n_mbon, n_dan, n_dn = 56, 60, 6, 2, 2
     n = n_alpn + n_kc + n_mbon + n_dan + n_dn
     rows, cols, vals = [], [], []
     rng = np.random.default_rng(7)
@@ -75,10 +75,10 @@ def tiny(tmp_path) -> wb.ConnectomeGraph:
 
 def test_populations_are_read_from_the_annotations(tiny):
     pops = tiny.populations()
-    assert pops["alpn"] == 40 and pops["kenyon_cells"] == 60 and pops["mbon"] == 6
+    assert pops["alpn"] == 56 and pops["kenyon_cells"] == 60 and pops["mbon"] == 6
     assert pops["mbon_approach"] == 3 and pops["mbon_avoid"] == 3
     assert pops["pam"] == 1 and pops["ppl1"] == 1 and pops["descending"] == 2
-    assert len(pops["formula_groups"]) == 20 and all(g["on"] == 1 and g["off"] == 1 for g in pops["formula_groups"])
+    assert len(pops["formula_groups"]) == 28 and all(g["on"] == 1 and g["off"] == 1 for g in pops["formula_groups"])
 
 
 def test_bullish_and_bearish_inputs_are_different_odours(tiny):

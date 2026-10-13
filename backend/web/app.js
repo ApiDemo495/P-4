@@ -2196,8 +2196,8 @@ function renderWiringTable() {
   const host = $("brain-wiring");
   if (!host || !state.wiring) return;
   const rows = (state.wiring.projection_neurons || []).map((p) =>
-    `<div class="wiring-row"><span><span class="pn">PN ${p.pn}</span> ${escapeHtml(p.formula)}</span>` +
-    `<span class="muted">${escapeHtml(p.brain_node || "")}</span></div>`).join("");
+    `<div class="wiring-row"><span><span class="pn">${p.pn === null || p.pn === undefined ? "no PN" : `PN ${p.pn}`}</span> ${escapeHtml(p.formula)}</span>` +
+    `<span class="muted">${escapeHtml(p.brain_node || "")}${p.pn >= 20 ? " · real connectome only" : ""}</span></div>`).join("");
   host.innerHTML =
     `<div class="card-head"><h2 style="font-size:13px">Formula → neuron map</h2>` +
     `<span class="muted">${(state.wiring.projection_neurons || []).length} projection neurons · ` +

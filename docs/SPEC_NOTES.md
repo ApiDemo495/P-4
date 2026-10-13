@@ -2120,3 +2120,45 @@ never moves a locked side.
 book-OFI formula read "buying" on a sell-off; it now sits where the price was.
 The CKS ask-side sign was wrong in the first FIH draft.  `test_prediction`
 expects nine category scores; the dashboard payload check expects 31 / 9.
+
+### AY - the 31 formulas reach every system; the local model cannot starve a 2-core Codespace
+
+**Adoption of the 31.** The real FlyWire mushroom body now takes **28
+projection-neuron channels** (`gc.BRAIN_INPUT_NAMES` = the 20 spec inputs +
+MPL, RBB, RAR, WDR, PRT, FIH, LAI, ANA), each with its own ON/OFF glomerular
+pair; the window formulas therefore run *before* the brain pass.  PIN is a tie
+risk, not a side, so it is not a channel (like HSI / ERC).  The 80x80 fallback
+matrix keeps the specification's 20 PNs and reads the first 20 entries.  The
+formula → neuron map (`/api/brain/wiring`) lists all 29 with their channel;
+the local-model stub reads MPL/WDR/FIH and follows the microprice on a pinned
+tape; the Bayesian crowd filter, the payload check, the agents' prompts and
+every "22" string were already on 31 (AX).
+
+**Why a 2-core Codespace took minutes (measured, not guessed).** The engine
+itself is light: on two pinned cores with the full FlyWire brain it idles at
+~10-15 % of one core (py-spy: half of that is the whole-brain pass, a third
+the emotion stream).  The weight was the **local 1.5B GGUF**: a vote used to
+run `create_chat_completion(max_tokens=256)` in a thread with a 7 s
+`wait_for` - the timeout returned, the thread kept generating for a minute
+or more, and the next window started another one.  On one llama thread the
+inferences stacked until the whole process starved (the rehearsal transcript
+shows `/api/health` timing out two minutes after a clean start).  Fixes in
+`local_model_agent.py`:
+
+* **single-flight** - a window whose previous vote is still generating is
+  skipped (`skipped_busy`), never stacked;
+* **a deadline the token loop honours** - streaming generation stops at the
+  budget (or when the JSON object closes) and returns what it has;
+* **measured speed** - prompt-reading tok/s and generation tok/s are taken on
+  the load-time test and refined per vote; the vote token budget is sized to
+  the CPU (48-160) and, when one vote cannot fit 1.5× the budget, the agent
+  says so (`too slow for this CPU: ~N s per vote`) and votes every fifth
+  window instead of every window;
+* `n_threads = min(4, cores − 1)`, and the background llama-cpp source build
+  (only when the image lacks it) runs at `nice 19` with one compiler job.
+
+Also: `feedparser.parse` moved off the event loop; the whole-brain pass runs
+every 5 s on machines with fewer than four cores (2 s otherwise).
+
+**Files.** `tools/dead_code.py` reports 0 unused definitions and every
+tracked file is referenced; nothing was deleted on a hunch.

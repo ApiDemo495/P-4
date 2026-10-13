@@ -49,7 +49,9 @@ async def fetch_feed(url: str, limit: int = 10) -> list[NewsItem]:
         response.raise_for_status()
         body = response.content
 
-    parsed = feedparser.parse(body)
+    # feedparser is pure Python and 50-200 ms per feed: off the event loop
+    # (a dozen feeds every poll used to stall the countdown stream)
+    parsed = await asyncio.to_thread(feedparser.parse, body)
     feed_title = str(parsed.feed.get("title") or _host(url))
     items: list[NewsItem] = []
     for entry in parsed.entries[:limit]:

@@ -741,6 +741,12 @@ class FormulaEngine:
         for spec in INPUT_FORMULAS:
             self._run_one(spec, snapshot, asset, params, ctx, result)
 
+        # --- Formulas 23-31: the 53-second window (Round AX) ---------------
+        # Before the brain pass: the eight directional ones are projection
+        # neurons of the real mushroom body (gc.BRAIN_INPUT_NAMES).
+        for spec in WINDOW_FORMULAS:
+            self._run_one(spec, snapshot, asset, params, ctx, result)
+
         # --- Brain pass: KC activations must exist before KCAE -------------
         ccs_spec = BRAIN_FORMULAS[1]
         ccs_state = self.state_for(ccs_spec, asset)
@@ -757,11 +763,6 @@ class FormulaEngine:
         # --- Formula 21 (KCAE), then 22 (CCSv2) ---------------------------
         self._run_one(BRAIN_FORMULAS[0], snapshot, asset, params, ctx, result)
         self._run_one(ccs_spec, snapshot, asset, params, ctx, result)
-
-        # --- Formulas 23-31: the 53-second window (Round AX) ---------------
-        for spec in WINDOW_FORMULAS:
-            self._run_one(spec, snapshot, asset, params, ctx, result)
-        ctx["_pin"] = float(result.values.get("PIN", 0.0))
 
         result.ccs_confidence = float(ctx.get("_ccsv2_confidence", 0.0))
         result.kcae = float(ctx.get("KCAE", 0.0))

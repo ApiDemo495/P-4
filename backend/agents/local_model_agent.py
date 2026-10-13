@@ -300,6 +300,21 @@ class LocalModelAgent:
         self.loaded_at = 0.0
         self.inference_ms = 0.0
         self.inferences = 0
+        # Round AY: one inference at a time, with a hard deadline the
+        # generation loop itself honours.  A vote that misses the window
+        # budget used to keep generating 256 tokens in its thread while the
+        # next window started another one - on a 2-core Codespace the
+        # inferences piled up until the whole engine starved.
+        self._inflight = False
+        self._deadline = 0.0
+        self.tokens_per_second = 0.0
+        self.vote_tokens = 128
+        self.overruns = 0           # votes that hit the deadline mid-generation
+        self.skipped_busy = 0       # windows skipped because a vote was still running
+        self.prompt_tps = 0.0       # prompt-reading speed (tokens/s) measured on this CPU
+        self.estimated_vote_s = 0.0 # what one vote costs here: prompt + tokens
+        self.too_slow = False       # the estimate does not fit the window budget
+        self.skipped_slow = 0
         self.crashed = False
         self.last_error = ""
         self.validation: ValidationResult | None = None
@@ -423,7 +438,8 @@ class LocalModelAgent:
             model_path=str(path),
             n_ctx=2048,
             n_batch=512,
-            n_threads=max(1, (os.cpu_count() or 4) // 2),
+            # leave one core to the engine; more than 4 threads buys little for a 1.5B model
+            n_threads=max(1, min(4, (os.cpu_count() or 4) - 1)),
             verbose=False,
         )
 
@@ -459,9 +475,15 @@ class LocalModelAgent:
         try:
             started = time.perf_counter()
             output = await asyncio.wait_for(
-                asyncio.to_thread(self._generate, TEST_PROMPT, 50), timeout=60.0
+                asyncio.to_thread(self._generate, TEST_PROMPT, 50, time.monotonic() + 55.0), timeout=60.0
             )
             self.inference_ms = (time.perf_counter() - started) * 1000.0
+            if self.tokens_per_second > 0:
+                budget = float(self.settings.local_timeout_seconds)
+                self.vote_tokens = int(max(48, min(160, self.tokens_per_second * budget * 0.55)))
+                if self.tokens_per_second * budget < 60:
+                    log.warning("local model: %.1f tok/s on this CPU - a vote gets %d tokens inside the %.0f s budget",
+                                self.tokens_per_second, self.vote_tokens, budget)
             decision, confidence, reasoning = parse_agent_json(output)
             if decision is None and "decision" not in output:
                 return {"ok": False, "error": f"Model output was not usable JSON: {output[:120]!r}"}
@@ -471,26 +493,79 @@ class LocalModelAgent:
             return {"ok": False, "error": f"Model loaded but inference failed: {exc}"}
 
     # ------------------------------------------------------------------
-    def _generate(self, prompt: str, max_tokens: int = 256) -> str:
+    def _generate(self, prompt: str, max_tokens: int = 256, deadline: float = 0.0) -> str:
+        """Blocking generation (call from a thread).  ``deadline`` is a
+        ``time.monotonic()`` instant after which the token loop stops and
+        returns what it has - the agent then parses a partial JSON or reports
+        a timeout, but the CPU is free for the next window either way."""
         if self.model is None:
             raise RuntimeError("no model loaded")
         if isinstance(self.model, _StubModel):
             return self.model.generate(prompt)
         if self.model_kind == "gguf":
-            response = self.model.create_chat_completion(
+            started = time.monotonic()
+            pieces: list[str] = []
+            produced = 0
+            first_token_at = 0.0
+            try:
+                prompt_tokens = len(self.model.tokenize((SYSTEM_PROMPT_LOCAL + prompt).encode("utf-8"), add_bos=True))
+            except Exception:  # noqa: BLE001
+                prompt_tokens = max(1, len(prompt) // 4)
+            stream = self.model.create_chat_completion(
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT_LOCAL},
                     {"role": "user", "content": prompt},
                 ],
                 max_tokens=max_tokens,
                 temperature=0.0,
+                stream=True,
             )
-            return str(response["choices"][0]["message"]["content"])
+            try:
+                for chunk in stream:
+                    delta = (chunk.get("choices") or [{}])[0].get("delta") or {}
+                    text = delta.get("content")
+                    if not first_token_at:
+                        first_token_at = time.monotonic()
+                    if text:
+                        pieces.append(str(text))
+                        produced += 1
+                        # the JSON object is complete: stop, do not pad with prose
+                        if "}" in text and "{" in "".join(pieces):
+                            break
+                    if deadline and time.monotonic() > deadline:
+                        self.overruns += 1
+                        break
+            finally:
+                close = getattr(stream, "close", None)
+                if callable(close):
+                    close()
+            if first_token_at:
+                # prompt reading is the hidden cost on a small CPU: ~500 tokens of
+                # formulas per window take 10-20 s on one core of a 2-core box
+                read_s = max(1e-3, first_token_at - started)
+                tps = prompt_tokens / read_s
+                self.prompt_tps = tps if not self.prompt_tps else 0.5 * self.prompt_tps + 0.5 * tps
+            if produced >= 8 and first_token_at:
+                rate = produced / max(1e-3, time.monotonic() - first_token_at)
+                self.tokens_per_second = rate if not self.tokens_per_second else 0.5 * self.tokens_per_second + 0.5 * rate
+            self._refresh_estimate(prompt_tokens)
+            return "".join(pieces)
         # ONNX: a text-gen ONNX export is not standardised, so we run the graph
         # with whatever numeric input it declares and report that clearly.
         raise RuntimeError(
             "ONNX text generation requires a tokenizer; upload a .gguf model for chat inference"
         )
+
+    def _refresh_estimate(self, prompt_tokens: int) -> None:
+        """Seconds one vote costs on this CPU, and whether that fits the budget.
+        The prefix (system prompt) is cached by llama.cpp between windows, so
+        roughly 60 % of the prompt is re-read every time."""
+        if not self.prompt_tps:
+            return
+        budget = float(getattr(self.settings, "local_timeout_seconds", 7.0))
+        gen = self.tokens_per_second or 1.0
+        self.estimated_vote_s = 0.6 * prompt_tokens / self.prompt_tps + 40.0 / gen
+        self.too_slow = self.estimated_vote_s > 1.5 * budget
 
     # ------------------------------------------------------------------
     async def ensure_stub(self) -> bool:
@@ -514,20 +589,53 @@ class LocalModelAgent:
             )
         prompt = build_cycle_prompt(context)
         started = time.perf_counter()
-        try:
-            output = await asyncio.wait_for(
-                asyncio.to_thread(self._generate, prompt, 256),
-                timeout=self.settings.local_timeout_seconds,
-            )
-        except asyncio.TimeoutError:
+        budget = float(self.settings.local_timeout_seconds)
+        if self.too_slow and (self.inferences + self.skipped_slow) % 5 != 0:
+            # measured, not assumed: this CPU needs ~N s per vote against a
+            # budget it cannot meet.  Vote every fifth window (to re-measure and
+            # recover when the machine frees up) instead of burning every window.
+            self.skipped_slow += 1
             return AgentResult(
                 agent=NAME,
                 status=AgentStatus.TIMEOUT,
                 model=self.model_name,
                 weight=weight,
-                error=f"Timed out after {self.settings.local_timeout_seconds:.0f}s",
-                latency_ms=(time.perf_counter() - started) * 1000.0,
+                error=(f"too slow for this CPU: ~{self.estimated_vote_s:.0f} s per vote vs a {budget:.0f} s budget "
+                       f"({self.prompt_tps:.0f} prompt tok/s, {self.tokens_per_second:.1f} tok/s) - voting every 5th window; "
+                       f"a smaller GGUF (Qwen2.5-0.5B-Instruct Q4_K_M) fits a 2-core Codespace"),
+                latency_ms=0.0,
             )
+        if self._inflight:
+            # never stack inferences: the previous window's vote is still
+            # generating (its own deadline will stop it within the budget)
+            self.skipped_busy += 1
+            return AgentResult(
+                agent=NAME,
+                status=AgentStatus.TIMEOUT,
+                model=self.model_name,
+                weight=weight,
+                error="previous vote still generating - skipped this window rather than stacking inferences",
+                latency_ms=0.0,
+            )
+        self._inflight = True
+        try:
+            # tokens this machine can produce inside the budget (measured at
+            # load and refined on every vote), capped so the answer stays JSON
+            deadline = time.monotonic() + budget
+            try:
+                output = await asyncio.wait_for(
+                    asyncio.to_thread(self._generate, prompt, self.vote_tokens, deadline),
+                    timeout=budget + 2.0,     # the generator stops itself at `deadline`
+                )
+            except asyncio.TimeoutError:
+                return AgentResult(
+                    agent=NAME,
+                    status=AgentStatus.TIMEOUT,
+                    model=self.model_name,
+                    weight=weight,
+                    error=f"Timed out after {budget:.0f}s",
+                    latency_ms=(time.perf_counter() - started) * 1000.0,
+                )
         except Exception as exc:  # noqa: BLE001
             # A crashed model must be reported, not silently ignored (Section 7.2).
             self.crashed = True
@@ -541,9 +649,27 @@ class LocalModelAgent:
                 latency_ms=(time.perf_counter() - started) * 1000.0,
             )
 
+        finally:
+            self._inflight = False
+
         self.inferences += 1
         self.inference_ms = (time.perf_counter() - started) * 1000.0
+        if self.tokens_per_second > 0:
+            # keep the next vote inside the window budget: ~45 % of the budget
+            # goes to reading the prompt on a small CPU, the rest to tokens
+            self.vote_tokens = int(max(48, min(160, self.tokens_per_second * budget * 0.55)))
         decision, confidence, reasoning = parse_agent_json(output)
+        if decision is None and (time.perf_counter() - started) >= budget:
+            return AgentResult(
+                agent=NAME,
+                status=AgentStatus.TIMEOUT,
+                model=self.model_name,
+                weight=weight,
+                error=(f"stopped at the {budget:.0f}s budget after {len(output)} chars "
+                       f"({self.tokens_per_second:.1f} tok/s on this CPU) - no decision yet"),
+                latency_ms=self.inference_ms,
+                raw=output,
+            )
         return AgentResult(
             agent=NAME,
             decision=decision,
@@ -615,6 +741,13 @@ class LocalModelAgent:
             detail = "Crashed - reload required"
         elif self.ready:
             detail = f"{self.inference_ms:.0f}ms/inference ({self.inferences} calls)"
+            if self.tokens_per_second > 0:
+                detail += f" · {self.tokens_per_second:.1f} tok/s · {self.vote_tokens} tokens per vote"
+            if self.overruns or self.skipped_busy:
+                detail += f" · {self.overruns} cut at the budget, {self.skipped_busy} skipped (busy)"
+            if self.too_slow:
+                detail += (f" · TOO SLOW HERE: ~{self.estimated_vote_s:.0f} s per vote on this CPU - voting every 5th window;"
+                           " a 0.5B GGUF fits")
         return AgentHealth(
             name=NAME,
             status=status,
@@ -627,6 +760,16 @@ class LocalModelAgent:
                 "memory_human": _human_bytes(process_memory()),
                 "stub": self.stub,
                 "last_error": self.last_error,
+                # Round AY: the vote budget on this CPU, measured
+                "tokens_per_second": round(self.tokens_per_second, 2),
+                "prompt_tokens_per_second": round(self.prompt_tps, 1),
+                "estimated_vote_seconds": round(self.estimated_vote_s, 1),
+                "vote_tokens": self.vote_tokens,
+                "too_slow": self.too_slow,
+                "overruns": self.overruns,
+                "skipped_busy": self.skipped_busy,
+                "skipped_slow": self.skipped_slow,
+                "threads": max(1, min(4, (os.cpu_count() or 4) - 1)),
             },
         )
 
@@ -644,16 +787,22 @@ class _StubModel:
         import re
 
         def grab(name: str) -> float:
-            match = re.search(rf"{name}=([+-]?\d+\.?\d*)", prompt)
+            match = re.search(rf"{re.escape(name)}=([+-]?\d+\.?\d*)", prompt)
             return float(match.group(1)) if match else 0.0
 
-        core = 0.4 * grab("CCSv2") + 0.2 * grab("TAI") + 0.2 * grab("SHRP") + 0.2 * grab("MPS")
+        core = (0.3 * grab("CCSv2") + 0.15 * grab("TAI") + 0.15 * grab("SHRP") + 0.1 * grab("MPS")
+                + 0.15 * grab("MPL") + 0.15 * grab("WDR"))     # Round AX: the window formulas too
         hsi = grab("HSI")
+        pin = grab("PIN(tie risk)")
         # HOLD is not a signal any more.  A real model would be told to name a
         # side even when the evidence is mixed; the stub does the same and shows
         # the mixed evidence through a lower confidence instead of a third state.
         decision = "BUY" if core >= 0.0 else "SELL"
-        if hsi > 0.7 or abs(core) < 0.12:
+        if pin > 0.35:
+            # a pinned tape: the side is the microprice lean, the trend is irrelevant
+            decision = "BUY" if grab("MPL") + 0.5 * grab("FIH") >= 0.0 else "SELL"
+            confidence = 0.51
+        elif hsi > 0.7 or abs(core) < 0.12:
             confidence = 0.52
         else:
             confidence = min(0.9, 0.5 + abs(core))

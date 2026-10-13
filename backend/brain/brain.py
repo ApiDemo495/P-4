@@ -8,6 +8,7 @@ convolution and ``brain.status()`` for the dashboard.
 from __future__ import annotations
 
 import asyncio
+import os
 import logging
 import time
 
@@ -121,15 +122,19 @@ class Brain:
                 self.dataset = connectome_data.DATASET
                 self.message = (f"{connectome_data.DATASET}: {self.whole.n:,} neurons, "
                                 f"{self.whole.connections:,} connections ({self.whole.synapses_total:,} synapses); "
-                                f"mushroom body {self.mb.n:,} neurons on every pass, whole brain every 2 s")
+                                f"mushroom body {self.mb.n:,} neurons on every pass, whole brain every {2 if (os.cpu_count() or 2) >= 4 else 5} s")
                 log.info("Drosophila brain: %s", self.message)
                 break
             if not self.data.enabled:
                 return
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 600.0)
+        # Round AY: the whole-brain pass is ~180-260 ms of sparse algebra that
+        # holds the GIL.  Every 2 s on four cores; on a 2-core Codespace every
+        # 5 s, so the event loop keeps its countdown and streams smooth.
+        cadence = 2.0 if (os.cpu_count() or 2) >= 4 else 5.0
         while True:
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(cadence)
             if self.whole is None or self.last_input is None or self._whole_busy:
                 continue
             vector, drg, hsi = self.last_input

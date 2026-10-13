@@ -38,12 +38,21 @@ LH_APPROACH, LH_AVOID, LH_NEUTRAL = 77, 78, 79
 
 SPARSITY = 0.10  # keep the top 10% of KC activations
 
-#: The 20 projection neurons in formula order (index 0 = TAI, 19 = SMD).
+#: The 20 projection neurons of the 80x80 fallback matrix in formula order
+#: (index 0 = TAI, 19 = SMD) - fixed by the specification's node layout.
 PN_NAMES = (
     "TAI", "AFPR", "SED", "VSD", "DGW", "LCS", "BAR",
     "HRDD", "SHRP", "GCDV", "HSI", "RSV", "VSS", "ERC",
     "MCPE", "MPS", "TWRS", "DSKD", "NIV", "SMD",
 )
+
+#: Round AX: the eight directional window formulas (23-31 minus PIN, which is
+#: a tie *risk*, not a side).  The real FlyWire mushroom body has 2 272
+#: antennal-lobe projection neurons, so it takes every directional input -
+#: the 20 above plus these - as its own ON/OFF glomerular channel.  The
+#: 80x80 fallback keeps the specification's 20 and reads the first 20 entries.
+WINDOW_INPUT_NAMES = ("MPL", "RBB", "RAR", "WDR", "PRT", "FIH", "LAI", "ANA")
+BRAIN_INPUT_NAMES = PN_NAMES + WINDOW_INPUT_NAMES
 
 
 @dataclass

@@ -657,6 +657,11 @@ tail -f server.log
   imbalance, LAI large-aggressor imbalance and ANA nearest-analogue outcome.
   When PIN is high the boundary pick follows the microstructure instead of the
   trend, and the competition cell prints the TIE RISK.
+* **The local model on a small machine (Round AY).** The baked Qwen2.5-1.5B
+  needs ~7 s per vote on four cores; on a 2-core Codespace the engine measures
+  that one vote cannot fit the window budget, says so in the agents panel and
+  votes every fifth window instead of stacking inferences until the engine
+  starves. A 0.5B GGUF uploaded on `/settings` fits two cores.
 * **Nine emotions, measured.** FEAR, PANIC, CAPITULATION, DENIAL, HOPE,
   EUPHORIA, FOMO, COMPLACENCY and **PARALYSIS** (the frozen tape). Every
   boundary records the dominant emotion and the settled window is scored under
