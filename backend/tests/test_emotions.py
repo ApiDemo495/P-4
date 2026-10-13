@@ -55,10 +55,10 @@ def _report(key: str, tracker: E.EmotionTracker | None = None) -> dict:
 # ---------------------------------------------------------------------------
 # 1. the vocabulary
 # ---------------------------------------------------------------------------
-def test_there_are_eight_emotions_over_five_timescales() -> None:
-    assert len(E.EMOTIONS) == 8
+def test_there_are_nine_emotions_over_five_timescales() -> None:
+    assert len(E.EMOTIONS) == 9
     assert set(E.EMOTIONS) == {
-        "FEAR", "PANIC", "CAPITULATION", "DENIAL", "HOPE", "EUPHORIA", "FOMO", "COMPLACENCY",
+        "FEAR", "PANIC", "CAPITULATION", "DENIAL", "HOPE", "EUPHORIA", "FOMO", "COMPLACENCY", "PARALYSIS",
     }
     assert E.TIMESCALES == ("micro", "seconds", "window", "minutes", "news")
     # the families the user named: fear, happiness, withdrawal - and the rest
@@ -375,7 +375,7 @@ async def test_the_emotion_stream_arrives_between_pulses(manager: CycleManager):
     block = data["emotions"]
     assert block["available"] is True
     assert "features" not in block and "history" not in block, "the stream is the compact form"
-    assert len(block["emotions"]) == 8
+    assert len(block["emotions"]) == 9
     assert block["dominant"]["label"]
     # consecutive readings are half a second apart, in microseconds
     gaps = [b["emotions"]["at_us"] - a["emotions"]["at_us"] for a, b in zip(emotions, emotions[1:])]
@@ -445,7 +445,7 @@ def test_the_dashboard_has_the_emotion_panel_and_the_stream_handler() -> None:
 
 # ---------------------------------------------------------------------------
 # Round L: the emotions are printed formulas and are cross-checked against the
-# 22 formulas, which keep the vote
+# 31 formulas, which keep the vote
 # ---------------------------------------------------------------------------
 
 
@@ -504,7 +504,7 @@ def test_the_live_reading_is_checked_against_the_formulas():
     assert agree["available"] and agree["voters"] == 4 and agree["formula_side"] == "BUY"
     assert report.deep["formula_voters"] == 4 and report.deep["formula_consensus"] > 0
     assert report.deep["evidence"]["formula_up"] > 0
-    assert report.deep["chain"][-1]["name"] == "22-formula cross-check"
+    assert report.deep["chain"][-1]["name"] == "31-formula cross-check"
     assert agree["note"] in report.read()
     streamed = E.compact(report.to_dict())
     assert streamed["formula_agreement"]["verdict"] == agree["verdict"]

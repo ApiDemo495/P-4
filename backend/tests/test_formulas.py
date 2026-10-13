@@ -1,4 +1,4 @@
-"""The formula contract: do the 22 formulas (and the DRG) do what they claim?
+"""The formula contract: do the 31 formulas (and the DRG) do what they claim?
 
 Round E asked for three things and this module is the regression guard for two
 of them:

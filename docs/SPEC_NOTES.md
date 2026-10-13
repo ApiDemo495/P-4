@@ -2062,3 +2062,61 @@ TD error −14, dopamine −24 and tanh pinned at −0.985 ("heavy losses" after
 miss).  Magnitudes are now |P&L| / the buffer's median |P&L| (capped at 3×),
 so a typical first loss reads about −0.22 and the gate reflects *surprise*,
 as the TD rule intends.  Double-check rules unchanged; all 23 still verify.
+
+### AX - 31 formulas, the frozen tape, and emotions that are measured
+
+**What the user asked.** "Sometimes price stays at one point, and we have to
+detect that to win with more accuracy." Change the emotion system and the
+formulas; grow the set to 31, every one different, "specially designed for 53
+seconds".
+
+**Category I - THE 53-SECOND WINDOW (formulas 23-31,
+`backend/formulas/category_i_window/`).** Every one is a function of the
+contest's own horizon - overlapping 53 s windows at a 5 s stride over the
+frozen tape - and none repeats an existing measurement:
+
+| # | name | the mathematics | reads |
+|---|------|-----------------|-------|
+| 23 | **PIN** | max(share of past windows that closed exactly at their open, 2·Φ(tick/(2σ₅₃)) − 1) | the probability the window *ties* (a loss); not directional |
+| 24 | **MPL** | tanh(lean of the microprice from the last trade, half-ticks) × min(1, \|queue imbalance\|/0.2) | which side the next print is leaning |
+| 25 | **RBB** | −(entry side) × tanh(half spread in ticks) × (1 − drift share) | Roll's bid-ask bounce against the entry print |
+| 26 | **RAR** | run direction × (1 − 2·F(age)) over the tape's own run-length distribution | how old the current monotone run is |
+| 27 | **WDR** | tanh(t/2), t = mean / (sd/√n_indep) of the horizon returns (half-life 2 windows) | drift at the horizon, with overlap corrected |
+| 28 | **PRT** | lag-1 autocorrelation of non-overlapping horizon returns, signed by the last one | persistence vs reversal window to window |
+| 29 | **FIH** | Cont-Kukanov-Stoikov book-level OFI, per-side depth-normalised, self-scaled | order-flow imbalance inside the book |
+| 30 | **LAI** | large-aggressor (top-decile size) buy minus sell imbalance | who is hitting with size |
+| 31 | **ANA** | outcome of the k nearest past windows in (drift, range position, aggression) space | what windows that looked like this one did |
+
+Each has a `Logic` entry, a `DETAIL` (units, sensitivity, what misleads it,
+what corroborates it), a self-test expectation and a double-check rule; all
+31 + DRG verify.  `prediction.CATEGORY_WEIGHTS["I"] = 1.1`.
+
+**The tie problem at the boundary.** `BoundaryPicker.pick` now blends the
+full logistic (recipe + microstructure) with a microstructure-only
+probability, weighted by the tie risk: `p = (1 − pin)·p_full + pin·p_micro`,
+where `pin = max(ledger flat share, live PIN)`.  On a pinned tape the side is
+whatever the microprice, bounce and OFI say the *next print* will be - the
+trend is irrelevant when the window is likely to close unchanged.  The
+competition cell prints TIE RISK; the agents' prompts carry the rule.
+
+**Emotions.** A ninth emotion, **PARALYSIS** (family *freeze*): 0.40·pinned +
+0.25·frozen_tape + 0.20·no_aggression + 0.15·tight, gated by (1 − turbulent)
+and killed by any surprise; `pinned` is the PIN mathematics computed on the
+emotion tape (`_pin_statistics`), so the two layers agree by construction.
+COMPLACENCY is gated by (1 − 0.6·pinned) - "calm in a range" and "not moving
+at all" are now different feelings.  The Bayesian filter (`deep_micro`) has a
+PARALYSIS row (`pinned` +3.0, fast moves and turbulence −2.5/−3.0).
+
+**Measured, not asserted (`EmotionOutcomes`).** The dominant emotion at every
+boundary is recorded and scored when the window settles (last trade to last
+trade: up / down / tie).  After 8 windows each emotion gets a verdict -
+"leans UP (2.1σ)", "no directional edge", "ties - a frozen tape under this
+emotion" - shown under WHAT EACH EMOTION HAS REALLY MEANT in the emotion
+card and persisted in the StateVault with the other learners.  The ledger
+never moves a locked side.
+
+**Fixes found on the way.** The synthetic previous book always sat one tick
+*below* the current one regardless of scenario direction, which made every
+book-OFI formula read "buying" on a sell-off; it now sits where the price was.
+The CKS ask-side sign was wrong in the first FIH draft.  `test_prediction`
+expects nine category scores; the dashboard payload check expects 31 / 9.

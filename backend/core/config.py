@@ -216,7 +216,7 @@ class Settings:
     # Round T: the thermodynamic capital layer (backend/physics) votes beside
     # the agents.  0 disables it; the other weights are renormalised with it.
     weight_physics: float = field(default_factory=lambda: _env_float("PHYSICS_WEIGHT", 0.20))
-    # Round V: the 22 formulas' own weighted consensus votes directly (it used
+    # Round V: the 31 formulas' own weighted consensus votes directly (it used
     # to reach the side only through the brain, so a model-only physics vote
     # could out-vote twenty live formulas).  0 disables it.
     weight_formulas: float = field(default_factory=lambda: _env_float("FORMULAS_WEIGHT", 0.30))
@@ -344,7 +344,7 @@ class Settings:
     )
     #: Round L - the two-stage lock.  The slow inputs (agents, with their 7 s
     #: timeouts) are prepared ``lock_deadline_seconds`` before the boundary;
-    #: everything fast (a fresh snapshot, the 22 formulas, the crowd, fusion)
+    #: everything fast (a fresh snapshot, the 31 formulas, the crowd, fusion)
     #: is re-frozen this many seconds before the boundary, so the prediction
     #: is built on data that is a fraction of a second old, not eight seconds.
     final_lock_lead_seconds: float = field(

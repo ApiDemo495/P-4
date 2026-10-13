@@ -2,7 +2,7 @@
 
 A scalp-trading engine for **BTC** and **PAXG** built around a Drosophila
 mushroom-body connectome. One immutable prediction per **53-second window**,
-22 formulas, three AI agents, and a brain that keeps working when neuPrint, the
+31 formulas, three AI agents, and a brain that keeps working when neuPrint, the
 exchange or your API keys do not.
 
 ```
@@ -536,7 +536,7 @@ tail -f server.log
 |---|---|
 | `backend/core` | config, world clock, **signal lock**, frozen snapshot, cycle manager, risk levels, store, **crowd emotions** (`emotions.py`) |
 | `backend/data` | tick/L2/candle buffers, Binance WS, CoinGecko, simulator, market hub |
-| `backend/formulas` | the 22 formulas in 8 categories + `engine.py` + the DRG reward learner |
+| `backend/formulas` | the 31 formulas in 9 categories + `engine.py` + the DRG reward learner |
 | `backend/brain` | 5-step startup verification, connectome query, spectral clustering, 3-layer GCN, `explain.py`, fallback matrix |
 | `backend/news` | sentiment lexicon, CryptoPanic/NewsAPI/RSS, critical-event detector |
 | `backend/agents` | Gemini, local GGUF/ONNX, GitHub Models, fusion, orchestrator |
@@ -580,17 +580,17 @@ tail -f server.log
   re-runs the live steps whenever credentials are present.
 * **In sync, and locked (Round L).** The lock has two stages: the slow half
   (the AI agents, with their 7 s timeouts) is prepared 8 s before the boundary;
-  the fast half — a fresh tape snapshot, the 22 formulas, the crowd reading and
+  the fast half — a fresh tape snapshot, the 31 formulas, the crowd reading and
   the fusion — is frozen again **0.4 s** before the boundary, so the prediction
   you see was built on data a fraction of a second old (`window.lock.
   data_age_at_open_seconds`). Both clients snap their clock to the arrival of
   the boundary SIGNAL, so the reveal and the countdown's zero are the same
   instant — a prediction can never appear early, and nothing inside the locked
   cell (side, confidence, levels, the crowd at lock) changes until the window
-  ends. The crowd is cross-checked against the 22 formulas every 2 s
+  ends. The crowd is cross-checked against the 31 formulas every 2 s
   (`formula_agreement`: aligned / conflict / crowd flat / formulas split), the
   formula consensus is evidence inside the crowd's Bayesian filter, and the rule
-  is printed on every panel: *the 22 formulas carry 40 % of the direction vote;
+  is printed on every panel: *the 31 formulas carry 40 % of the direction vote;
   the crowd never votes — it can only cut confidence by at most 12.5 % (halved in Round P)*. Every
   emotion is shown as its formula with the live terms substituted.
 * **Everything refreshes together.** The backend owns one schedule: a `SIGNAL`
@@ -647,8 +647,21 @@ tail -f server.log
   `lock()` is callable once per cycle and the frozen signal is a `NamedTuple`, so
   a late or duplicate computation cannot rewrite what you are looking at. The one
   exception is a *critical* news event, which can only force HOLD.
-* **22 formulas, 8 categories.** Each one is isolated: an exception zeroes that
-  formula, records the error, and the other 21 still run. 11 zeros ⇒ forced HOLD.
+* **31 formulas, 9 categories.** Each one is isolated: an exception zeroes that
+  formula, records the error, and the other 30 still run. 11 zeros ⇒ thin evidence.
+  Category I, *The 53-second Window* (Round AX), is nine formulas built on
+  overlapping 53 s windows of the tape: **PIN** (the probability the window
+  closes exactly where it opened - a tie, which the contest scores as a loss),
+  MPL microprice lean, RBB bid-ask bounce, RAR run-age hazard, WDR horizon
+  drift, PRT window-to-window persistence, FIH book-level order-flow
+  imbalance, LAI large-aggressor imbalance and ANA nearest-analogue outcome.
+  When PIN is high the boundary pick follows the microstructure instead of the
+  trend, and the competition cell prints the TIE RISK.
+* **Nine emotions, measured.** FEAR, PANIC, CAPITULATION, DENIAL, HOPE,
+  EUPHORIA, FOMO, COMPLACENCY and **PARALYSIS** (the frozen tape). Every
+  boundary records the dominant emotion and the settled window is scored under
+  it, so the emotion card prints what each feeling has *really* meant for the
+  next 53 s on this tape (up / down / tie) instead of asserting it.
 * **The real fly brain (Round AQ).** On first start the engine downloads the
   FlyWire FAFB v783 connectome from GitHub (no account, ~130 MB: 138 639
   proofread neurons, 15.09 M connections carrying 54.5 M synapses with their
@@ -765,7 +778,7 @@ and releases only when the raw side is right again.
 
 ## 9d. The Formula Genesis Engine (v3.0)
 
-A second formula layer that does not replace the 22 named formulas: it
+A second formula layer that does not replace the 31 named formulas: it
 **generates** them. Ten mathematical domains × ten sub-categories × a
 21-variant grid (7 look-backs × 3 normalisations, plus each sub-category's own
 axes) = **2,100 template formulas**, each with its definition and a reading

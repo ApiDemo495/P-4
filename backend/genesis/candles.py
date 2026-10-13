@@ -1,6 +1,6 @@
 """Layer 1 storage: one-minute candles with microstructure, per asset.
 
-The lock engine's own ring buffers are sized for the 22 named formulas (60
+The lock engine's own ring buffers are sized for the 31 named formulas (60
 closes).  The genesis pool scores formulas on a rolling 500-candle window and
 breeds on more, so it keeps its own store:
 

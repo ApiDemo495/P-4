@@ -14,7 +14,7 @@ from enum import Enum
 class DegradationLevel(int, Enum):
     """Section 13.2 - graceful degradation hierarchy."""
 
-    FULL = 1  # everything connected: 22 formulas, 4 agents, live brain, news
+    FULL = 1  # everything connected: 31 formulas, 4 agents, live brain, news
     NO_NEWS = 2  # NIV/SMD output 0, price-only emergency detection
     NO_AGENTS = 3  # CCSv2 is the sole decision maker
     FALLBACK_BRAIN = 4  # CCSv2 runs on the committed CSV matrix

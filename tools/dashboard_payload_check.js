@@ -93,11 +93,11 @@ const getJSON = async (pathname) => {
 
   // 3. the detail block the panel renders behind the toggle -------------------
   const detail = prediction.detail || {};
-  // Exactly the 22 registered formulas (Round M: helpers such as _hsi used to
+  // Exactly the 31 registered formulas (Round M: helpers such as _hsi used to
   // be counted, so the panel said "24 formulas evaluated").
-  check((detail.formulas_evaluated || 0) === 22,
+  check((detail.formulas_evaluated || 0) === 31,
     `formulas_evaluated = ${detail.formulas_evaluated}`);
-  check(Object.keys(detail.category_scores || {}).length === 8,
+  check(Object.keys(detail.category_scores || {}).length === 9,
     `${Object.keys(detail.category_scores || {}).length} category scores`);
   check((detail.supporters || []).length > 0, "no supporters in the detail block");
   const engine = ((detail.agreement || {}).engine) || {};
@@ -132,10 +132,10 @@ const getJSON = async (pathname) => {
   // 6. Round J: the crowd's emotions, live --------------------------------------
   const crowd = await getJSON("/api/emotions");
   check(crowd.available === true, "the emotion engine has no live reading");
-  check(Array.isArray(crowd.emotions) && crowd.emotions.length === 8,
-    `${(crowd.emotions || []).length} emotions scored (want 8)`);
+  check(Array.isArray(crowd.emotions) && crowd.emotions.length === 9,
+    `${(crowd.emotions || []).length} emotions scored (want 9)`);
   const names = (crowd.emotions || []).map((e) => e.name).sort().join(",");
-  check(names === "CAPITULATION,COMPLACENCY,DENIAL,EUPHORIA,FEAR,FOMO,HOPE,PANIC",
+  check(names === "CAPITULATION,COMPLACENCY,DENIAL,EUPHORIA,FEAR,FOMO,HOPE,PANIC,PARALYSIS",
     `emotion vocabulary: ${names}`);
   check(crowd.dominant && crowd.dominant.label && crowd.dominant.percent >= 0,
     `dominant emotion = ${crowd.dominant && crowd.dominant.label} ${crowd.dominant && crowd.dominant.percent}%`);
@@ -207,8 +207,8 @@ const getJSON = async (pathname) => {
     "every emotion carries its printed formula and live terms");
   check(crowd.formula_glossary && Object.keys(crowd.formula_glossary).length >= 20,
     `${Object.keys(crowd.formula_glossary || {}).length} formula terms defined`);
-  check(deep.chain && deep.chain[deep.chain.length - 1].name === "22-formula cross-check",
-    "the reasoning chain ends with the 22-formula cross-check");
+  check(deep.chain && deep.chain[deep.chain.length - 1].name === "31-formula cross-check",
+    "the reasoning chain ends with the 31-formula cross-check");
   check(crowdDetail.crowd && crowdDetail.crowd.formula_agreement,
     "the locked crowd reading was cross-checked against the lock-time formulas");
   check(APP.includes("opts.boundary") && APP.includes("state.serverOffsetMs = arrival"),

@@ -8,7 +8,7 @@ here, in microseconds.
 
 Two things read this module:
 
-* the 22 formulas, which get the derivatives they need from the same frozen
+* the 31 formulas, which get the derivatives they need from the same frozen
   snapshot (the micro readings below do not replace them, they explain them);
 * the prediction block, which publishes ``micro`` so the UI can show the
   tape's actual resolution instead of a rounded "1 s"-style summary.

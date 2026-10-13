@@ -1,7 +1,7 @@
 """Section 8 - the perpetual microstructural signals on the BTC/PAXG tape.
 
 All five read only the frozen snapshot (tape) - never a live buffer - so they
-are lock-safe like the 22 formulas.  Direction convention throughout:
+are lock-safe like the 31 formulas.  Direction convention throughout:
 ``+1`` = BTC strengthens against PAXG (buy BTC / sell PAXG), ``-1`` = the
 opposite.  Non-directional mechanisms return ``direction = 0`` and only an
 edge estimate in basis points.

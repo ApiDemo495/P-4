@@ -1,4 +1,4 @@
-"""The formula engine: runs all 22 formulas on one frozen snapshot.
+"""The formula engine: runs all 31 formulas on one frozen snapshot.
 
 Design rules that come straight from the specification:
 

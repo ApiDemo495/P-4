@@ -149,7 +149,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Drosophila Trader v2.0",
     description=(
-        f"{int(round(cfg.window_seconds()))}-second scalp trading engine for BTC and PAXG. 22 formulas, a locked "
+        f"{int(round(cfg.window_seconds()))}-second scalp trading engine for BTC and PAXG. 31 formulas, a locked "
         "signal protocol, a continuous news sentiment engine and a Drosophila "
         "mushroom-body connectome consensus."
     ),

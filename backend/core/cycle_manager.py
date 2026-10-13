@@ -3,7 +3,7 @@
 One cycle, exactly as specified in Section 1.1 and Section 2.2:
 
     t=0.000s    freeze the market snapshot, reset the lock to COMPUTING
-    t=0-3ms     run all 22 formulas on the frozen snapshot
+    t=0-3ms     run all 31 formulas on the frozen snapshot
     t=3-8s      call the AI agents concurrently (7 s budget)
     t~8s        fuse, then LOCK the signal and broadcast it
     t=8-53s     broadcast nothing that changes the signal panel; the Formula
@@ -44,7 +44,8 @@ from backend.core.clock import WorldClock
 from backend.core.direction import describe as describe_direction
 from backend.core.errors import ComponentStatus, DegradationLevel
 from backend.core.prediction import build as build_prediction
-from backend.core.emotions import EmotionMonitor, analyze as analyze_emotions, compact as compact_emotions
+from backend.core.emotions import (EmotionMonitor, EmotionOutcomes, analyze as analyze_emotions,
+                                   compact as compact_emotions)
 from backend.core.prediction import detail as prediction_detail
 from backend.core.prediction import build_reasoning, consensus
 from backend.core import edge_guard
@@ -152,6 +153,8 @@ class CycleManager:
         # Round AS: the competition's own scoreboard and the boundary picker
         self.competition = CompetitionLedger()
         self.picker = BoundaryPicker()
+        #: Round AX: what each emotion has really meant for the next 53 s window
+        self.emotion_outcomes = EmotionOutcomes()
         self.last_pick: dict = {}
         self.triune = TriuneAnalyst()
         self.last_triune: dict | None = None
@@ -481,7 +484,7 @@ class CycleManager:
                 # --- the final freeze: the fast half of the pipeline again, on
                 # a snapshot taken a fraction of a second before the boundary.
                 # The agents' votes are kept from the prefetch; the tape, the
-                # 22 formulas, the crowd and the fusion are all re-done, so the
+                # 31 formulas, the crowd and the fusion are all re-done, so the
                 # locked prediction describes the market *at* the lock.
                 final_lead = min(max(self.settings.final_lock_lead_seconds, 0.05), lead)
                 await self._sleep_until(deadline - final_lead)
@@ -663,6 +666,13 @@ class CycleManager:
         price = trade_px or self.market.last_price(self.asset) or draft.price
         if not emergency:
             draft = self._boundary_pick(draft, cycle, price)
+        # Round AX: remember the dominant emotion of this boundary so the window's
+        # outcome can be scored under it (the learned side of the emotion layer).
+        try:
+            dom = (self.emotion_locked or {}).get("dominant") or {}
+            self.emotion_outcomes.record(cycle, str(dom.get("name", "")), float(dom.get("intensity", 0.0) or 0.0))
+        except Exception as exc:  # noqa: BLE001
+            log.debug("emotion outcome record skipped: %s", exc)
         exit_side = opposite(draft.signal)
         signal_for_levels = draft.signal
         if emergency and exit_side:
@@ -837,7 +847,7 @@ class CycleManager:
     async def _refreeze(self, publish_deadline_wall: float) -> None:
         """The fast half of the pipeline, again, right before the boundary.
 
-        Everything that costs milliseconds - a fresh frozen snapshot, the 22
+        Everything that costs milliseconds - a fresh frozen snapshot, the 31
         formulas, the crowd reading, the fusion - is recomputed so the locked
         prediction and the locked crowd describe the market at the lock
         instant.  The agents' votes (seconds) come from the prefetch.  Nothing
@@ -1260,7 +1270,7 @@ class CycleManager:
         last 600 ticks) and purely read-only, so it cannot disturb the cycle.
         """
         interval = max(0.1, float(self.settings.emotion_interval_seconds))
-        # The 22 formulas cost ~6 ms, so the live pass the crowd is checked
+        # The 31 formulas cost ~6 ms, so the live pass the crowd is checked
         # against is refreshed every fourth sample (2 s at the default 0.5 s)
         # rather than only on the 15 s PULSE grid.  The heavy ``deep`` block
         # (~8 KB) rides along on the same samples only: the four-per-second
@@ -1308,7 +1318,7 @@ class CycleManager:
                                     else None
                                 ),
                                 "deep_included": full,
-                                # Round AP: the live pass of the 22 formulas rides on
+                                # Round AP: the live pass of the 31 formulas rides on
                                 # every full sample (2 s) - the LIVE CALCULATION panel
                                 # draws its sparklines from this, nothing is polled.
                                 "formulas": (dict(self.last_live_formulas) if full else None),
@@ -1419,6 +1429,7 @@ class CycleManager:
         }
         payload["asset"] = self.asset
         payload["brain_mood"] = self.dopamine.to_dict()
+        payload["learned"] = self.emotion_outcomes.summary()
         return payload
 
     # ==================================================================
@@ -1550,6 +1561,7 @@ class CycleManager:
             comp_row = self.competition.settle(signal.cycle_number, settle_px)
             if comp_row is not None:
                 self.picker.learn(signal.cycle_number, None if comp_row.tie else comp_row.exit > comp_row.entry)
+                self.emotion_outcomes.settle(signal.cycle_number, comp_row.entry, comp_row.exit)
         except Exception as exc:  # noqa: BLE001
             log.debug("competition settle skipped: %s", exc)
 
@@ -2236,7 +2248,7 @@ class CycleManager:
             )
         if formula_result is not None and formula_result.insufficient_evidence:
             extra_against.append(
-                "Evidence is thin: 11 or more of the 22 formulas returned zero this window."
+                "Evidence is thin: 11 or more of the 31 formulas returned zero this window."
             )
         if signal is not None and signal.is_emergency_override:
             extra_against.append(
@@ -2630,7 +2642,7 @@ class CycleManager:
             ),
             "compute_ms": round(self.published_compute_ms, 1),
             # Round L: the two-stage lock.  Agents are prepared ``lock_lead``
-            # seconds early; the tape, the 22 formulas, the crowd and the fusion
+            # seconds early; the tape, the 31 formulas, the crowd and the fusion
             # are frozen again ``final_lock_lead`` seconds before the boundary.
             "lock": {
                 "stages": 2,
@@ -2742,7 +2754,7 @@ class CycleManager:
     # ==================================================================
     # Round AW -- the vault: what is learned is kept ------------------------
     #: name -> attribute holding a learner whose whole state is adopted back
-    VAULT_OBJECTS = ("competition", "picker", "dopamine", "triune", "outcomes", "stats")
+    VAULT_OBJECTS = ("competition", "picker", "dopamine", "triune", "outcomes", "stats", "emotion_outcomes")
     #: a streak older than this is not a live streak
     VAULT_MAX_AGE = 3 * 86_400.0
 

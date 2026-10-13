@@ -6,7 +6,7 @@ Three fixes over v1.0:
    ``responseSchema`` means the model cannot return unparseable prose.
 2. **Timeout** - 7 seconds; if Gemini is slow the cycle proceeds without it
    rather than holding the Signal Lock Controller hostage.
-3. **v2 prompt** - all 22 formula values, the news summary and brain status.
+3. **v2 prompt** - all 31 formula values, the news summary and brain status.
 
 Up to three keys (primary + two temporary stand-ins) with automatic failover:
 a rejected or rate-limited key is cooled down (10 -> 20 -> ... -> 300 s) and the

@@ -312,7 +312,7 @@ def test_the_pulse_cadence_matches_the_spec():
 async def test_the_final_freeze_rebuilds_the_fast_half_on_fresh_data(manager: CycleManager):
     """The prediction the user sees must be computed from data that is fresh at
     the boundary, not eight seconds old: after the prefetch (agents) the
-    ``_refreeze`` pass takes a new snapshot, re-runs the 22 formulas, the crowd
+    ``_refreeze`` pass takes a new snapshot, re-runs the 31 formulas, the crowd
     and the fusion, and re-stamps ``computed_at`` - keeping the agents' votes."""
     deadline = time.time() + 5.0
     await manager._prefetch(deadline)

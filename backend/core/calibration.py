@@ -2,7 +2,7 @@
 
 Why this exists (Round N, "predictions are not accurate").  Until now the
 *side* of a window came from the spec's fixed recipe: the brain's CCSv2 read
-of the 22 formulas (weight 0.40) plus whichever AI agents answered, with the
+of the 31 formulas (weight 0.40) plus whichever AI agents answered, with the
 formulas, news and crowd only ever moving the *confidence*.  Nothing in that
 chain had ever been checked against what the price then did.  A source that
 is right 45 % of the time was weighted exactly like one that is right 58 %.
@@ -10,7 +10,7 @@ is right 45 % of the time was weighted exactly like one that is right 58 %.
 The ledger fixes that with the oldest honest tool there is: it keeps score.
 
 * Every window, each **source** casts a directional vote (+1 up, -1 down, 0
-  abstain): each of the 22 formulas that carries a direction, the brain's
+  abstain): each of the 31 formulas that carries a direction, the brain's
   CCSv2, each AI agent, the news index, the crowd tone, the spec's own fused
   score, and three micro-structure priors that are known to matter at the
   one-minute horizon - the last minute's return (bid/ask bounce makes it

@@ -350,7 +350,7 @@ def fuse(
     raw_confidence *= 0.85 + 0.15 * agreement
 
     # --- formula confirmation ------------------------------------------
-    # The 22 formulas are the only inputs that are verified against known
+    # The 31 formulas are the only inputs that are verified against known
     # tapes (backend/formulas/self_test.py).  When they disagree with the side
     # the fusion picked, the honest move is to trust the side less rather than
     # to flip it: the ladder has already accounted for the same inputs.

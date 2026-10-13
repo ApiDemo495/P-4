@@ -277,7 +277,7 @@ class MarketDataHub:
         PAXG prints a trade every few minutes on Gemini and a few times a
         minute on Kraken.  Every tape-driven reading - the emotions, the
         physics mechanisms that need both legs, the minute-move quantiles the
-        levels are sized on, half of the 22 formulas - starved on it and sat
+        levels are sized on, half of the 31 formulas - starved on it and sat
         at "waiting" / 0.00 / inactive.  The book, however, updates many
         times a second on every venue.  When no trade has printed for
         ``QUOTE_TICK_AFTER_S`` and the mid has moved, the mid is written to

@@ -14,7 +14,7 @@ microstructural mathematics rather than from price patterns:
                                            (``unified``)
 
 It is **one weighted layer in fusion** (``weight_physics``), not a hard
-override: the 22 formulas and the Drosophila brain still decide, this layer
+override: the 31 formulas and the Drosophila brain still decide, this layer
 votes beside the AI agents.  Sections 3, 7 and 9 of the source document
 (multi-node ZK Nash swarm, lending-protocol liquidation sniping, MEV block
 sequencing) need infrastructure a single terminal cannot have and are not

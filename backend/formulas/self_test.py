@@ -1,6 +1,6 @@
 """Formula self-test: does every formula do what it says it does?
 
-Each of the 22 formulas is a claim ("positive output when buyers are aggressive",
+Each of the 31 formulas is a claim ("positive output when buyers are aggressive",
 "detects a volume shock", "reads the hedge stress").  A claim like that is
 testable: build a tape whose character is known by construction (see
 :mod:`backend.formulas.synthetic`), run the engine over a *stream* of windows so

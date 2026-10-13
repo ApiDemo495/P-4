@@ -118,7 +118,7 @@ async def test_e01_cold_start_locks_a_complete_signal(manager: CycleManager):
     assert data["cycle_number"] >= 1
     assert data["price"] > 0
 
-    # all 22 formulas + the DRG meta-parameter, none of them silently zeroed
+    # all 31 formulas + the DRG meta-parameter, none of them silently zeroed
     values = data["formulas"]
     assert ALL_KEYS <= set(values), sorted(ALL_KEYS - set(values))
     assert manager.last_formula_result is not None

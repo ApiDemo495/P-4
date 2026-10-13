@@ -665,7 +665,7 @@ th { color: var(--muted); font-weight: 600; }
 .formula-foot { margin-top: 8px; color: var(--muted); line-height: 1.6; }
 .formula-foot b { color: var(--text); }
 
-/* Round L: crowd vs the 22 formulas */
+/* Round L: crowd vs the 31 formulas */
 .formula-agreement { font-size: 12px; margin-top: 6px; display: grid; gap: 6px; }
 .agree-verdict { font-weight: 700; letter-spacing: .04em; text-transform: uppercase; font-size: 12px; }
 .agree-verdict.positive { color: var(--green); }

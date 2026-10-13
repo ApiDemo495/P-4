@@ -64,7 +64,7 @@ from backend.core import geometry, utility_inversion
 from backend.core.timebase import format_us, now_us
 
 EMOTION_NAMES = (
-    "FEAR", "PANIC", "CAPITULATION", "DENIAL", "HOPE", "EUPHORIA", "FOMO", "COMPLACENCY",
+    "FEAR", "PANIC", "CAPITULATION", "DENIAL", "HOPE", "EUPHORIA", "FOMO", "COMPLACENCY", "PARALYSIS",
 )
 
 #: The three bands the multi-scale formulas are reported on: name, label,
@@ -137,6 +137,16 @@ LIKELIHOOD: dict[str, dict[str, float]] = {
         "toxicity": -0.8,
         "tearing": -1.0, "csd": -0.8, "chaotic": -0.8, "polarised": -0.6,
         "complacent": 1.5, "tail_fear": -1.0, "loss_averse": -0.6,
+        "pinned": -1.0,
+    },
+    # Round AX: the frozen tape.  Pinned = the PIN tie probability of the
+    # window; a dead print rate and no aggression argue for it, any fast move,
+    # cascade or turbulence argues against it harder than against complacency.
+    "PARALYSIS": {
+        "pinned": 3.0, "frozen": 1.5, "calm": 1.0, "formula_conviction": -1.0,
+        "stress": -2.0, "turbulent": -3.0, "down_fast": -2.5, "up_fast": -2.5,
+        "down_mid": -2.0, "up_mid": -2.0, "cascade": -1.5, "toxicity": -1.0,
+        "momentum": -0.8, "chaotic": -1.0, "tearing": -1.0,
     },
 }
 
@@ -152,8 +162,10 @@ EVIDENCE_LABEL = {
     "disorder": "permutation entropy", "herd_memory": "sign memory (Lillo-Farmer)",
     "stress": "stress regime", "calm": "calm regime", "blowout": "spread blow-out",
     "book_pressure": "book pressure (microprice)", "news": "news tone",
-    "formula_up": "22-formula consensus (bullish)", "formula_down": "22-formula consensus (bearish)",
-    "formula_conviction": "22-formula conviction |C|",
+    "formula_up": "31-formula consensus (bullish)", "formula_down": "31-formula consensus (bearish)",
+    "formula_conviction": "31-formula conviction |C|",
+    "pinned": "window tie probability (PIN: flat share / 2Φ(tick/2σ₅₃) − 1)",
+    "frozen": "print rate collapse (ticks at < 30 % of their own pace)",
     "tearing": "book manifold tearing (TDA persistence)", "chaotic": "attractor divergence (Lyapunov)",
     "csd": "critical slowing down (a1 ↑, variance ↑)", "cooling": "heat BTC→PAXG (entropy production)",
     "heating": "heat PAXG→BTC (entropy production)", "polarised": "non-classical decision interference",
@@ -584,7 +596,7 @@ def _evidence(
     """Compress the raw formulas into the bounded evidence variables the
     likelihood table understands (each in [-1, 1] or [0, 1]).
 
-    ``formula_consensus`` is the weighted vote of the 22 directional formulas
+    ``formula_consensus`` is the weighted vote of the directional formulas
     (``backend.core.prediction.consensus``, in [-1, 1]).  It enters the filter
     as its own evidence so the crowd reading is pulled toward what the
     formulas measure - the emotions describe *how* the crowd behaves around
@@ -616,6 +628,9 @@ def _evidence(
         # A tape that has been violent for minutes has a quiet "regime" by its
         # own standards; turbulence keeps it from reading as calm.
         "turbulent": _ramp(_safe(f.get("turbulence"), 1.0), 1.3, 3.0),
+        # Round AX: the frozen tape
+        "pinned": _ramp(_safe(f.get("pin_prob")), 0.05, 0.40),
+        "frozen": 1.0 - _ramp(_safe(f.get("tick_surge"), 1.0), 0.30, 1.00),
         "stress": max(_safe(reg.get("stress")), _ramp(_safe(f.get("turbulence"), 1.0), 1.3, 3.0)),
         "calm": _safe(reg.get("calm")) * (1.0 - _ramp(_safe(f.get("turbulence"), 1.0), 1.3, 3.0)),
         # A wide spread is only evidence when the tape is actually moving, and a
@@ -827,7 +842,7 @@ def reasoning_chain(f: dict[str, float], deep: dict, evidence: dict[str, float])
          f"({post['argmax_probability'] * 100:.0f}%, runner-up {post['runner_up'].capitalize()})"),
         "all bands")
     c = _safe(deep.get("formula_consensus")); voters = int(deep.get("formula_voters", 0))
-    add("22-formula cross-check",
+    add("31-formula cross-check",
         "C = Σ_i w_cat(i)·clip(F_i, −1, 1) / Σ_i w_cat(i)  over the directional formulas",
         {"consensus": round(c, 4), "voters": voters,
          "for": round(evidence["formula_up"], 4), "against": round(evidence["formula_down"], 4)},

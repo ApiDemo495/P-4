@@ -414,3 +414,47 @@ def test_the_nine_window_formulas_are_distinct_and_pin_drives_the_pick():
     assert pick.side == "SELL" and "tie risk 80%" in pick.note
     f2 = f.__class__(**{**f.__dict__, "pin_rate": 0.0})
     assert picker.pick(2, f2, "BUY", 0.62).side == "BUY"
+
+
+def test_paralysis_reads_a_frozen_tape_and_the_emotion_ledger_scores_windows():
+    from backend.core import emotions as E
+
+    # a tape that has not moved: every window ties -> PARALYSIS dominates
+    frozen = {"z_1s": 0.0, "z_5s": 0.0, "z_win": 0.0, "aggression_5s": 0.0, "vol_ratio": 0.6,
+              "tick_surge": 0.2, "spread_blowout": 1.0, "spread_bps": 0.3, "range_position": 0.5,
+              "pin_prob": 0.7, "flat_share": 0.6, "turbulence": 0.8}
+    scores = {s.name: s for s in E.score_emotions(frozen)}
+    assert "PARALYSIS" in scores and scores["PARALYSIS"].family == "freeze"
+    assert scores["PARALYSIS"].intensity > 0.6
+    assert scores["PARALYSIS"].intensity > scores["COMPLACENCY"].intensity
+    assert 3 <= len(scores["PARALYSIS"].drivers) <= 4
+    # the same calm numbers on a live tape (no pin) are complacency, not paralysis
+    live = dict(frozen, pin_prob=0.01, flat_share=0.0, tick_surge=1.0)
+    live_scores = {s.name: s for s in E.score_emotions(live)}
+    assert live_scores["COMPLACENCY"].intensity > live_scores["PARALYSIS"].intensity
+    # and a surprise kills it
+    moving = dict(frozen, z_1s=2.5, z_5s=2.0)
+    assert {s.name: s for s in E.score_emotions(moving)}["PARALYSIS"].intensity < 0.25
+
+    # the pin statistics on a real tick array: a flat tape vs a drifting one
+    t = np.arange(0, 400_000, 100, dtype=float)
+    flat = np.full(t.size, 60000.0); flat[::9] += 0.01
+    stats = E._pin_statistics(t, flat)
+    assert stats["tick_size"] == pytest.approx(0.01) and stats["pin_prob"] > 0.5
+    drift = 60000.0 + np.cumsum(np.random.default_rng(3).normal(0, 0.5, t.size)).round(2)
+    assert E._pin_statistics(t, drift)["pin_prob"] < 0.1
+
+    # the learned ledger: dominant at the boundary -> outcome of the window
+    ledger = E.EmotionOutcomes()
+    for i in range(10):
+        ledger.record(i, "FEAR", 0.5)
+        ledger.settle(i, 100.0, 99.0 if i < 9 else 101.0)
+    for i in range(10, 20):
+        ledger.record(i, "PARALYSIS", 0.7)
+        ledger.settle(i, 100.0, 100.0)
+    summary = ledger.summary()
+    assert summary["windows_settled"] == 20
+    assert summary["by_emotion"]["FEAR"]["verdict"].startswith("leans DOWN")
+    assert summary["by_emotion"]["PARALYSIS"]["tie_rate"] == 1.0
+    assert summary["by_emotion"]["PARALYSIS"]["verdict"].startswith("ties")
+    assert summary["by_emotion"]["HOPE"]["verdict"] == "learning"

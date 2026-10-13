@@ -1,7 +1,7 @@
 """FrozenMarketSnapshot - the immutable market state for one signal cycle.
 
 At t=0 of every cycle the data hub deep-copies its ring buffers into this
-object.  The 22 formulas then read **only** from here, which is the mechanical
+object.  The 31 formulas then read **only** from here, which is the mechanical
 guarantee behind the Signal Lock Protocol: even though the WebSocket keeps
 appending to the live buffers throughout the minute, nothing the formulas see
 can change after the snapshot is taken.

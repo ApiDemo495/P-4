@@ -804,7 +804,7 @@ function crowdDetailHtml(crowd) {
 /* Round L: the locked crowd against the lock-time formulas, and who decided. */
 function agreementLockedHtml(agree) {
   if (!agree || !agree.verdict) return "";
-  return `<div class="logic-h" style="margin-top:8px">Crowd vs the 22 formulas at lock time</div>` +
+  return `<div class="logic-h" style="margin-top:8px">Crowd vs the 31 formulas at lock time</div>` +
     `<div class="detail-line">verdict <b>${escapeHtml(String(agree.verdict))}</b> · formulas ${fmtSigned(Number(agree.consensus || 0), 2)} ` +
     `(${agree.voters || 0} voted, ${agree.up || 0} up / ${agree.down || 0} down) · crowd ${fmtSigned(Number(agree.crowd_tone || 0), 2)} · ` +
     `alignment ${fmtSigned(Number(agree.alignment || 0), 2)}</div>` +
@@ -847,6 +847,7 @@ function adoptEmotions(data) {
     state.emotionsDeepDirty = true;
   }
   if (block.locked !== undefined) state.emotionsLocked = block.locked;
+  if (block.learned) state.emotionsLearned = block.learned;      // Round AX: the measured side
   if (block.dampening) state.emotionDampening = block.dampening;
   if (data.dampening) state.emotionDampening = data.dampening;
 }
@@ -925,7 +926,7 @@ function renderEmotions() {
     `tape resolution ${e.resolution_label || fmtUs(e.resolution_us)} · ${e.ticks || 0} ticks · ` +
     `${e.samples || 0} samples`;
 
-  /* the eight bars, ranked */
+  /* the nine bars, ranked */
   const bars = $("emotion-bars");
   const rows = (e.emotions || []).map((item) => {
     const cls = toneClass(item.tone);
@@ -981,6 +982,7 @@ function renderEmotions() {
     : `<span class="muted">the first locked window will record the crowd's mood</span>`;
 
   renderBrainMood(state.brainMood || e.brain_mood);
+  renderEmotionsLearned(state.emotionsLearned || e.learned);
 
   /* inline line in the prediction cell: the crowd *at the lock*, which does
      not move during the window - the live reading is the card above. */
@@ -989,6 +991,26 @@ function renderEmotions() {
     state.emotionsDeepDirty = false;
     renderDeep(state.emotionsDeep, top);
   }
+}
+
+function renderEmotionsLearned(learned) {
+  const el = $("emotion-learned");
+  if (!el) return;
+  if (!learned || !learned.windows_settled) {
+    el.innerHTML = `<span class="muted">no settled window yet - the first boundary will start the record (every emotion needs 8 windows before it is judged)</span>`;
+    return;
+  }
+  const by = learned.by_emotion || {};
+  const rows = Object.keys(by)
+    .map((k) => ({ name: k, ...by[k] }))
+    .filter((r) => r.windows > 0)
+    .sort((a, b) => b.windows - a.windows)
+    .map((r) => {
+      const cls = r.verdict.startsWith("leans UP") ? "pos" : r.verdict.startsWith("leans DOWN") ? "neg" : r.verdict.startsWith("ties") ? "warn" : "muted";
+      return `<div class="detail-line"><b>${escapeHtml(r.label)}</b> · ${r.windows} window${r.windows === 1 ? "" : "s"} · ` +
+        `up ${r.up} / down ${r.down} / tie ${r.ties} · <span class="${cls}">${escapeHtml(r.verdict)}</span></div>`;
+    });
+  el.innerHTML = `<div class="detail-line muted">${learned.windows_settled} settled · ${learned.pending || 0} pending</div>` + rows.join("");
 }
 
 function renderLockedCrowdLine(line, dot) {
@@ -1034,7 +1056,7 @@ function renderEmotionFormula(e, top) {
     ` · shown <b>${Number(item.percent || 0).toFixed(0)}%</b> <span class="muted">(0.65·ramp + 0.35·min(1, 2.5·belief), band-lifted, EMA-smoothed)</span></div>`;
 }
 
-/* Round L: the crowd against the 22 formulas.  The formulas carry the vote
+/* Round L: the crowd against the 31 formulas.  The formulas carry the vote
    (40% of the fusion, the largest weight); the crowd is a bounded confidence
    modifier.  This block says whether the two agree and repeats the rule. */
 function renderFormulaAgreement(agree) {
@@ -2471,7 +2493,7 @@ async function loadFormulaMeta() {
   renderFormulas();
 }
 
-/* The self-test answers "do the 22 formulas do what they claim?".  It is the
+/* The self-test answers "do the 31 formulas do what they claim?".  It is the
    audit trail behind the numbers, so it is loaded once and shown per formula. */
 async function loadSelfTest() {
   const data = await getJSON("/api/formulas/self-test");
@@ -2487,7 +2509,7 @@ function selfTestVerdict(name) {
 }
 
 /* ------------------------------------------------- Round AP: LIVE CALCULATION
-   Every 2 s the EMOTION stream carries the 22 formula values of the live
+   Every 2 s the EMOTION stream carries the 31 formula values of the live
    pass.  Each formula keeps the last 90 points (3 min) and is drawn as a
    sparkline with its current value; the ticker lists what changed most in
    the last pass.  No timer of its own - it paints when a message arrives. */

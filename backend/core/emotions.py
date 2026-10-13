@@ -7,7 +7,7 @@ fear, a chase, a surrender - rather than on new information.
 
 So this module reads the same tape the formulas read and asks one question:
 **what is the crowd feeling right now, and on which timescale?**  It answers with
-eight named emotions, each an intensity in [0, 1], each built from features that
+nine named emotions, each an intensity in [0, 1], each built from features that
 are measured at microsecond resolution but aggregated over five bands:
 
 ===========  ==========================================================
@@ -18,7 +18,7 @@ are measured at microsecond resolution but aggregated over five bands:
 ``news``     the headlines: sentiment and how much of it there is
 ===========  ==========================================================
 
-The eight emotions
+The nine emotions
 ------------------
 ``FEAR``          sellers in control, volatility rising, spread widening.
 ``PANIC``         the acute form: tick-rate surge + a violent 1-3 s drop.
@@ -29,6 +29,9 @@ The eight emotions
 ``EUPHORIA``      "happy": price pinned at the top, buys aggressive, calm.
 ``FOMO``          chasing: fast up-move, volume surge, the ask side thinning.
 ``COMPLACENCY``   nothing happening: tight spread, low volatility, mid-range.
+``PARALYSIS``     Round AX: the price stays at one point - the 53 s window is
+                  likely to close exactly where it opened (a tie, which the
+                  contest scores as a loss).  Built from the PIN mathematics.
 
 Alongside the emotions the module measures the *manipulation* signature the user
 described - herding, whipsaw, book imbalance and stop hunts - and returns a
@@ -44,6 +47,7 @@ that shaped a signal cannot change afterwards.
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -57,7 +61,7 @@ from backend.core.prediction import consensus
 from backend.core.timebase import format_us, now_us, us_to_iso
 
 # ---------------------------------------------------------------------------
-# The eight emotions
+# The nine emotions
 # ---------------------------------------------------------------------------
 
 #: ``name -> (label, tone)``.  Tone is what the UI colours the bar with:
@@ -71,6 +75,7 @@ EMOTIONS: dict[str, tuple[str, str]] = {
     "EUPHORIA": ("Euphoria", "positive"),
     "FOMO": ("FOMO", "positive"),
     "COMPLACENCY": ("Complacency", "neutral"),
+    "PARALYSIS": ("Paralysis", "neutral"),
 }
 
 #: The five bands every emotion is decomposed into.
@@ -97,6 +102,7 @@ FAMILIES: dict[str, str] = {
     "EUPHORIA": "happiness",
     "FOMO": "chase",
     "COMPLACENCY": "calm",
+    "PARALYSIS": "freeze",
 }
 
 #: How the crowd's feeling translates into trade size (never into direction).
@@ -109,6 +115,7 @@ CONVICTION_HINT: dict[str, str] = {
     "EUPHORIA": "euphoria at the highs - the last buyers are arriving",
     "HOPE": "a tentative turn up - the crowd is not committed yet",
     "COMPLACENCY": "nothing is happening - the range is the story",
+    "PARALYSIS": "the tape is frozen - a tie is a loss, so the microprice decides the side, not the trend",
 }
 
 
@@ -190,7 +197,11 @@ EMOTION_FORMULAS: dict[str, str] = {
     "COMPLACENCY": (
         "COMPLACENCY = [0.35·calm_moves + 0.20·no_aggression + 0.20·middle "
         "+ 0.15·tight + 0.10·max(slow_tape, vol_calm)] × (1 − 0.9·turbulent) "
-        "× (1 − 0.70·max(fear, panic, fomo, ½·up_1s, ½·down_1s))"
+        "× (1 − 0.70·max(fear, panic, fomo, ½·up_1s, ½·down_1s)) × (1 − 0.60·pinned)"
+    ),
+    "PARALYSIS": (
+        "PARALYSIS = [0.40·pinned + 0.25·frozen_tape + 0.20·no_aggression + 0.15·tight] "
+        "× (1 − turbulent) × (1 − 0.80·ramp(max|z_1s, z_5s, z_win|; 0.6, 1.5))"
     ),
 }
 
@@ -231,6 +242,9 @@ TERM_DEFINITIONS: dict[str, str] = {
     "social_buzz": "ramp(social posts among the last 30 wire items; 2, 12)",
     "social_pos": "ramp(social_sentiment; 0.10, 0.60) × social_buzz",
     "social_neg": "ramp(−social_sentiment; 0.10, 0.60) × social_buzz",
+    "pinned": ("ramp(pin_prob; 0.05, 0.40) - pin_prob = max(share of the last 53 s windows that closed "
+               "exactly at their open, 2·Φ(tick/(2·σ₅₃)) − 1) - the probability the next window ties"),
+    "frozen_tape": "1 − ramp(tick rate / its own pace; 0.30, 1.00) - prints drying up",
 }
 
 
@@ -298,7 +312,7 @@ class EmotionTracker:
     switch_dwell: int = 2
     history_size: int = 300
     emotions: dict[str, float] = field(default_factory=dict)
-    #: EMA of the 22-formula consensus the live reading is checked against
+    #: EMA of the 31-formula consensus the live reading is checked against
     #: (the formulas are refreshed every 2 s; the verdict must not flicker on a
     #: single pass that crosses zero).  ``None`` until the first vote.
     consensus_ema: float | None = None
@@ -451,7 +465,7 @@ def _tone_bias(emotions: dict[str, float]) -> float:
         emotions.get(name, 0.0) for name in ("FEAR", "PANIC", "CAPITULATION", "DENIAL")
     )
     positive = sum(emotions.get(name, 0.0) for name in ("HOPE", "EUPHORIA", "FOMO"))
-    calm = emotions.get("COMPLACENCY", 0.0)
+    calm = emotions.get("COMPLACENCY", 0.0) + emotions.get("PARALYSIS", 0.0)
     total = negative + positive + calm + 0.15
     if total <= 1e-9:
         return 0.0
@@ -460,7 +474,7 @@ def _tone_bias(emotions: dict[str, float]) -> float:
 
 @dataclass
 class EmotionReport:
-    """The crowd's state on one tape: eight emotions plus the manipulation read."""
+    """The crowd's state on one tape: nine emotions plus the manipulation read."""
 
     asset: str = ""
     available: bool = False
@@ -475,7 +489,7 @@ class EmotionReport:
     manipulation: dict = field(default_factory=dict)
     tracker: dict = field(default_factory=dict)
     deep: dict = field(default_factory=dict)
-    #: how the crowd reading sits against the 22 formulas' vote (Round L)
+    #: how the crowd reading sits against the 31 formulas' vote (Round L)
     formula_agreement: dict = field(default_factory=dict)
 
     # -- convenience ----------------------------------------------------
@@ -678,7 +692,7 @@ class EmotionMonitor:
     hub: Any
     asset: str = "BTC"
     news_provider: Any = None  # callable -> tuple[NewsItem, ...]
-    #: callable -> (formula values, directional map): the live 22-formula pass
+    #: callable -> (formula values, directional map): the live 31-formula pass
     #: the crowd reading is cross-checked against
     formula_provider: Any = None
     interval_seconds: float = 0.5
@@ -904,7 +918,7 @@ def features(
     now_us_value: int | None = None,
     recent: int = 600,
 ) -> dict[str, float]:
-    """Everything the eight emotions are built from, in one flat dictionary.
+    """Everything the nine emotions are built from, in one flat dictionary.
 
     The keys are the vocabulary of the panel's tooltips: velocity per horizon
     (in units of the tape's own typical move), aggression, spread blow-out,
@@ -1089,9 +1103,54 @@ def features(
         out["social_buzz"] = 0.0
         out["social_sentiment"] = 0.0
 
+    # --- Round AX: the frozen tape --------------------------------------
+    # The contest loses on a tie, so "the price stays at one point" is a
+    # feeling of its own (PARALYSIS).  Same mathematics as the PIN formula:
+    # the share of overlapping 53 s windows that closed exactly at their
+    # open, and the parametric tie probability 2·Φ(tick/(2σ)) − 1.
+    out.update(_pin_statistics(times_ms, prices))
+
     # --- crowding / manipulation signature -------------------------------
     out["herding"] = _herding(ticks[-min(ticks.shape[0], 300) :])
     out["stop_hunt"] = _stop_hunt(recent_slice)
+    return out
+
+
+def _pin_statistics(times_ms: np.ndarray, prices: np.ndarray) -> dict[str, float]:
+    """Tick size, window sigma in ticks, empirical flat share and the parametric
+    tie probability of a window - the "price stays at one point" measure."""
+    out = {"tick_size": 0.0, "window_sigma_ticks": 0.0, "flat_share": 0.0, "pin_prob": 0.0, "pin_windows": 0.0}
+    if prices.size < 20:
+        return out
+    diffs = np.abs(np.diff(prices))
+    diffs = diffs[diffs > 1e-12]
+    if diffs.size == 0:
+        # not a single price change on the whole tape: pinned by definition
+        out.update(flat_share=1.0, pin_prob=1.0)
+        return out
+    tick = float(np.min(diffs))
+    out["tick_size"] = tick
+    horizon_ms = _window_horizon() * 1000.0
+    stride_ms = 5_000.0
+    starts = np.arange(float(times_ms[0]), float(times_ms[-1]) - horizon_ms + 1e-9, stride_ms)
+    if starts.size == 0:
+        # less than one window on the tape: score the tape itself as one window
+        starts = np.asarray([float(times_ms[0])])
+        horizon_ms = float(times_ms[-1]) - float(times_ms[0])
+    idx_open = np.searchsorted(times_ms, starts, side="left")
+    idx_close = np.searchsorted(times_ms, starts + horizon_ms, side="right") - 1
+    idx_open = np.clip(idx_open, 0, prices.size - 1)
+    idx_close = np.clip(idx_close, 0, prices.size - 1)
+    moves = (prices[idx_close] - prices[idx_open]) / tick
+    out["pin_windows"] = float(moves.size)
+    out["flat_share"] = float(np.mean(np.abs(moves) < 0.5)) if moves.size else 0.0
+    sigma = float(np.std(moves)) if moves.size > 1 else float(abs(moves[0])) if moves.size else 0.0
+    out["window_sigma_ticks"] = sigma
+    if sigma <= 1e-9:
+        parametric = 1.0 if out["flat_share"] > 0.5 else 0.0
+    else:
+        parametric = float(math.erf(0.5 / (sigma * math.sqrt(2.0))))   # 2Φ(1/(2σ)) − 1 in ticks
+    out["pin_prob"] = float(min(1.0, max(0.0, max(out["flat_share"], parametric))))
     return out
 
 
@@ -1121,7 +1180,7 @@ def _stop_hunt(prices: np.ndarray, lookback: int = 90) -> float:
 # The eight emotions, as legible formulas over those features
 # ---------------------------------------------------------------------------
 def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
-    """Turn the feature dictionary into the eight intensities.
+    """Turn the feature dictionary into the nine intensities.
 
     Each emotion is a weighted mean of ramps over *surprise units* - multiples of
     the tape's own typical move, of its own tick pace, of its own spread - so the
@@ -1182,6 +1241,9 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
     )
     calm_moves = (1.0 - _ramp(surprise, 0.8, 2.5)) * (1.0 - turbulent)
     no_aggression = 1.0 - _ramp(abs(f.get("aggression_5s", 0.0)), 0.10, 0.50)
+    # Round AX: the frozen tape - the window-tie probability and prints drying up
+    pinned = _ramp(f.get("pin_prob", 0.0), 0.05, 0.40)
+    frozen_tape = 1.0 - _ramp(f.get("tick_surge", 0.0), 0.30, 1.00)
 
     # --- where price sits, and how far it has come ------------------------
     pos = f.get("range_position", 0.5)
@@ -1261,6 +1323,12 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
         (0.10, "max(slow_tape, vol_calm)", max(slow_tape, vol_calm)),
     ])
 
+    # --- PARALYSIS: the price stays at one point ---------------------------
+    paralysis, paralysis_terms = _terms([
+        (0.40, "pinned", pinned), (0.25, "frozen_tape", frozen_tape),
+        (0.20, "no_aggression", no_aggression), (0.15, "tight", tight),
+    ])
+
     # Contrast: a crowd cannot be terrified and euphoric at once, and a tape
     # that is genuinely dead is not "afraid" - it is asleep.  These are
     # continuous transforms, not thresholds.
@@ -1277,12 +1345,16 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
     euphoria *= gates["EUPHORIA"]
     hope *= gates["HOPE"]
     fomo *= gates["FOMO"]
-    gates["COMPLACENCY"] = (1.0 - 0.70 * max(fear, panic, fomo, up_1s * 0.5, down_1s * 0.5)) * (1.0 - 0.9 * turbulent)
+    gates["COMPLACENCY"] = ((1.0 - 0.70 * max(fear, panic, fomo, up_1s * 0.5, down_1s * 0.5))
+                            * (1.0 - 0.9 * turbulent) * (1.0 - 0.60 * pinned))
     complacency *= gates["COMPLACENCY"]
+    # a frozen tape is not frozen while anything surprises it, nor on a turbulent hour
+    gates["PARALYSIS"] = (1.0 - turbulent) * (1.0 - 0.80 * _ramp(surprise, 0.6, 1.5))
+    paralysis *= gates["PARALYSIS"]
     terms = {
         "FEAR": fear_terms, "PANIC": panic_terms, "CAPITULATION": capitulation_terms,
         "DENIAL": denial_terms, "HOPE": hope_terms, "EUPHORIA": euphoria_terms,
-        "FOMO": fomo_terms, "COMPLACENCY": complacency_terms,
+        "FOMO": fomo_terms, "COMPLACENCY": complacency_terms, "PARALYSIS": paralysis_terms,
     }
 
     by_band = {
@@ -1295,6 +1367,7 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
             "EUPHORIA": _weighted([(0.6, buy), (0.4, tight)]),
             "FOMO": _weighted([(0.5, surge), (0.5, ask_thin)]),
             "COMPLACENCY": _weighted([(0.5, max(slow_tape, tight)), (0.5, tight)]),
+            "PARALYSIS": _weighted([(0.6, frozen_tape), (0.4, tight)]),
         },
         "seconds": {
             "FEAR": _weighted([(0.5, sell), (0.3, down_1s), (0.2, vol_rise)]),
@@ -1305,6 +1378,7 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
             "EUPHORIA": _weighted([(0.6, up_1s), (0.4, top)]),
             "FOMO": _weighted([(0.6, up_5s), (0.4, climax)]),
             "COMPLACENCY": _weighted([(0.6, vol_calm), (0.4, middle)]),
+            "PARALYSIS": _weighted([(0.5, settling), (0.5, no_aggression)]),
         },
         "window": {
             "FEAR": _weighted([(0.5, down_5s), (0.3, bottom), (0.2, vol_rise)]),
@@ -1315,6 +1389,7 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
             "EUPHORIA": _weighted([(0.7, top), (0.3, up_5s)]),
             "FOMO": _weighted([(0.6, up_5s), (0.4, climax)]),
             "COMPLACENCY": _weighted([(0.6, middle), (0.4, vol_calm)]),
+            "PARALYSIS": _weighted([(0.8, pinned), (0.2, frozen_tape)]),
         },
         "minutes": {
             "FEAR": _weighted([(0.6, candle_down), (0.4, vol_rise)]),
@@ -1325,6 +1400,7 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
             "EUPHORIA": _weighted([(0.6, top), (0.4, candle_up)]),
             "FOMO": _weighted([(0.6, candle_up), (0.4, run_up)]),
             "COMPLACENCY": _weighted([(0.6, vol_calm), (0.4, middle)]),
+            "PARALYSIS": _weighted([(0.6, _ramp(f.get("flat_share", 0.0), 0.02, 0.30)), (0.4, vol_calm)]),
         },
         "news": {
             "FEAR": max(news_neg * (0.6 + 0.4 * news_flow), 0.6 * social_neg),
@@ -1337,12 +1413,14 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
             # Silence in the headlines is not a feeling, so complacency has no
             # news band - otherwise "no news" would fake a calm reading.
             "COMPLACENCY": 0.0,
+            "PARALYSIS": 0.0,
         },
     }
     # Round AW: a tight spread or a mid-range price on a turbulent tape is not
     # calm on ANY timescale - the same gate the headline score gets.
     for band in by_band.values():
         band["COMPLACENCY"] = band["COMPLACENCY"] * (1.0 - 0.9 * turbulent)
+        band["PARALYSIS"] = band["PARALYSIS"] * gates["PARALYSIS"]
 
     drivers = {
         "FEAR": [
@@ -1388,6 +1466,13 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
             f"spread x{f.get('spread_blowout', 1.0):.2f} of normal",
             f"{f.get('tick_rate_hz', 0.0):.1f} ticks/s",
         ],
+        "PARALYSIS": [
+            f"tie probability {f.get('pin_prob', 0.0) * 100:.0f}% (flat windows {f.get('flat_share', 0.0) * 100:.0f}%"
+            f" of {int(f.get('pin_windows', 0))})",
+            f"window sigma {f.get('window_sigma_ticks', 0.0):.1f} ticks",
+            f"prints at x{f.get('tick_surge', 0.0):.2f} their own pace",
+            f"aggression {f.get('aggression_5s', 0.0):+.2f}",
+        ],
     }
     if f.get("turbulence", 1.0) >= 1.3:
         for name in ("FEAR", "PANIC", "FOMO", "EUPHORIA"):
@@ -1396,7 +1481,7 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
     order = [
         ("FEAR", fear), ("PANIC", panic), ("CAPITULATION", capitulation),
         ("DENIAL", denial), ("HOPE", hope), ("EUPHORIA", euphoria),
-        ("FOMO", fomo), ("COMPLACENCY", complacency),
+        ("FOMO", fomo), ("COMPLACENCY", complacency), ("PARALYSIS", paralysis),
     ]
     out: list[EmotionScore] = []
     for name, value in order:
@@ -1589,7 +1674,7 @@ def analyze(
 
 
 def formula_agreement(agreement: dict, tone_bias: float) -> dict:
-    """How the crowd's tone sits against the 22 formulas' weighted vote.
+    """How the crowd's tone sits against the 31 formulas' weighted vote.
 
     ``alignment`` is in [-1, 1]: the product of the two signs times the
     smaller magnitude, so a strong vote with a flat crowd is *not* a conflict
@@ -1648,8 +1733,98 @@ def formula_agreement(agreement: dict, tone_bias: float) -> dict:
             "crowd_vote_scale": 0.5,
         },
         "rule": (
-            "the 22 formulas carry 40% of the direction vote; the crowd never votes - "
+            "the 31 formulas carry 40% of the direction vote; the crowd never votes - "
             "it can only cut confidence by at most 12.5% when it disagrees (halved in Round P), "
             "and its tone counts at half weight in the learned evidence ledger"
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Round AX: what each emotion has actually been worth over 53 s windows
+# ---------------------------------------------------------------------------
+@dataclass
+class EmotionOutcomes:
+    """The learned side of the emotion layer.
+
+    Every window the dominant emotion at the boundary is recorded; when the
+    window settles (last trade at :53 against last trade at :00) the outcome
+    is scored under that emotion: up, down or tie.  The panel then prints
+    what FEAR, FOMO or PARALYSIS have *really* meant for the next 53 s on this
+    tape - the user asked for emotions that are measured, not asserted - and
+    PARALYSIS is scored on the thing it predicts: the tie rate.
+
+    Nothing here changes a locked side.  The ledger is persisted with the
+    other learners (StateVault) so a restart keeps the record.
+    """
+
+    #: emotion -> [n, up, down, tie, sum intensity]
+    counts: dict[str, list[float]] = field(default_factory=dict)
+    #: windows awaiting settlement: cycle -> (emotion, intensity, at)
+    pending: dict[int, tuple[str, float, float]] = field(default_factory=dict)
+    #: the last 200 settled rows, newest last: (cycle, emotion, intensity, outcome)
+    rows: list[tuple[int, str, float, str]] = field(default_factory=list)
+    MAX_PENDING: int = 20
+
+    def record(self, cycle: int, dominant: str, intensity: float) -> None:
+        if not dominant:
+            return
+        self.pending[int(cycle)] = (str(dominant), float(intensity), time.time())
+        if len(self.pending) > self.MAX_PENDING:
+            for stale in sorted(self.pending)[: len(self.pending) - self.MAX_PENDING]:
+                self.pending.pop(stale, None)
+
+    def settle(self, cycle: int, entry: float, exit_px: float) -> dict | None:
+        item = self.pending.pop(int(cycle), None)
+        if item is None or entry <= 0 or exit_px <= 0:
+            return None
+        name, intensity, _ = item
+        outcome = "tie" if exit_px == entry else ("up" if exit_px > entry else "down")
+        row = self.counts.setdefault(name, [0.0, 0.0, 0.0, 0.0, 0.0])
+        row[0] += 1.0
+        row[{"up": 1, "down": 2, "tie": 3}[outcome]] += 1.0
+        row[4] += float(intensity)
+        self.rows.append((int(cycle), name, float(intensity), outcome))
+        del self.rows[:-200]
+        return {"cycle": int(cycle), "emotion": name, "outcome": outcome}
+
+    @staticmethod
+    def _verdict(n: float, up: float, down: float, tie: float) -> tuple[str, float]:
+        """Lean in [-1, 1] (up share minus down share among decided windows)
+        and a plain verdict; needs 8 windows before it says anything."""
+        decided = up + down
+        if n < 8:
+            return ("learning", 0.0)
+        lean = (up - down) / decided if decided > 0 else 0.0
+        if tie / n >= 0.25:
+            return ("ties - a frozen tape under this emotion", float(lean))
+        # two-sided binomial z against 50 %: |z| ≥ 1.64 is a real tilt
+        z = abs(up - decided / 2.0) / math.sqrt(decided / 4.0) if decided > 0 else 0.0
+        if z < 1.64:
+            return ("no directional edge", float(lean))
+        return (("leans UP" if lean > 0 else "leans DOWN") + f" ({z:.1f}σ)", float(lean))
+
+    def summary(self) -> dict:
+        out = {}
+        for name in EMOTIONS:
+            n, up, down, tie, s_int = self.counts.get(name, [0.0, 0.0, 0.0, 0.0, 0.0])
+            verdict, lean = self._verdict(n, up, down, tie)
+            out[name] = {
+                "label": EMOTIONS[name][0],
+                "windows": int(n),
+                "up": int(up), "down": int(down), "ties": int(tie),
+                "up_rate": round(up / n, 4) if n else 0.0,
+                "tie_rate": round(tie / n, 4) if n else 0.0,
+                "mean_intensity": round(s_int / n, 4) if n else 0.0,
+                "lean": round(lean, 4),
+                "verdict": verdict,
+            }
+        settled = sum(int(v[0]) for v in self.counts.values())
+        return {
+            "windows_settled": settled,
+            "pending": len(self.pending),
+            "by_emotion": out,
+            "recent": [{"cycle": c, "emotion": e, "intensity": round(i, 3), "outcome": o} for c, e, i, o in self.rows[-12:]],
+            "note": ("per emotion dominant at the boundary: how the next 53 s window really closed on this tape "
+                     "(up / down / tie, last trade to last trade) - measured, never asserted"),
+        }

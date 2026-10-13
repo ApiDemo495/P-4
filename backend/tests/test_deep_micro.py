@@ -344,7 +344,7 @@ def test_the_prediction_reasoning_carries_the_deep_read() -> None:
 
 
 def test_formula_consensus_pulls_the_filter_toward_the_formulas_side():
-    """Round L: the 22-formula vote is evidence for the crowd filter.  With the
+    """Round L: the 31-formula vote is evidence for the crowd filter.  With the
     same tape, a bullish consensus must raise the buying emotions' likelihood
     and a bearish one the selling emotions' - and with fewer than three voters
     the formulas must not move the filter at all."""
@@ -361,5 +361,5 @@ def test_formula_consensus_pulls_the_filter_toward_the_formulas_side():
     assert ll_bull["HOPE"] > ll_bear["HOPE"] and ll_bull["EUPHORIA"] > ll_bear["EUPHORIA"]
     assert ll_bear["FEAR"] > ll_bull["FEAR"] and ll_bear["PANIC"] > ll_bull["PANIC"]
     last = bull["chain"][-1]
-    assert last["name"] == "22-formula cross-check" and last["value"] == 0.6
+    assert last["name"] == "31-formula cross-check" and last["value"] == 0.6
     assert "12 formulas lean BUY" in last["reads"]

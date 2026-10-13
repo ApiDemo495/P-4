@@ -325,6 +325,8 @@
         <div class="timescale-strip" id="emotion-timescales"></div>
         <div class="cell-label" style="margin-top:12px">AT LOCK TIME <span class="muted">what shaped this signal</span></div>
         <div class="emotion-locked" id="emotion-locked">—</div>
+        <div class="cell-label" style="margin-top:12px">WHAT EACH EMOTION HAS REALLY MEANT <span class="muted">next 53 s window under it - up / down / tie, measured on this tape</span></div>
+        <div class="emotion-locked" id="emotion-learned">—</div>
         <div class="cell-label" style="margin-top:12px">THE BRAIN'S OWN DOPAMINE <span class="muted">reward prediction error on wins and losses</span></div>
         <div class="brain-mood" id="brain-mood">—</div>
       </div>
@@ -504,7 +506,7 @@
   </section>
 
   <!-- ======================= FORMULA EXPLORER ======================= -->
-  <!-- Round AP: LIVE CALCULATION - the 22 formulas as they are recomputed every
+  <!-- Round AP: LIVE CALCULATION - the 31 formulas as they are recomputed every
        2 s on the moving tape (the locked signal does not change; this is the
        engine visibly working between windows). -->
   <section class="card" data-panel="livecalc" id="livecalc-card">
@@ -518,7 +520,7 @@
 
   <section class="card" data-panel="formulas">
     <div class="card-head">
-      <h2>▼ Formula Explorer <span class="muted">(22 formulas + DRG)</span></h2>
+      <h2>▼ Formula Explorer <span class="muted">(31 formulas + DRG)</span></h2>
       <div class="explorer-tools">
         <span class="pill" id="live-note">values refresh every 15s · signal stays locked</span>
         <button class="btn tiny" id="toggle-explain">Show descriptions</button>

@@ -1,6 +1,6 @@
 """Dopamine Reward Gradient (DRG) - the reward-learning meta-parameter.
 
-DRG is not one of the 22 market formulas because it runs on a different
+DRG is not one of the 31 market formulas because it runs on a different
 timescale: it consumes the *outcomes of previous cycles* rather than current
 market data, and its output modulates the brain (the PAM/PPL1 dopamine nodes)
 instead of acting as a signal of its own.
