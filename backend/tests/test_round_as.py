@@ -364,3 +364,53 @@ def test_agents_and_formulas_speak_the_53_second_window():
         drg_outcomes = np.array([[1.0, 8.0], [-1.0, 9.0]])
     value = drg.compute(Snap(), drg.State(), None, {})
     assert -0.5 < value < 0.0, value
+
+
+# -------------------------------------------- Round AX: 31 formulas, the tie problem
+def test_the_nine_window_formulas_are_distinct_and_pin_drives_the_pick():
+    import numpy as np
+    from backend.formulas.engine import ALL_FORMULAS, WINDOW_FORMULAS, CATEGORY_NAMES
+    from backend.formulas import logic as logic_module
+    from backend.core.competition import BoundaryFeatures, BoundaryPicker
+
+    assert len(ALL_FORMULAS) == 31 and len(WINDOW_FORMULAS) == 9
+    names = [s.name for s in WINDOW_FORMULAS]
+    assert names == ["PIN", "MPL", "RBB", "RAR", "WDR", "PRT", "FIH", "LAI", "ANA"]
+    assert CATEGORY_NAMES["I"] == "The 53-second Window"
+    # every one has its own mathematics, logic entry, detail and double-check
+    rules = set()
+    for spec in WINDOW_FORMULAS:
+        assert spec.module.DOUBLE_CHECK not in rules
+        rules.add(spec.module.DOUBLE_CHECK)
+        assert logic_module.get(spec.name) is not None
+        assert spec.name in logic_module.DETAIL
+        assert callable(spec.module.double_check)
+    assert not WINDOW_FORMULAS[0].directional   # PIN is a risk, not a side
+    assert all(s.directional for s in WINDOW_FORMULAS[1:])
+
+    # PIN on a tape that does not move reads near 1; on a live tape near 0
+    from backend.core.frozen_snapshot import FrozenMarketSnapshot
+    from backend.formulas.category_i_window import pin
+    n = 2400
+    t = np.arange(n) * 100.0
+    flat = np.full(n, 60000.0); flat[::7] += 0.01          # one-tick flicker
+    rng = np.random.default_rng(1)
+    live = 60000.0 * np.exp(np.cumsum(rng.normal(0, 3e-5, n)))
+    book = np.zeros((2, 20, 2)); book[0, 0] = (59999.99, 5); book[1, 0] = (60000.01, 5)
+    def snap(px):
+        ticks = np.column_stack([t, px, np.ones(n), np.where(rng.random(n) > 0.5, 1.0, -1.0)])
+        return FrozenMarketSnapshot(timestamp=0.0, btc_ticks=ticks, paxg_ticks=ticks, btc_book=book, paxg_book=book,
+                                    btc_book_prev=book, paxg_book_prev=book, btc_candles=np.zeros(0), paxg_candles=np.zeros(0),
+                                    news_items=(), drg_outcomes=np.zeros((0, 2)), btc_tick_count=n, paxg_tick_count=n)
+    p_flat = pin.compute(snap(flat), "BTC", pin.State(), {}, {})
+    p_live = pin.compute(snap(live), "BTC", pin.State(), {}, {})
+    assert p_flat > 0.6 > 0.2 > p_live, (p_flat, p_live)
+
+    # with a high tie risk the pick follows the microstructure, not the recipe
+    picker = BoundaryPicker()
+    f = BoundaryFeatures(entry=60000.0, entry_side=0.0, microprice=59999.997, gap_ticks=-0.3, r3_ticks=0.0,
+                         ofi5=-0.1, book_imbalance=-0.1, pin_rate=0.8, tick=0.01, prints_5s=3)
+    pick = picker.pick(1, f, "BUY", 0.62)
+    assert pick.side == "SELL" and "tie risk 80%" in pick.note
+    f2 = f.__class__(**{**f.__dict__, "pin_rate": 0.0})
+    assert picker.pick(2, f2, "BUY", 0.62).side == "BUY"

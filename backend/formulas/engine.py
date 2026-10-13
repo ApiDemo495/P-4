@@ -36,6 +36,7 @@ from backend.formulas.category_e_temporal import mcpe, mps, twrs
 from backend.formulas.category_f_kalman import dskd
 from backend.formulas.category_g_news import niv, smd
 from backend.formulas.category_h_brain import ccsv2, kcae
+from backend.formulas.category_i_window import ana, fih, lai, mpl, pin, prt, rar, rbb, wdr
 
 log = logging.getLogger("drosophila.formulas")
 
@@ -98,6 +99,7 @@ class FormulaSpec:
 #: ``&b`` defaults per category (see ``FormulaSpec.feeds``).
 CATEGORY_FEEDS: dict[str, tuple[str, ...]] = {
     "A": ("tape", "book"),
+    "I": ("tape", "book"),
     "B": ("book", "tape"),
     "C": ("cross", "tape"),
     "D": ("candles", "tape"),
@@ -378,6 +380,7 @@ CATEGORY_NAMES = {
     "F": "Kalman & State Estimation",
     "G": "News & Sentiment",
     "H": "Drosophila Brain Output",
+    "I": "The 53-second Window",
     "REWARD": "Reward Learning",
 }
 
@@ -410,7 +413,25 @@ BRAIN_FORMULAS: tuple[FormulaSpec, ...] = (
     FormulaSpec("CCSv2", ccsv2, "H", 22),
 )
 
-ALL_FORMULAS: tuple[FormulaSpec, ...] = INPUT_FORMULAS + BRAIN_FORMULAS
+#: Round AX - formulas 23-31, designed for the contest window itself: the
+#: tie (PIN), the mechanics of the entry print (MPL, RBB), the horizon-matched
+#: statistics (WDR, PRT, RAR), the book's own flow (FIH), who trades with size
+#: (LAI) and what this boundary state did before on this tape (ANA).  They do
+#: not feed the projection neurons (the connectome has 20 inputs); they vote
+#: in the formula consensus, the ledger and the agent prompts.
+WINDOW_FORMULAS: tuple[FormulaSpec, ...] = (
+    FormulaSpec("PIN", pin, "I", 23),
+    FormulaSpec("MPL", mpl, "I", 24),
+    FormulaSpec("RBB", rbb, "I", 25),
+    FormulaSpec("RAR", rar, "I", 26),
+    FormulaSpec("WDR", wdr, "I", 27),
+    FormulaSpec("PRT", prt, "I", 28),
+    FormulaSpec("FIH", fih, "I", 29),
+    FormulaSpec("LAI", lai, "I", 30),
+    FormulaSpec("ANA", ana, "I", 31),
+)
+
+ALL_FORMULAS: tuple[FormulaSpec, ...] = INPUT_FORMULAS + BRAIN_FORMULAS + WINDOW_FORMULAS
 
 
 def logic_entry(name: str):
@@ -684,7 +705,7 @@ class FormulaEngine:
 
     # ------------------------------------------------------------------
     def run(self, snapshot, asset: str) -> FormulaResult:
-        """Execute all 22 formulas + DRG against ``snapshot``."""
+        """Execute all 31 formulas + DRG against ``snapshot``."""
         asset = asset.upper()
         started_us = perf_us()
         params = cfg.asset_params(asset)
@@ -736,6 +757,11 @@ class FormulaEngine:
         # --- Formula 21 (KCAE), then 22 (CCSv2) ---------------------------
         self._run_one(BRAIN_FORMULAS[0], snapshot, asset, params, ctx, result)
         self._run_one(ccs_spec, snapshot, asset, params, ctx, result)
+
+        # --- Formulas 23-31: the 53-second window (Round AX) ---------------
+        for spec in WINDOW_FORMULAS:
+            self._run_one(spec, snapshot, asset, params, ctx, result)
+        ctx["_pin"] = float(result.values.get("PIN", 0.0))
 
         result.ccs_confidence = float(ctx.get("_ccsv2_confidence", 0.0))
         result.kcae = float(ctx.get("KCAE", 0.0))

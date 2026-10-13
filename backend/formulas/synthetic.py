@@ -623,8 +623,12 @@ def _build_scenario(key: str) -> Scenario:
         # little thinner than "15 seconds ago" on the side being eaten.
         erosion = 0.05 + 0.9 * (w / max(1, WINDOWS - 1))
         book = _book(mid, btc_tick, direction, cliff=True, erosion=erosion)
+        # Round AX: the previous ladder sits where the price WAS - one tick
+        # below on a rising tape, one tick above on a falling one, in place
+        # on a balanced one (it used to be "one tick below" for every tape,
+        # which made a book-flow reading bullish on the bear tape).
         book_prev = _book(
-            _clip_around(mid, -btc_tick), btc_tick, direction, cliff=True,
+            _clip_around(mid, -direction * btc_tick), btc_tick, direction, cliff=True,
             erosion=max(0.0, erosion - 0.06),
         )
         payload = {
@@ -634,7 +638,7 @@ def _build_scenario(key: str) -> Scenario:
             "btc_book": book,
             "paxg_book": _book(paxg_mid, paxg_tick, direction, cliff=False),
             "btc_book_prev": book_prev,
-            "paxg_book_prev": _book(_clip_around(paxg_mid, -paxg_tick), paxg_tick, direction, cliff=False),
+            "paxg_book_prev": _book(_clip_around(paxg_mid, -direction * paxg_tick), paxg_tick, direction, cliff=False),
             "btc_candles": _candles(btc_prices[max(0, hi - TICKS_PER_WINDOW * 12) : hi]),
             "paxg_candles": _candles(paxg_prices[max(0, hi - TICKS_PER_WINDOW * 12) : hi]),
             "news_items": tuple(spec["news"]),

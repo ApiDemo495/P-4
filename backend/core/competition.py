@@ -215,12 +215,28 @@ class BoundaryPicker:
         x = self._x(f, recipe_p_up)
         contributions = {k: self.w[k] * x[k] for k in x}
         z = sum(contributions.values())
-        p_up = _sigmoid(z)
-        # A tie loses, so in a pinned tape the pick must break the tie on the
-        # side the book leans - not on a recipe that is indifferent to size.
-        if f.pin_rate >= 0.25 and abs(p_up - 0.5) < 0.04 and abs(f.gap_ticks) > 0.05:
-            p_up = 0.5 + 0.06 * (1 if f.gap_ticks > 0 else -1)
-            tie_note = f" · pinned tape ({f.pin_rate:.0%} flat closes): tie broken toward the microprice"
+        p_full = _sigmoid(z)
+        # Round AX - the tie problem.  ``pin_rate`` is the tie probability
+        # (the larger of the ledger's flat-close share and the PIN formula).
+        # When the window is likely to end within a tick of where it started,
+        # the close is decided by the microstructure of the entry print - the
+        # queue the microprice leans to, the bounce off the print side, the
+        # book's own flow - not by a 53 s trend recipe that is indifferent to
+        # a one-tick move.  So the microstructure terms (everything but the
+        # recipe) are re-read on their own, amplified, and blended in with the
+        # tie probability as the weight.
+        micro_z = 2.0 * sum(v for k, v in contributions.items() if k not in ("recipe", "bias"))
+        p_micro = _sigmoid(micro_z)
+        pin = float(max(0.0, min(1.0, f.pin_rate)))
+        p_up = (1.0 - pin) * p_full + pin * p_micro
+        if pin >= 0.25:
+            tie_note = (f" · tie risk {pin:.0%}: microstructure weighted {pin:.0%}"
+                        f" (micro P(up) {p_micro:.3f}, full {p_full:.3f})")
+            # never leave the pick on the knife edge in a pinned tape: break
+            # toward the microprice if the blend is still indifferent
+            if abs(p_up - 0.5) < 0.02 and abs(f.gap_ticks) > 0.05:
+                p_up = 0.5 + 0.04 * (1 if f.gap_ticks > 0 else -1)
+                tie_note += " · tie broken toward the microprice"
         else:
             tie_note = ""
         side = "BUY" if p_up >= 0.5 else "SELL"

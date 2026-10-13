@@ -114,7 +114,10 @@ SYSTEM_PROMPT = (
     "6. If NIV and TAI disagree (SMD far from 0), note the divergence.\n"
     "7. Never output confidence > 0.95.\n"
     "8. Reference at least 2 specific formula names in reasoning.\n"
-    "9. Pay special attention to HEDGE formulas (HRDD, SHRP, GCDV, HSI) when analyzing PAXG."
+    "9. Pay special attention to HEDGE formulas (HRDD, SHRP, GCDV, HSI) when analyzing PAXG.\n"
+    "10. THE WINDOW formulas are built for this exact horizon. PIN is the probability the "
+    "window ends unchanged (a loss either way): when PIN > 0.35, decide from MPL, RBB and FIH "
+    "(where the next print leans), not from the trend."
 )
 
 #: Gemini's structured-output schema (Section 7.1, Fix 1) - guarantees parseable JSON.
@@ -146,6 +149,10 @@ def build_cycle_prompt(context: dict) -> str:
         f"TEMPORAL: MCPE={f.get('MCPE', 0):+.3f} MPS={f.get('MPS', 0):+.3f} "
         f"TWRS={f.get('TWRS', 0):+.3f}\n"
         f"KALMAN: DSKD={f.get('DSKD', 0):+.3f}\n"
+        f"THE WINDOW (53 s): PIN(tie risk)={f.get('PIN', 0):.2f} MPL={f.get('MPL', 0):+.3f} "
+        f"RBB={f.get('RBB', 0):+.3f} RAR={f.get('RAR', 0):+.3f} WDR={f.get('WDR', 0):+.3f} "
+        f"PRT={f.get('PRT', 0):+.3f} FIH={f.get('FIH', 0):+.3f} LAI={f.get('LAI', 0):+.3f} "
+        f"ANA={f.get('ANA', 0):+.3f}\n"
         f"NEWS: NIV={f.get('NIV', 0):+.3f} SMD={f.get('SMD', 0):+.3f} "
         f"| Latest: \"{context.get('headline', '')}\"\n"
         f"BRAIN: KCAE={f.get('KCAE', 0):.3f} CCSv2={f.get('CCSv2', 0):+.3f} "

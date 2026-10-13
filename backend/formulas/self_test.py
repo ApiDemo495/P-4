@@ -108,6 +108,28 @@ EXPECTATIONS: tuple[Expectation, ...] = (
                 kind="range", lo=0.0, hi=1.0),
     Expectation("CCSv2", "the whole circuit votes with the tape",
                 threshold=0.15, flat_max=0.45),
+    # Round AX - the 53-second window.  The synthetic tapes are one window
+    # long (600 ticks at 10 Hz), so the horizon statistics that need two or
+    # more windows (WDR, PRT, ANA) legitimately abstain there; what can be
+    # claimed on one window is claimed.
+    Expectation("PIN", "a tie probability inside [0, 1]",
+                kind="range", lo=0.0, hi=1.0),
+    Expectation("MPL", "a lean inside [-1, 1]",
+                kind="range", lo=-1.0, hi=1.0),
+    Expectation("RBB", "a bounce inside [-1, 1]",
+                kind="range", lo=-1.0, hi=1.0),
+    Expectation("RAR", "a hazard lean inside [-1, 1]",
+                kind="range", lo=-1.0, hi=1.0),
+    Expectation("WDR", "a horizon drift inside [-1, 1]",
+                kind="range", lo=-1.0, hi=1.0),
+    Expectation("PRT", "a conditional lean inside [-1, 1]",
+                kind="range", lo=-1.0, hi=1.0),
+    Expectation("FIH", "book flow builds the side that is being bid",
+                threshold=0.10, flat_max=0.60),
+    Expectation("LAI", "size buys the bull tape, sells the bear tape",
+                threshold=0.10, flat_max=0.60),
+    Expectation("ANA", "an excess share inside [-1, 1]",
+                kind="range", lo=-1.0, hi=1.0),
     Expectation("DRG", "a reward signal inside [-1, 1]",
                 kind="range", lo=-1.0, hi=1.0),
 )

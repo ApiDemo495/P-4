@@ -1682,6 +1682,14 @@ function renderCompetition(c, pick) {
   $("c-winrate").textContent = c.win_rate_100 === null || c.win_rate_100 === undefined ? `— (${c.scored} scored)` : `${(c.win_rate_100 * 100).toFixed(1)}% · ${c.scored} scored`;
   $("c-winrate").className = c.win_rate_100 >= 0.7 ? "pos" : c.win_rate_100 !== null && c.win_rate_100 < 0.5 ? "neg" : "";
   $("c-best").textContent = `${c.best_streak} · ${c.ties} tie${c.ties === 1 ? "" : "s"} (lost)`;
+  if ($("c-tie")) {
+    const tie = Number(c.tie_risk ?? 0);
+    const tieText = tie >= 0.6 ? "PINNED - the side comes from the microprice, not the trend"
+      : tie >= 0.35 ? "high - microstructure outweighs the recipe for this pick"
+        : tie >= 0.15 ? "moderate" : tie >= 0.05 ? "low" : "none - a live tape";
+    $("c-tie").textContent = `${(tie * 100).toFixed(0)}% · ${tieText}`;
+    $("c-tie").className = tie >= 0.35 ? "neg" : tie >= 0.15 ? "warn" : "pos";
+  }
   const p = state.boundaryPick;
   if (p && p.side) {
     $("c-pick").textContent = p.note;

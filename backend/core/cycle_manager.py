@@ -622,6 +622,8 @@ class CycleManager:
             recipe_p_up = 0.5 + 0.5 * edge if draft.signal == "BUY" else 0.5 - 0.5 * edge
             recent = list(self.competition.rows)[-30:]
             pin_rate = (sum(1 for r in recent if r.tie) / len(recent)) if len(recent) >= 5 else 0.0
+            # Round AX: the PIN formula's tie probability for THIS tape right now
+            pin_rate = max(pin_rate, float(self.last_live_formulas.get("PIN", 0.0) or 0.0))
             bid, ask, bq, aq = self.market.l1(self.asset)
             feats = boundary_features(self.market.buffers[self.asset].ticks.view(600), bid, ask, bq, aq,
                                       time.time() * 1000.0, pin_rate)
@@ -2160,6 +2162,7 @@ class CycleManager:
         out = self.competition.to_dict()
         pk = self.picker.to_dict()
         moved = {k: round(v - pk["priors"][k], 3) for k, v in pk["weights"].items() if abs(v - pk["priors"][k]) >= 0.01}
+        out["tie_risk"] = round(float(self.last_live_formulas.get("PIN", 0.0) or 0.0), 3)
         out["learning"] = {
             "updates": pk["updates"],
             "log_loss_200": pk["log_loss_200"],

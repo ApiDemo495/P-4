@@ -234,7 +234,7 @@ def test_the_prediction_detail_explains_the_side(manager: CycleManager):
     detail = prediction["detail"]
     assert detail["side"] in ("BUY", "SELL")
     assert detail["formulas_evaluated"] >= 20
-    assert set(detail["category_scores"]) == set("ABCDEFGH")
+    assert set(detail["category_scores"]) == set("ABCDEFGHI")
     assert detail["supporters"], "a side with no supporters cannot be explained"
     engine = detail["agreement"]["engine"]
     assert engine["compute_us"] > 0

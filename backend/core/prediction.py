@@ -46,6 +46,8 @@ CATEGORY_WEIGHTS = {
     "F": 0.9,
     "G": 0.7,
     "H": 1.0,
+    # Round AX: built for the contest horizon - they lead with the tape readers
+    "I": 1.1,
 }
 
 

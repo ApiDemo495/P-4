@@ -12,7 +12,7 @@ router = APIRouter()
 
 @router.get("/api/formulas")
 async def formula_catalogue() -> dict:
-    """All 22 formulas with metadata + the logic registry (used by the explorer)."""
+    """All 31 formulas with metadata + the logic registry (used by the explorer)."""
     return FormulaEngine.metadata()
 
 

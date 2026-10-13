@@ -633,6 +633,170 @@ register(
 )
 
 
+# ---------------------------------------------------------------------------
+# Category I - the 53-second window (Round AX)
+# ---------------------------------------------------------------------------
+register(
+    Logic(
+        name="PIN",
+        expression="PIN = max( share of 53 s windows that closed at their open,  2·Φ(tick / (2·σ₅₃)) − 1 )",
+        reads=("trade tape", "best bid/ask (tick size)", "overlapping 53 s windows every 5 s"),
+        steps=(
+            "Estimate the exchange tick from the tape's smallest price steps (floored by half the spread).",
+            "Lay overlapping 53 s windows over the trade tape every 5 s and record each one's open and close - the contest's own sample.",
+            "Empirical: the share of those windows whose close equals its open within half a tick.",
+            "Parametric: with σ₅₃ = the std of window returns in ticks, the chance a normal move stays within ±½ tick is 2·Φ(0.5/σ₅₃) − 1.",
+            "Take the larger of the two: the tie risk of calling THIS window.",
+        ),
+        bands=_bands(
+            (0.60, 1.01, "pinned - a tie (= loss) is the most likely outcome; only the microprice can break it"),
+            (0.35, 0.60, "high tie risk - the side must come from the book, not the trend"),
+            (0.15, 0.35, "moderate tie risk"),
+            (0.05, 0.15, "low tie risk - the window will move"),
+            (-0.01, 0.05, "no tie risk - a live tape"),
+        ),
+        sign="not directional: it is the probability the window ends unchanged (a loss either way)",
+        trace=("tick size", "horizon windows", "flat share", "window sigma", "parametric tie", "pin probability"),
+        why="The user's problem in one number: 'sometimes price stays at one point' - and a tie loses.",
+    )
+)
+
+register(
+    Logic(
+        name="MPL",
+        expression="MPL = tanh( (microprice − last trade) / (0.5 tick) ) × min(1, |Q_bid − Q_ask| / (0.2·(Q_bid + Q_ask)))",
+        reads=("best bid / ask and their queue sizes", "last trade price", "tick size"),
+        steps=(
+            "microprice = (bid·Q_ask + ask·Q_bid) / (Q_bid + Q_ask): the quote with the thinner queue is consumed first, so the fair price leans toward it.",
+            "Measure the lean from the LAST TRADE (the contest's reference), in ticks.",
+            "Squash at half a tick; scale by the queue imbalance so a one-lot queue cannot claim a strong lean.",
+        ),
+        bands=DIRECTIONAL_SYMMETRIC,
+        sign="positive = the next print leans above the entry (BUY breaks the tie upward)",
+        trace=("microprice", "last trade", "lean", "queue imbalance", "credibility"),
+        why="In a pinned window the close is decided by which queue empties first - this is that queue.",
+    )
+)
+
+register(
+    Logic(
+        name="RBB",
+        expression="RBB = −entry side × tanh(half spread in ticks) × (1 − |net move| / path length)",
+        reads=("aggressor side of the last trade", "spread (book, or Roll's estimator from the tape)", "last window path"),
+        steps=(
+            "The entry is the last trade; if it printed at the ask (buyer), the next print is as likely at the bid - mechanically 'down'.",
+            "Half the spread in ticks is the size of that bounce (Roll 1984: sqrt(−cov(Δp_t, Δp_t−1)) when the book is missing).",
+            "Multiply by (1 − drift share): on a trending tape the bounce is swamped and RBB fades to zero.",
+        ),
+        bands=DIRECTIONAL_SYMMETRIC,
+        sign="positive = the entry printed at the bid, the bounce leans up",
+        trace=("entry side", "half spread", "drift share", "bounce"),
+        why="The only edge that exists on a dead tape is the side of the print you entered on.",
+    )
+)
+
+register(
+    Logic(
+        name="RAR",
+        expression="RAR = run direction × (1 − 2·F(age)),  F = empirical CDF of run lengths on the tape",
+        reads=("trade prices", "monotone runs and their lengths"),
+        steps=(
+            "Split the price path into monotone runs (flat prints extend a run).",
+            "F(age) = share of past runs no longer than the current run: its age percentile.",
+            "A run past its median age (F > 0.5) is more likely to end inside the window than to continue: lean against it; a young run: lean with it.",
+        ),
+        bands=DIRECTIONAL_SYMMETRIC,
+        sign="positive = the hazard favours an up close (young up-run or old down-run)",
+        trace=("runs on the tape", "current run", "median run", "age percentile", "hazard lean"),
+        why="It asks how much life THIS run has left, not how persistent the tape is on average.",
+    )
+)
+
+register(
+    Logic(
+        name="WDR",
+        expression="WDR = tanh( t / 2 ),  t = weighted mean(53 s window returns) / (sd / √n_independent)",
+        reads=("overlapping 53 s windows every 5 s", "half-life 2 windows"),
+        steps=(
+            "Returns of overlapping 53 s windows are the contest's own sample.",
+            "Recency-weight them (half-life two windows) and take mean and dispersion.",
+            "Independent sample size = effective n / overlap, so 5 s strides cannot fake precision; t = mean / standard error.",
+        ),
+        bands=DIRECTIONAL_SYMMETRIC,
+        sign="positive = windows have been closing up more than chance at this horizon",
+        trace=("horizon windows", "weighted mean return", "dispersion", "independent windows", "t-statistic"),
+        why="Momentum measured in the unit that is scored: one window.",
+    )
+)
+
+register(
+    Logic(
+        name="PRT",
+        expression="PRT = ρ₁(shrunk) × sign(last window) × min(1, |last window| / σ)",
+        reads=("non-overlapping 53 s window returns", "the window that just closed"),
+        steps=(
+            "ρ₁ = lag-one autocorrelation of consecutive window returns on the tape.",
+            "Shrink ρ₁ toward zero by its standard error 1/√n.",
+            "Apply it to the last window: negative ρ₁ after an up window leans SELL (horizon mean-reversion); positive leans BUY (horizon momentum).",
+        ),
+        bands=DIRECTIONAL_SYMMETRIC,
+        sign="positive = the next window leans up given how the last one closed",
+        trace=("consecutive windows", "lag-1 autocorrelation", "shrunk ρ₁", "last window", "last window strength"),
+        why="WDR says which way windows close; PRT says what follows the one that just closed.",
+    )
+)
+
+register(
+    Logic(
+        name="FIH",
+        expression="FIH = tanh( OFI / 0.5 ),  OFI = Σ_top5 (bid-side flow + ask-side flow) / mean depth",
+        reads=("this book frame and the previous one, top 5 levels"),
+        steps=(
+            "Cont-Kukanov-Stoikov order-flow imbalance: size arriving on the bids counts +, size leaving −; the reverse on the asks; a price level that improves counts its whole size.",
+            "Divide by the mean depth of the levels so it is dimensionless.",
+            "Squash at half a depth-unit.",
+        ),
+        bands=DIRECTIONAL_SYMMETRIC,
+        sign="positive = net flow is building the bid / pulling the ask",
+        trace=("bid-side flow", "ask-side flow", "mean depth", "OFI"),
+        why="Quotes move the price without a trade - the mechanism that breaks a pinned window.",
+    )
+)
+
+register(
+    Logic(
+        name="LAI",
+        expression="LAI = (Σ large buy − Σ large sell) / Σ large  ×  Σ large / Σ all,  large = notional ≥ 80th percentile",
+        reads=("trades of the last 53 s: price, size, aggressor side"),
+        steps=(
+            "Keep the prints at or above the 80th percentile of notional - the top quintile by size.",
+            "Signed share among them, times their share of all notional in the window.",
+        ),
+        bands=DIRECTIONAL_SYMMETRIC,
+        sign="positive = size is buying",
+        trace=("prints in window", "size cut", "large buy notional", "large sell notional", "large share", "imbalance"),
+        why="Inside 53 s inventory moves decide the close; the crowd's small prints do not.",
+    )
+)
+
+register(
+    Logic(
+        name="ANA",
+        expression="ANA = (2·P(up | boundary cell) − 1) × n / (n + 8)",
+        reads=("every overlapping 53 s window on the tape, labelled by its opening state"),
+        steps=(
+            "Label each past window by three bits at its open: entry print side, 10 s pre-move sign, previous window sign.",
+            "Find the cell the current boundary is in; P(up) among those analogue windows (ties count as neither).",
+            "Report the excess up-share, shrunk by the cell's sample size.",
+        ),
+        bands=DIRECTIONAL_SYMMETRIC,
+        sign="positive = from this boundary state, this tape usually closed up",
+        trace=("analogue windows", "boundary cell", "same-cell windows", "excess up-share", "shrink"),
+        why="What usually happened from here, on this tape, today.",
+    )
+)
+
+
 def get(name: str) -> Logic | None:
     return LOGIC.get(name)
 
@@ -650,6 +814,87 @@ def get(name: str) -> Logic | None:
 # ---------------------------------------------------------------------------
 
 DETAIL: dict[str, dict] = {
+    "PIN": {
+        "units": "probability 0 … 1 that the window closes unchanged",
+        "sensitivity": "σ₅₃ of one tick reads 0.38; of three ticks 0.13; the empirical flat share overrides when higher",
+        "misleads": (
+            "a tape with few prints per window looks pinned because nothing printed, not because nothing moved",
+            "a tick size mis-estimated on a thin tape doubles or halves the parametric term",
+        ),
+        "corroborates": ("MPL", "RBB", "VSS"),
+    },
+    "MPL": {
+        "units": "-1 … +1 lean of the next print, in half-ticks",
+        "sensitivity": "a microprice half a tick above the last trade with a 20 % queue imbalance reads +0.76",
+        "misleads": (
+            "spoofed queues lean the microprice until they are pulled",
+            "after a trade that cleared a level the 'best' queue is one lot deep",
+        ),
+        "corroborates": ("FIH", "DGW", "RBB"),
+    },
+    "RBB": {
+        "units": "-1 … +1 bounce against the entry print",
+        "sensitivity": "a one-tick half-spread on a tape with no net drift reads ∓0.76 against the print side; a trending tape fades it to 0",
+        "misleads": (
+            "a sweep that printed at the ask and keeps going is not a bounce",
+            "the aggressor flag on a REST tape is inferred from the quote, not reported",
+        ),
+        "corroborates": ("MPL", "PIN"),
+    },
+    "RAR": {
+        "units": "-1 … +1 hazard lean",
+        "sensitivity": "a run at its median age reads 0; at the 90th percentile ∓0.8 against it; a fresh run +0.9 with it",
+        "misleads": (
+            "run lengths are counted in moves, so a burst of tiny prints ages a run fast",
+            "a regime change makes the old run-length distribution the wrong reference",
+        ),
+        "corroborates": ("MPS", "MCPE", "PRT"),
+    },
+    "WDR": {
+        "units": "-1 … +1 horizon drift t-statistic (tanh at t = 2)",
+        "sensitivity": "t = 1 reads 0.46, t = 2 reads 0.76; ten independent windows of +3 bps on 6 bps dispersion is t ≈ 1.6",
+        "misleads": (
+            "overlapping windows share ticks; the independent-n correction is an approximation",
+            "one news window dominates the recency weights for two windows after it",
+        ),
+        "corroborates": ("MPS", "TAI", "PRT"),
+    },
+    "PRT": {
+        "units": "-1 … +1 conditional lean",
+        "sensitivity": "ρ₁ = −0.3 over 20 windows after a one-sigma up window reads −0.08 (shrinkage is heavy by design)",
+        "misleads": (
+            "ρ₁ on a dozen windows is mostly noise - the shrinkage says so by reading near zero",
+            "a trend makes ρ₁ positive and PRT becomes momentum, which is intended",
+        ),
+        "corroborates": ("WDR", "RAR"),
+    },
+    "FIH": {
+        "units": "-1 … +1 order-flow imbalance (tanh at 0.5 depth-units)",
+        "sensitivity": "net flow of half the mean level depth reads 0.76",
+        "misleads": (
+            "a REST book sampled seconds apart aggregates many events into one difference",
+            "a venue without a depth feed has no previous frame and FIH abstains",
+        ),
+        "corroborates": ("MPL", "BAR", "AFPR"),
+    },
+    "LAI": {
+        "units": "-1 … +1 signed share of large prints × their share of notional",
+        "sensitivity": "all top-quintile prints buying while they are 60 % of notional reads +0.60",
+        "misleads": (
+            "one iceberg split into small child orders never reaches the top quintile",
+            "a window with ten prints has a 'top quintile' of two",
+        ),
+        "corroborates": ("AFPR", "VSD", "FIH"),
+    },
+    "ANA": {
+        "units": "-1 … +1 excess up-share of analogue windows",
+        "sensitivity": "8 analogues at 75 % up read +0.25; 40 analogues at 75 % up read +0.42",
+        "misleads": (
+            "eight cells over a few hundred windows is a small sample per cell - the shrinkage is the honesty",
+            "yesterday's tape is not today's; the lookback is the snapshot only",
+        ),
+        "corroborates": ("WDR", "PRT", "RBB"),
+    },
     "TAI": {
         "units": "-1 … +1 score (µs-scaled jerk)",
         "sensitivity": "one unit is a jerk of 2.6e-6 /s³, about 4 bps of displacement in 10 s",
