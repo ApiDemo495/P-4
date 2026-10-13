@@ -200,13 +200,13 @@ class Settings:
     rings: dict = field(default_factory=lambda: {p: KeyRing.from_env(p) for p in tuple(_RING_ENV)})
     gemini_api_key: str = field(default_factory=lambda: _env("GEMINI_API_KEY"))
     gemini_model: str = field(default_factory=lambda: _env("GEMINI_MODEL", "auto"))
-    gemini_timeout_seconds: float = 7.0
+    gemini_timeout_seconds: float = 9.0
     github_models_token: str = field(default_factory=lambda: _env("GITHUB_MODELS_TOKEN"))
     github_models_model: str = field(
         default_factory=lambda: _env("GITHUB_MODELS_MODEL", "gpt-4o-mini")
     )
-    github_timeout_seconds: float = 7.0
-    local_timeout_seconds: float = 7.0
+    github_timeout_seconds: float = 9.0
+    local_timeout_seconds: float = 9.0   # Round AY: 9 s (was 7 s)
 
     # Fusion weights (Section 8.1)
     weight_drosophila: float = 0.40
@@ -340,9 +340,9 @@ class Settings:
     )
     time_scale: float = field(default_factory=lambda: _env_float("TIME_SCALE", 1.0))
     lock_deadline_seconds: float = field(
-        default_factory=lambda: _env_float("LOCK_DEADLINE_SECONDS", 8.0)
+        default_factory=lambda: _env_float("LOCK_DEADLINE_SECONDS", 10.5)   # agents 9 s + fusion
     )
-    #: Round L - the two-stage lock.  The slow inputs (agents, with their 7 s
+    #: Round L - the two-stage lock.  The slow inputs (agents, with their 9 s
     #: timeouts) are prepared ``lock_deadline_seconds`` before the boundary;
     #: everything fast (a fresh snapshot, the 31 formulas, the crowd, fusion)
     #: is re-frozen this many seconds before the boundary, so the prediction

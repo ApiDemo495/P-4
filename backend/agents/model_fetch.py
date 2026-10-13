@@ -176,16 +176,27 @@ class _Restart(Exception):
 IMAGE_SEED_DIR = Path("/opt/drosophila/models")
 
 
-def read_manifest(path: Path) -> list[dict]:
+def read_manifest(path: Path, cores: int | None = None) -> list[dict]:
+    """Enabled manifest entries for *this* machine: ``min_cores`` /
+    ``max_cores`` (Round AY) pick the model by CPU count - the 1.5B on four
+    cores, the 0.5B on two - so one vote fits the window budget.  Pass
+    ``cores=0`` to ignore the filter (the image bakes every entry)."""
     try:
         import json
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
+    import os
+    n_cores = (os.cpu_count() or 2) if cores is None else int(cores)
     out = []
     for entry in data.get("models", []):
         if not entry.get("enabled", True) or not entry.get("url"):
             continue
+        if n_cores > 0:
+            if entry.get("min_cores") is not None and n_cores < int(entry["min_cores"]):
+                continue
+            if entry.get("max_cores") is not None and n_cores > int(entry["max_cores"]):
+                continue
         try:
             url = normalise_url(entry["url"])
         except ValueError:

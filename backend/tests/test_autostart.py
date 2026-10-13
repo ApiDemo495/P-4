@@ -126,12 +126,14 @@ def test_the_restart_path_is_documented_for_the_user() -> None:
 def test_the_hooks_cannot_run_two_installs_at_once() -> None:
     """postCreate / postStart / postAttach overlap in a Codespace; the
     provisioning and the engine start are serialised by a lock, and the
-    editor is not attached until postCreateCommand has finished."""
+    editor is attached as soon as the container exists (Round AY: waitFor =
+    onCreateCommand) while provisioning runs in the terminal."""
     text = AUTOSTART.read_text()
     assert "flock -n 9" in text and "with_lock provision" in text
     assert "with_lock start_engine" in text
     config = (ROOT / ".devcontainer" / "devcontainer.json").read_text()
-    assert '"waitFor": "postCreateCommand"' in config
+    assert '"waitFor": "onCreateCommand"' in config
+    assert '"postCreateCommand"' in config
 
 
 def test_long_lived_children_never_inherit_the_lock() -> None:

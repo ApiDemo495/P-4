@@ -154,6 +154,35 @@ the snapshot GitHub keeps for you.
 Also pick the smallest machine type (2-core) on the creation page; a bigger VM
 takes longer to allocate and the engine does not need it.
 
+**Round AY — the editor no longer waits.** `devcontainer.json` now hands the
+editor over as soon as the container exists (`waitFor: onCreateCommand`)
+instead of after provisioning. GitHub's "Setting up your codespace" screen
+goes away in seconds; provisioning and the engine start then run in the
+terminal while you watch, and `http://localhost:8000` shows the live journal
+until the engine takes over. If a Codespace *still* takes minutes, the first
+journal line now tells you which of the two containers you got:
+
+```bash
+bash tools/codespace_autostart.sh --status
+```
+
+* `prebuilt image in use (/opt/venv present …) — fast path`: everything
+  (Python packages, llama runtime, connectome, both Qwen models) came from the
+  image; the engine is up within a minute of the hook.
+* `prebuilt image NOT in use (/opt/venv missing) — slow path`: GitHub could
+  not pull `ghcr.io/apidemo495/p-4-dev` and fell back to a plain container,
+  so pip installs everything from scratch. Fix it once: open the package page
+  (`github.com/ApiDemo495?tab=packages` → **p-4-dev** → **Package settings**),
+  make sure **Danger Zone → Change visibility** is *Public* (or that this
+  repository is listed under *Manage Actions access* / *Inherit access from
+  source repository* is on), and set up the prebuild above. The engine cannot
+  change that setting from inside the repository.
+
+The engine does not need a 4-core machine. The only thing that scales with
+cores is the local model: `models.json` bakes **both** Qwen2.5-1.5B (picked
+on 4+ cores) and Qwen2.5-0.5B (picked on 2–3 cores) into the image, so a
+2-core Codespace votes within the 9 s budget too.
+
 ### API keys that survive a fresh Codespace
 
 `/settings` saves every key to the running engine **and** to `.env` (default on).
@@ -579,7 +608,7 @@ tail -f server.log
   the second start on — and a token added later still wins, because step 0
   re-runs the live steps whenever credentials are present.
 * **In sync, and locked (Round L).** The lock has two stages: the slow half
-  (the AI agents, with their 7 s timeouts) is prepared 8 s before the boundary;
+  (the AI agents, with their 9 s timeouts) is prepared 10.5 s before the boundary;
   the fast half — a fresh tape snapshot, the 31 formulas, the crowd reading and
   the fusion — is frozen again **0.4 s** before the boundary, so the prediction
   you see was built on data a fraction of a second old (`window.lock.
@@ -658,10 +687,10 @@ tail -f server.log
   When PIN is high the boundary pick follows the microstructure instead of the
   trend, and the competition cell prints the TIE RISK.
 * **The local model on a small machine (Round AY).** The baked Qwen2.5-1.5B
-  needs ~7 s per vote on four cores; on a 2-core Codespace the engine measures
-  that one vote cannot fit the window budget, says so in the agents panel and
+  is picked on four cores and Qwen2.5-0.5B on two (`models.json` `min_cores` / `max_cores`, both baked into the image); if the engine still measures
+  that one vote cannot fit the 9 s budget, it says so in the agents panel and
   votes every fifth window instead of stacking inferences until the engine
-  starves. A 0.5B GGUF uploaded on `/settings` fits two cores.
+  starves.
 * **Nine emotions, measured.** FEAR, PANIC, CAPITULATION, DENIAL, HOPE,
   EUPHORIA, FOMO, COMPLACENCY and **PARALYSIS** (the frozen tape). Every
   boundary records the dominant emotion and the settled window is scored under
@@ -711,7 +740,7 @@ tail -f server.log
   confidence on corroboration/split. `GET /api/brain/dopamine`,
   `GET /api/triune`.
 * **Offline model (local GGUF/ONNX).** Validated by magic bytes, loaded on
-  CPU, 7 s per vote, up to 3 slots. The models listed in `models.json` are
+  CPU, 9 s per vote, up to 3 slots. The models listed in `models.json` are
   baked into the dev-container image together with the GGUF runtime and the
   connectome, so a new Codespace has them without uploading or downloading;
   anything missing is fetched by the engine itself (paste a Hugging Face link

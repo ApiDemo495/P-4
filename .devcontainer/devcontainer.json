@@ -25,11 +25,15 @@
   //                      changed requirements.txt, then (re)starts the engine
   //   postAttachCommand  every editor attach - the same, plus the URL banner
   // ---------------------------------------------------------------------------
-  // The editor is not handed over until provisioning is done, so the first
-  // thing the user sees is a running dashboard, not a half-installed venv.
-  // (Round U tried "onCreateCommand" to attach earlier; the attach hook then
-  // sat silently on the provisioning lock and read as "not starting".)
-  "waitFor": "postCreateCommand",
+  // Round AY: the editor is handed over as soon as the container exists
+  // (waitFor = onCreateCommand, which is empty).  Provisioning and the engine
+  // start run in the terminal while you watch; port 8000 shows the
+  // "setting up" page with the live journal until the engine takes over.
+  // The old "waitFor: postCreateCommand" kept GitHub's "Setting up your
+  // codespace" screen up for the whole provisioning - on a machine where the
+  // image did not load and pip had to install from scratch that was 10+ min
+  // of nothing to look at, and when it failed the editor never opened at all.
+  "waitFor": "onCreateCommand",
   "postCreateCommand": "bash tools/codespace_autostart.sh --provision",
   "postStartCommand": "bash tools/codespace_autostart.sh --start",
   "postAttachCommand": "bash tools/codespace_autostart.sh --attach",

@@ -363,6 +363,17 @@ stamp_hook_start() {
   local age; age="$(container_age)"
   printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$MODE" "$age" >> "$STATE_DIR/hook-timing.log" 2>/dev/null || true
   log "hook '$MODE' starting; this container has been alive for ${age}s (time before this is GitHub's VM/image setup, not the engine)"
+  # Round AY: say which container this is.  If /opt/venv is missing, the
+  # prebuilt image (ghcr.io/apidemo495/p-4-dev) did NOT load and this is a
+  # recovery / plain container: provisioning installs everything from scratch
+  # (minutes, not seconds).  That is the slow path the user keeps hitting,
+  # and it is GitHub's image pull - not the engine - that decides it.
+  if [ -x /opt/venv/bin/python ]; then
+    log "prebuilt image in use (/opt/venv present$( [ -d /opt/drosophila/models ] && printf ', models: %s' "$(ls /opt/drosophila/models 2>/dev/null | tr '\n' ' ')" )) - fast path"
+  else
+    warn "prebuilt image NOT in use (/opt/venv missing): this container installs from scratch - slow path. Check that the GHCR package p-4-dev is public / linked to this repo, and enable Codespaces prebuilds (README section 0)"
+  fi
+  log "machine: $(nproc 2>/dev/null || echo ?) cores, $(awk '/MemTotal/ {printf "%.0f", $2/1048576}' /proc/meminfo 2>/dev/null || echo ?) GB RAM"
 }
 
 case "$MODE" in

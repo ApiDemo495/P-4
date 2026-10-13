@@ -2162,3 +2162,34 @@ every 5 s on machines with fewer than four cores (2 s otherwise).
 
 **Files.** `tools/dead_code.py` reports 0 unused definitions and every
 tracked file is referenced; nothing was deleted on a hunch.
+
+#### AY.1 — the Codespace that never opened, 9 s votes, two baked models
+
+* **`waitFor: onCreateCommand`** again (Round U had it, Round V reverted it
+  because the attach hook blocked silently on the provisioning lock). The two
+  things that made the revert necessary are gone since Round V: `with_lock`
+  reports what it waits for every 15 s and `tools/placeholder_page.py`
+  answers port 8000 with the live journal from the first second. What
+  remained was the cost of the revert: GitHub's "Setting up your codespace"
+  screen stays up until `postCreateCommand` returns, so on a container where
+  the prebuilt image did not load (pip + llama from scratch) the editor took
+  10+ min to appear on 2 cores and never appeared at all on 4 cores. The
+  editor now attaches as soon as the container exists; provisioning runs in
+  the terminal; the engine start is unchanged.
+* **First journal line says which container you got**: `prebuilt image in
+  use (/opt/venv present …) — fast path` or `prebuilt image NOT in use —
+  slow path`, plus cores / RAM. The slow path means GitHub could not pull
+  `ghcr.io/apidemo495/p-4-dev` — package visibility / access is a GitHub
+  setting the repository cannot change (README section 0 tells where).
+  Honest limit: the sandbox cannot read the package's visibility (API 403),
+  so this is a diagnosis to confirm from the next Codespace's journal.
+* **Vote budget 9 s** (`local_timeout_seconds`, `gemini_timeout_seconds`,
+  `github_timeout_seconds` 7 → 9); `LOCK_DEADLINE_SECONDS` 8 → 10.5 so the
+  agents' prefetch still starts before their timeout can expire, and the
+  0.4 s final re-freeze is unchanged.
+* **Two models baked, one picked**: `models.json` lists Qwen2.5-1.5B
+  (`min_cores: 4`) and Qwen2.5-0.5B (`max_cores: 3`), both in slot 1.
+  `tools/fetch_models.py` (the image build) fetches every enabled entry;
+  `read_manifest()` (the engine's autoloader) applies the core filter, so a
+  2-core Codespace links and loads the 0.5B from `/opt/drosophila/models`
+  and a 4-core one the 1.5B — through the same validate → load → test path.

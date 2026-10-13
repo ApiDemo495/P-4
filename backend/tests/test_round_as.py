@@ -144,7 +144,7 @@ def test_local_runtime_is_built_in_the_background_and_documented():
     assert "llama-cpp-python" in run_sh and "LOCAL_RUNTIME_AUTOINSTALL" in run_sh
     assert "setsid nohup" in run_sh and "llama_runtime.log" in run_sh
     doc = (ROOT / "docs/LOCAL_MODELS.md").read_text()
-    for needle in ("7 s", "Q4_K_M", "GGUF", "n_ctx", "Codespaces", "Qwen2.5-0.5B-Instruct"):
+    for needle in ("9 s", "Q4_K_M", "GGUF", "n_ctx", "Codespaces", "Qwen2.5-0.5B-Instruct"):
         assert needle in doc, needle
     from backend.agents.local_model_agent import LocalModelAgent
     assert "LOCAL_MODELS.md" in LocalModelAgent._runtime_build_hint() or "background" in LocalModelAgent._runtime_build_hint()

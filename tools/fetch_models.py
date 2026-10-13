@@ -28,6 +28,7 @@ def manifest(path: Path) -> list[dict]:
     if not path.exists():
         return []
     data = json.loads(path.read_text(encoding="utf-8"))
+    # every enabled entry: the image bakes both the 4-core and the 2-core model
     return [m for m in data.get("models", []) if m.get("enabled", True) and m.get("url")]
 
 

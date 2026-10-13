@@ -18,10 +18,10 @@ HOLD is not accepted. Its vote enters the fusion with weight **0.20**
 (`weight_local`). If the answer is not usable JSON the agent is marked as not
 voting for that window; it never blocks the signal.
 
-**Hard limit: 7 seconds per answer** (`local_timeout_seconds = 7.0`). The
+**Hard limit: 9 seconds per answer** (`local_timeout_seconds = 9.0`). The
 model is loaded on CPU with `n_ctx = 2048`, `n_batch = 512`,
 `n_threads = cpu_count / 2`, `temperature = 0`. The prompt is ~400–600
-tokens and the answer ~40–80 tokens, so in 7 s the model must process ~600
+tokens and the answer ~40–80 tokens, so in 9 s the model must process ~600
 prompt tokens **and** generate ~60 tokens on half your cores. This single
 constraint decides which model you can use.
 
@@ -97,7 +97,7 @@ bigger when creating the Codespace: 4-core/16 GB, 8-core/32 GB,
 16-core/64 GB). **No GPU, ever.** CPU speed, not RAM, is the limit: with
 `n_threads = cores/2`, prompt processing is roughly
 
-| model size (Q4_K_M) | 2-core (1 thread) | 4-core (2 threads) | 8-core (4 threads) | fits the 7 s budget? |
+| model size (Q4_K_M) | 2-core (1 thread) | 4-core (2 threads) | 8-core (4 threads) | fits the 9 s budget? |
 |---|---|---|---|---|
 | 0.5 B | ~2–3 s total | ~1.5 s | <1 s | yes everywhere |
 | 1–1.7 B | ~6–9 s | ~3–4 s | ~2 s | 4-core and up |
@@ -124,7 +124,7 @@ models do not follow the JSON instruction.
 
 | model | params | Q4_K_M size | why |
 |---|---|---|---|
-| **Qwen2.5-0.5B-Instruct** | 0.5 B | ~0.4 GB | the only one comfortably inside 7 s on a 2-core Codespace; surprisingly disciplined JSON |
+| **Qwen2.5-0.5B-Instruct** | 0.5 B | ~0.4 GB | the only one comfortably inside 9 s on a 2-core Codespace; surprisingly disciplined JSON |
 | **Qwen2.5-1.5B-Instruct** | 1.5 B | ~1.0 GB | best quality/speed on a 4-core Codespace; strong at structured output |
 | Llama-3.2-1B-Instruct | 1.2 B | ~0.8 GB | good JSON, slightly weaker numeric reasoning than Qwen |
 | SmolLM2-1.7B-Instruct | 1.7 B | ~1.1 GB | small, fast, decent |
@@ -134,7 +134,7 @@ models do not follow the JSON instruction.
 | Qwen2.5-7B-Instruct / Llama-3.1-8B-Instruct | 7–8 B | ~4.7–4.9 GB | PC with GPU only |
 
 Skip for this job: reasoning/"thinking" models (DeepSeek-R1 distills, QwQ,
-Qwen3 in thinking mode) — they spend the whole 7 s thinking and never reach
+Qwen3 in thinking mode) — they spend the whole 9 s thinking and never reach
 the JSON; coder models; anything > 8 B on CPU; "abliterated"/role-play
 finetunes (worse instruction following).
 
