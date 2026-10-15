@@ -2225,3 +2225,40 @@ tracked file is referenced; nothing was deleted on a hunch.
   beat the value saved to `.env`; and the dashboard only re-read key states
   at boot / when the modal opened. Now `.env` wins over an empty variable,
   and the badges refresh every 30 s and on tab focus.
+
+### BA — "right about the past, not the future": the warm start and the lag audit
+
+* **What the user saw.** Picks that matched the move that had *just*
+  happened and lost the next window. Mechanism, not mystery: the recipe's
+  inputs are measurements of the closing window (aggression, drift,
+  absorption …) read as forecasts of the next one. At 53 s on BTC/USDT
+  last-trade settlement the next window continues about as often as it
+  reverts, so a late-but-true reading wins ~half the time and *looks* 95 %
+  wrong to someone watching the arrow against the move that produced it.
+* **The ledger already scores every source on the future** (Round N/AJ),
+  fading the reliably-late ones — but it needed 40 live windows before it
+  could act, and the user starts a fresh Codespace every time, so every
+  session ran the blind recipe. **`backend/core/warm_start.py`** closes the
+  gap: at start it fetches the last 6 h of real Binance 1 s klines (public,
+  no key), builds the same tape the live engine sees, cuts it on the same
+  epoch-aligned 53 s grid, runs all 31 formulas + the real mushroom body
+  at every boundary (no side effects on the live brain), collects the votes
+  exactly as a live window does and scores them on the NEXT window — strict
+  sign — through `EvidenceLedger.remember/score`. ~400 forward-scored
+  windows in ~10 s; the ledger is ACTIVE from the first live boundary with a
+  follow / fade / noise verdict per formula. Skipped when the restored
+  ledger was learning live < 2 h ago (no double counting); `WARM_START=0`
+  disables; `WARM_START_HOURS` sizes it; `GET /api/learning/warm-start`
+  (`?rerun=true`).
+* **Measured, not felt.** The report carries the *lag audit*: how often the
+  recipe (CCSv2 sign) agreed with the PAST window vs the FUTURE one, the
+  tape's continuation rate and tie rate, and per-source forward hit rates.
+  `CompetitionLedger.lag_audit()` does the same for the live picks (share
+  that followed the last move; win rate following vs fading). Both print on
+  the dashboard's competition cell ("Past vs future").
+* **Honest limits.** Bars carry no order book, so L2-only formulas abstain
+  in the replay; agents, news, crowd, physics and genesis are not replayed
+  (listed as such in the report); `spec:fusion` in the replay is the brain's
+  CCSv2 sign. The sandbox cannot reach Binance, so the warm start was
+  verified on synthetic 1 s bars (191 windows / 5 s) and fails soft there;
+  the real run happens in the Codespace.

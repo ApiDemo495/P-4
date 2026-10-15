@@ -1727,6 +1727,33 @@ function renderCompetition(c, pick) {
     (L.moved && Object.keys(L.moved).length ? ` · weights moved: ${Object.entries(L.moved).map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v}`).join(", ")}` : "") +
     (L.memory && L.memory.restored.length ? ` · memory restored (${L.memory.restored.length} items)` : "") : "";
   $("c-reading").textContent = (c.reading || "—") + learned;
+  if ($("c-lag")) $("c-lag").textContent = lagLine(c);
+}
+
+/* Round BA: past vs future, measured.  The warm start replays the last hours
+   of real tape through the formulas and scores them on the NEXT window; the
+   live lag audit says whether the picks merely repeat the last move. */
+function lagLine(c) {
+  const w = c.warm_start || {};
+  const a = c.lag_audit || {};
+  const L = c.ledger || {};
+  const pct = (v) => (v === null || v === undefined ? "—" : `${(v * 100).toFixed(0)}%`);
+  let head;
+  if (w.phase === "done") {
+    head = `warm start: ${w.scored} real windows (${w.hours} h of Binance 1 s tape) scored on the NEXT window · recipe agreed with the PAST window ${pct(w.recipe_agrees_with_past)}, with the FUTURE ${pct(w.recipe_agrees_with_future)} · continuation ${pct(w.continuation_rate)} · ties ${pct(w.tie_rate)}`;
+  } else if (w.phase === "fetching" || w.phase === "replaying") {
+    head = `warm start ${w.phase}: ${w.detail || ""}`;
+  } else if (w.phase === "skipped") {
+    head = `warm start skipped: ${w.detail || ""}`;
+  } else if (w.phase === "failed") {
+    head = `warm start failed (${w.error || "no history"}) - the ledger learns live from 40 windows`;
+  } else {
+    head = "warm start: waiting";
+  }
+  const ledger = L.active ? ` · ledger ACTIVE (${L.scored} scored${L.ledger_hit_rate ? `, ledger ${pct(L.ledger_hit_rate)} vs recipe ${pct(L.spec_hit_rate)}` : ""})`
+    : ` · ledger watching (${L.scored || 0}/${L.min_samples || 40})`;
+  const live = a.pairs ? ` · live picks follow the last move ${pct(a.follows_last_window)} (win ${pct(a.win_when_following)} following, ${pct(a.win_when_fading)} fading)` : "";
+  return head + ledger + live;
 }
 
 function renderWidgetPanel() {

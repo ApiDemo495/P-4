@@ -338,6 +338,36 @@ class CompetitionLedger:
         return row
 
     # -- reading ---------------------------------------------------------
+    def lag_audit(self, window: int = 200) -> dict:
+        """Round BA: is the pick a forecast or a description of the window
+        that just closed?  Over consecutive settled windows: how often the
+        side equalled the PREVIOUS window's direction (following), how often
+        the NEXT one's (winning), and the win rate when following vs fading
+        the last move.  A picker that is "right about the past" shows a high
+        follow rate with a sub-50 % win-when-following."""
+        rows = list(self.rows)[-window:]
+        follow = follow_n = 0
+        win_follow = n_follow = win_fade = n_fade = 0
+        for prev, cur in zip(rows, rows[1:]):
+            if prev.tie or cur.cycle != prev.cycle + 1:
+                continue
+            last_dir = "BUY" if prev.exit > prev.entry else "SELL"
+            follow_n += 1
+            if cur.side == last_dir:
+                follow += 1
+                n_follow += 1
+                win_follow += 1 if cur.won else 0
+            else:
+                n_fade += 1
+                win_fade += 1 if cur.won else 0
+        return {
+            "pairs": follow_n,
+            "follows_last_window": round(follow / follow_n, 4) if follow_n else None,
+            "win_when_following": round(win_follow / n_follow, 4) if n_follow else None,
+            "win_when_fading": round(win_fade / n_fade, 4) if n_fade else None,
+            "reads": "share of picks equal to the previous window's direction, and the strict-sign win rate of those vs the others",
+        }
+
     def win_rate(self, window: int | None = None) -> float | None:
         rows = list(self.rows)[-window:] if window else list(self.rows)
         if not rows:
@@ -382,6 +412,7 @@ class CompetitionLedger:
             "streaks_finished": list(self.streak_history)[-20:],
             "mean_streak": round(float(np.mean(self.streak_history)), 2) if self.streak_history else None,
             "recent": recent,
+            "lag_audit": self.lag_audit(),
             "reading": self._reading(p_est, n),
         }
 

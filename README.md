@@ -686,6 +686,18 @@ tail -f server.log
   imbalance, LAI large-aggressor imbalance and ANA nearest-analogue outcome.
   When PIN is high the boundary pick follows the microstructure instead of the
   trend, and the competition cell prints the TIE RISK.
+* **Right about the past, not the future — fixed at the root (Round BA).**
+  Formulas measure the window that just closed; reading them as forecasts
+  is why picks matched the last move and lost the next. The evidence ledger
+  scores every source on the *next* window and fades the late ones, but it
+  used to start blind in every fresh Codespace. Now the engine **warm
+  starts**: it fetches the last 6 h of real Binance 1 s tape, replays all
+  31 formulas + the real mushroom body on the live 53 s grid and scores
+  them forward (~400 windows in ~10 s), so the ledger is active from the
+  first live boundary. The competition cell prints "Past vs future": how
+  often the recipe agreed with the past window vs the future one, the
+  tape's continuation and tie rates, and whether live picks follow or fade
+  the last move — and what each earned.
 * **The real brain everywhere (Round AZ).** The engine has run on the
   FlyWire v783 connectome since Round AQ, but on a 4 GB Codespace the
   one-time array build peaked at 1.7 GB, the OOM killer took the engine

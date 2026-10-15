@@ -51,6 +51,7 @@ from backend.core.prediction import build_reasoning, consensus
 from backend.core import edge_guard
 from backend.core.calibration import EvidenceLedger
 from backend.core.state_vault import StateVault
+from backend.core.warm_start import WarmStarter
 from backend.core.competition import BoundaryPicker, CompetitionLedger, boundary_features
 from backend.core.dopamine import DopamineBrain
 from backend.core.triune import TriuneAnalyst
@@ -172,6 +173,9 @@ class CycleManager:
         )
         self._last_votes: dict[str, int] = {}
         self._last_learned: dict = {}
+        # Round BA: before the first live window the ledger is scored on the
+        # last hours of REAL tape (forward, strict sign) so it never starts blind.
+        self.warm_starter = WarmStarter(self.ledger, asset="BTC", brain=self.brain)
         #: (side, outcome) pairs, so the accuracy panel can say which side the
         #: engine has actually been getting right rather than only the total.
         self._side_outcomes: deque[tuple[str, float]] = deque(maxlen=40)
@@ -2175,6 +2179,9 @@ class CycleManager:
         pk = self.picker.to_dict()
         moved = {k: round(v - pk["priors"][k], 3) for k, v in pk["weights"].items() if abs(v - pk["priors"][k]) >= 0.01}
         out["tie_risk"] = round(float(self.last_live_formulas.get("PIN", 0.0) or 0.0), 3)
+        out["warm_start"] = self.warm_starter.report.to_dict()
+        out["ledger"] = {k: (self._last_learned or {}).get(k) for k in ("active", "scored", "min_samples", "handed_back",
+                                                                        "ledger_hit_rate", "spec_hit_rate")}
         out["learning"] = {
             "updates": pk["updates"],
             "log_loss_200": pk["log_loss_200"],
@@ -2829,9 +2836,26 @@ class CycleManager:
         except Exception as exc:  # noqa: BLE001
             log.debug("could not persist state: %s", exc)
 
+    def _maybe_warm_start(self) -> None:
+        """Round BA: replay the last hours of real tape unless this very
+        ledger was learning live less than two hours ago (a restart inside
+        one Codespace must not count the same history twice)."""
+        try:
+            rep = self.ledger.report("BTC")["assets"].get("BTC") or {}
+            fresh = (time.time() - float(self.ledger.updated_at or 0.0)) < 7200.0
+            if fresh and int(rep.get("scored") or 0) >= 100:
+                self.warm_starter.report.phase = "skipped"
+                self.warm_starter.report.detail = (f"ledger already holds {rep.get('scored')} scored windows from "
+                                                   f"{(time.time() - self.ledger.updated_at) / 60:.0f} min ago - no replay needed")
+                return
+        except Exception as exc:  # noqa: BLE001
+            log.debug("warm start check skipped: %s", exc)
+        self.warm_starter.start()
+
     async def _restore_state(self) -> None:
         try:
             self.vault_restored = await asyncio.to_thread(self._restore_learned)
+            self._maybe_warm_start()
             if self.vault_restored:
                 log.info("Vault: restored %s (streak %d, %d scored windows)", ", ".join(self.vault_restored),
                          int(getattr(self.competition, "streak", 0) or 0), len(self.outcomes))

@@ -160,6 +160,17 @@ async def signal_history(limit: int = 72) -> dict:
     return manager.history_payload(limit)
 
 
+@router.get("/api/learning/warm-start")
+async def warm_start(rerun: bool = False) -> dict:
+    """Round BA: the warm start - the last hours of real Binance tape replayed
+    through all 31 formulas and scored on the NEXT window, so the evidence
+    ledger is active from the first live boundary.  ``rerun=true`` fetches
+    and replays again (the live ledger keeps learning on top)."""
+    manager = get_manager()
+    started = manager.warm_starter.start() if rerun else False
+    return {"rerun_started": started, **manager.warm_starter.report.to_dict()}
+
+
 @router.get("/api/signal/calibration")
 async def calibration(asset: str | None = None) -> dict:
     """The evidence ledger: which inputs have been predicting, and how well.
