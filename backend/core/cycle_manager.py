@@ -52,6 +52,7 @@ from backend.core import edge_guard
 from backend.core.calibration import EvidenceLedger
 from backend.core.state_vault import StateVault
 from backend.core.warm_start import WarmStarter
+from backend.core.forward import ForwardExpectancy
 from backend.core.competition import BoundaryPicker, CompetitionLedger, boundary_features
 from backend.core.dopamine import DopamineBrain
 from backend.core.triune import TriuneAnalyst
@@ -131,6 +132,12 @@ class CycleManager:
         self.news = NewsEngine(self.settings, on_critical=self._on_critical_event)
         self.agents = AgentOrchestrator(self.settings, local_stub=local_stub)
         self.formulas = FormulaEngine(brain=self.brain)
+        # Round BB: forward expectancy - every formula's measured P(next window
+        # up | this reading, last window dir); feeds the brain, the fusion and
+        # the ledger.  Learned on the warm start, then on every live window.
+        self.forward = ForwardExpectancy()
+        self.formulas.forward_hook = lambda values: self.forward.edges_vector(values, self._last_window_dir())
+        self._last_forward: dict = {}
         # Round T: the thermodynamic capital layer - one more weighted voter.
         from backend.physics.engine import PhysicsEngine
 
@@ -175,7 +182,7 @@ class CycleManager:
         self._last_learned: dict = {}
         # Round BA: before the first live window the ledger is scored on the
         # last hours of REAL tape (forward, strict sign) so it never starts blind.
-        self.warm_starter = WarmStarter(self.ledger, asset="BTC", brain=self.brain)
+        self.warm_starter = WarmStarter(self.ledger, asset="BTC", brain=self.brain, forward=self.forward)
         #: (side, outcome) pairs, so the accuracy panel can say which side the
         #: engine has actually been getting right rather than only the total.
         self._side_outcomes: deque[tuple[str, float]] = deque(maxlen=40)
@@ -1519,6 +1526,13 @@ class CycleManager:
         if self._last_votes:
             self.ledger.remember(signal.asset, signal.cycle_number, self._last_votes,
                                  float((self._last_learned or {}).get("p_up") or 0.5))
+        # Round BB: the forward tables remember this window's readings and are
+        # settled on what the price does next (strict sign, ties counted).
+        try:
+            if self.last_formula_result is not None:
+                self.forward.observe(signal.cycle_number, self.last_formula_result.values, self._last_window_dir())
+        except Exception as exc:  # noqa: BLE001
+            log.debug("forward observe skipped: %s", exc)
         # Round AR: the analyst remembers the three opinions; the dopamine
         # transient of the previous window fades as a new one starts.
         if self._last_minds:
@@ -1565,6 +1579,8 @@ class CycleManager:
             comp_row = self.competition.settle(signal.cycle_number, settle_px)
             if comp_row is not None:
                 self.picker.learn(signal.cycle_number, None if comp_row.tie else comp_row.exit > comp_row.entry)
+                self.forward.settle(signal.cycle_number, None if comp_row.tie else comp_row.exit > comp_row.entry,
+                                    (comp_row.exit / comp_row.entry - 1.0) * 1e4 if comp_row.entry > 0 else 0.0)
                 self.emotion_outcomes.settle(signal.cycle_number, comp_row.entry, comp_row.exit)
         except Exception as exc:  # noqa: BLE001
             log.debug("competition settle skipped: %s", exc)
@@ -1779,6 +1795,17 @@ class CycleManager:
             "phase": dict(getattr(result, "phase", {}) or {}) if result is not None else {},
             "feed_status": result.feed_status() if result is not None else {},
         }
+        # Round BB: every formula's forward line - what FOLLOWED readings like
+        # the present one - and the composite P(next window up).
+        try:
+            last_dir = self._last_window_dir()
+            payload["forward"] = {name: e.as_dict() for name, e in
+                                  self.forward.expect(self.last_live_formulas, last_dir).items()}
+            payload["forward_composite"] = self.forward.composite(self.last_live_formulas, last_dir) \
+                if self.last_live_formulas else {}
+        except Exception as exc:  # noqa: BLE001
+            log.debug("forward payload skipped: %s", exc)
+            payload["forward"], payload["forward_composite"] = {}, {}
         return payload
 
     def snapshot_payload(self, signal: FrozenSignal | None = None, *, include_history: bool = False) -> dict:
@@ -1981,7 +2008,14 @@ class CycleManager:
                 "age_s": round(time.time() - whole.computed_at, 1), "blend": "0.6 x mushroom body + 0.4 x whole brain",
                 "ccs_blended": round(ccs_value, 4),
             }
+        try:
+            forward = self.forward.composite(formula_result.values, self._last_window_dir())
+        except Exception as exc:  # noqa: BLE001
+            log.debug("forward composite failed: %s", exc)
+            forward = {}
+        self._last_forward = forward
         common = dict(
+            forward=forward,
             agents=agent_results,
             ccs_value=ccs_value,
             ccs_confidence=ccs_confidence,
@@ -2028,6 +2062,7 @@ class CycleManager:
             genesis_vote=float((genesis_report or {}).get("vote") or 0.0)
             if (genesis_report or {}).get("status") == "live" else 0.0,
             news_themes=self._news_theme_votes(common["news_impact"]),
+            forward_vote=float(forward.get("value") or 0.0) if forward.get("available") else 0.0,
         )
         learned = self.ledger.evaluate(self.asset, votes)
         self._last_votes = votes
@@ -2180,6 +2215,7 @@ class CycleManager:
         moved = {k: round(v - pk["priors"][k], 3) for k, v in pk["weights"].items() if abs(v - pk["priors"][k]) >= 0.01}
         out["tie_risk"] = round(float(self.last_live_formulas.get("PIN", 0.0) or 0.0), 3)
         out["warm_start"] = self.warm_starter.report.to_dict()
+        out["forward"] = self._last_forward or self.forward.last_composite
         out["ledger"] = {k: (self._last_learned or {}).get(k) for k in ("active", "scored", "min_samples", "handed_back",
                                                                         "ledger_hit_rate", "spec_hit_rate")}
         out["learning"] = {
@@ -2761,7 +2797,7 @@ class CycleManager:
     # ==================================================================
     # Round AW -- the vault: what is learned is kept ------------------------
     #: name -> attribute holding a learner whose whole state is adopted back
-    VAULT_OBJECTS = ("competition", "picker", "dopamine", "triune", "outcomes", "stats", "emotion_outcomes")
+    VAULT_OBJECTS = ("competition", "picker", "dopamine", "triune", "outcomes", "stats", "emotion_outcomes", "forward")
     #: a streak older than this is not a live streak
     VAULT_MAX_AGE = 3 * 86_400.0
 
@@ -2835,6 +2871,17 @@ class CycleManager:
             log.info("Vault: wrote %d/%d items to %s", sum(1 for v in written.values() if v), len(written), self.vault.root)
         except Exception as exc:  # noqa: BLE001
             log.debug("could not persist state: %s", exc)
+
+    def _last_window_dir(self) -> int:
+        """Direction of the last settled window (+1 / -1 / 0 tie or unknown)."""
+        try:
+            rows = self.competition.rows
+            if rows:
+                last = rows[-1]
+                return 0 if last.tie else (1 if last.exit > last.entry else -1)
+        except Exception:  # noqa: BLE001
+            pass
+        return 0
 
     def _maybe_warm_start(self) -> None:
         """Round BA: replay the last hours of real tape unless this very

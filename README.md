@@ -686,6 +686,18 @@ tail -f server.log
   imbalance, LAI large-aggressor imbalance and ANA nearest-analogue outcome.
   When PIN is high the boundary pick follows the microstructure instead of the
   trend, and the competition cell prints the TIE RISK.
+* **Calculating from the future (Round BB).** Every formula now carries a
+  *forward table*: for each value it has taken (and the last window's
+  direction), the measured frequency of what the **next** window did. The
+  engine acts on the forward value — 2·P(next up | this reading) − 1 — in
+  all three places that used to extrapolate the present: the real mushroom
+  body is fed forward values, the fusion has a `forward` voter (P(next
+  window up) from every covered formula's record), and the ledger scores it
+  on the future like everything else. The tables are filled from the last
+  24 h of real tape at start and from every live window after. Each formula
+  row prints "→ next 44 % up · n 212" and says **AGAINST the reading** when
+  the measured future contradicts the present sign; the "who decides" line
+  prints FROM THE FUTURE. A bin with no record says 50 % and does not vote.
 * **Right about the past, not the future — fixed at the root (Round BA).**
   Formulas measure the window that just closed; reading them as forecasts
   is why picks matched the last move and lost the next. The evidence ledger

@@ -151,6 +151,7 @@ def fuse(
     news_impact: dict | None = None,
     asset: str = "BTC",
     ledger_sources: list | None = None,
+    forward: dict | None = None,
 ) -> FusionResult:
     """Combine the Drosophila brain with the available AI agents.
 
@@ -272,6 +273,28 @@ def fuse(
             "regime": regime,
         }
 
+    # Round BB: the forward-expectancy composite - P(next window up) measured
+    # from what followed readings like the present ones.  The only voter whose
+    # number is, by construction, about the future rather than the present.
+    forward = forward or {}
+    forward_weight = float(getattr(settings, "weight_forward", 0.0) or 0.0)
+    if forward.get("available") and forward_weight > 0:
+        fw_value = max(-1.0, min(1.0, float(forward.get("value") or 0.0)))
+        coverage = min(1.0, int(forward.get("covered") or 0) / 20.0)
+        forward_weight = table.mark("forward", 0.5 + 0.5 * coverage)
+        active["forward"] = forward_weight
+        contributions["forward"] = {
+            "decision": BUY if fw_value >= 0 else SELL,
+            "confidence": round(float(forward.get("edge") or 0.0), 4),
+            "value": round(fw_value, 4),
+            "weight": forward_weight,
+            "status": "LIVE",
+            "weighted_value": round(forward_weight * fw_value, 4),
+            "source": f"forward expectancy: {forward.get('note', '')}",
+            "p_up": forward.get("p_up"), "covered": forward.get("covered"),
+            "inverted_vs_reading": forward.get("inverted_vs_reading"),
+        }
+
     # Round Z: the news wire votes - signed impact on THIS asset (a war is
     # bearish BTC and bullish PAXG), weight scaled by how much fresh,
     # classified news there is (no news -> no vote, never an imputed 0).
@@ -301,7 +324,7 @@ def fuse(
     for name, weight in active.items():
         if name == "drosophila":
             score += weight * max(-1.0, min(1.0, ccs_value))
-        elif name in ("physics", "formulas", "news", "genesis"):
+        elif name in ("physics", "formulas", "news", "genesis", "forward"):
             score += weight * float(contributions[name]["value"])
         else:
             result = agents[name]

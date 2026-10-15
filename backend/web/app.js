@@ -1512,8 +1512,12 @@ function renderSignal() {
     });
     const crowdCut = Number(s.fusion?.crowd_adjustment ?? 1);
     const crowd = ` · crowd: confidence x${crowdCut.toFixed(2)} (a modifier of at most 12.5%, never a vote)`;
+    // Round BB: the forward voter's own sentence - the one number that is
+    // about the NEXT window by construction.
+    const fwd = s.fusion?.contributions?.forward;
+    const fwdLine = fwd ? ` · FROM THE FUTURE: ${fwd.decision} P(up) ${Math.round((fwd.p_up || 0.5) * 100)}% from ${fwd.covered} formulas' forward records (${fwd.inverted_vs_reading || 0} point against their own present reading)` : "";
     $("weights").textContent = parts.length
-      ? `who decides: ${parts.join(" · ")}${crowd} · window #${s.cycle_number} · frozen at the boundary`
+      ? `who decides: ${parts.join(" · ")}${crowd}${fwdLine} · window #${s.cycle_number} · frozen at the boundary`
       : `window #${s.cycle_number}`;
   }
 
@@ -2639,6 +2643,8 @@ function renderLiveFormulas(data) {
   if (!data || data.error) return;
   state.liveFormulas = data.formulas || {};
   state.liveReadings = data.readings || {};
+  state.liveForward = data.forward || {};
+  state.liveForwardComposite = data.forward_composite || {};
   state.liveTraces = data.traces || {};
   state.liveStats = data.stats || {};
   state.liveTimingsUs = data.timings_us || {};
@@ -2779,6 +2785,15 @@ function formulaRow(name, value, description, meta, readings = {}, traces = {}) 
     ? `<span class="verdict phase" title="¶gn — this pass sits at ${escapeHtml(phase.label)}; every panel shares the same minute grid">¶gn ${escapeHtml(phase.mark || "")}</span>`
     : "";
 
+  // Round BB: the forward line - what FOLLOWED readings like this one.  Red
+  // when the measured future points against the present reading.
+  const fwd = state.liveForward?.[name];
+  const fwdChip = fwd && fwd.n >= 8 ? (() => {
+    const against = v !== 0 && Math.abs(fwd.edge) > 0.04 && ((fwd.edge > 0) !== (v > 0));
+    const cls = against ? "fail" : Math.abs(fwd.edge) > 0.06 ? "pass" : "phase";
+    return `<span class="verdict ${cls}" title="${escapeHtml(fwd.reads + " · expected move " + fwd.exp_move_bps + " bps · tie " + Math.round(fwd.p_tie * 100) + "%")}">→ next ${Math.round(fwd.p_up * 100)}% up · n ${Math.round(fwd.n)}${against ? " · AGAINST the reading" : ""}</span>`;
+  })() : (fwd ? `<span class="verdict phase" title="no forward record for this value yet">→ next: no record yet</span>` : "");
+
   const html =
     `<div class="formula-row">` +
     `  <div class="formula-name" title="${escapeHtml(meta?.brain_node || "")}">${name}</div>` +
@@ -2796,7 +2811,7 @@ function formulaRow(name, value, description, meta, readings = {}, traces = {}) 
         (timingUs ? ` · ${fmtUs(timingUs)}` : "") +
         `</span>`
       : (timingUs ? `<span class="formula-stats">${fmtUs(timingUs)}</span>` : "")) +
-    `    ${verdictChip} ${checkChip} ${feedChip} ${phaseChip}` +
+    `    ${verdictChip} ${checkChip} ${feedChip} ${phaseChip} ${fwdChip}` +
     `    <button class="logic-toggle" type="button">${open ? "▾ hide logic" : "▸ logic"}</button>` +
     `  </div>` +
     (state.explain && description ? `<div class="formula-desc">${escapeHtml(description)}</div>` : "") +

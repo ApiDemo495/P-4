@@ -644,6 +644,10 @@ class FormulaEngine:
 
     def __init__(self, brain=None) -> None:
         self.brain = brain
+        # Round BB: optional callable values -> {name: forward value}; when set
+        # the brain's projection neurons receive what FOLLOWED readings like
+        # these (2 P(up) - 1), not the readings (backend/core/forward.py).
+        self.forward_hook = None
         self._state: dict[tuple[str, str], object] = {}
         #: Rolling sample history per (formula, asset): the context that turns a
         #: bare number into "normal for this tape, or not".
@@ -748,6 +752,12 @@ class FormulaEngine:
             self._run_one(spec, snapshot, asset, params, ctx, result)
 
         # --- Brain pass: KC activations must exist before KCAE -------------
+        if self.forward_hook is not None:
+            try:
+                ctx["_forward_edges"] = dict(self.forward_hook(result.values) or {})
+            except Exception as exc:  # noqa: BLE001
+                log.debug("forward hook failed: %s", exc)
+                ctx["_forward_edges"] = {}
         ccs_spec = BRAIN_FORMULAS[1]
         ccs_state = self.state_for(ccs_spec, asset)
         try:

@@ -35,6 +35,7 @@ MULT_CEIL = 1.6
 BACKERS = {
     "drosophila": ("brain:CCSv2",),
     "formulas": ("f:",),
+    "forward": ("forward:composite",),
     "physics": ("physics:layer",),
     "genesis": ("genesis:composite",),
     "news": ("news:NIV",),
@@ -108,6 +109,7 @@ def build(settings, ledger_sources: list[dict] | None = None) -> LockWeightTable
     bases = {
         "drosophila": float(getattr(settings, "weight_drosophila", 0.4) or 0.0),
         "formulas": float(getattr(settings, "weight_formulas", 0.0) or 0.0),
+        "forward": float(getattr(settings, "weight_forward", 0.0) or 0.0),
         "physics": float(getattr(settings, "weight_physics", 0.0) or 0.0),
         "genesis": float(getattr(settings, "weight_genesis", 0.0) or 0.0),
         "news": float(getattr(settings, "weight_news", 0.0) or 0.0),

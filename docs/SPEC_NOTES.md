@@ -2262,3 +2262,41 @@ tracked file is referenced; nothing was deleted on a hunch.
   CCSv2 sign. The sandbox cannot reach Binance, so the warm start was
   verified on synthetic 1 s bars (191 windows / 5 s) and fails soft there;
   the real run happens in the Codespace.
+
+### BB — Forward Expectancy: the engine calculates from the future
+
+* **The user's diagnosis** ("everything calculates on the basis of the
+  present and thinks the future will be like the present") is correct about
+  the recipe's grammar: a reading of +0.42 was treated as +0.42 bullish for
+  the next window, which silently assumes the next 53 s resemble the last.
+  Nobody observes the future, but it can be *conditioned on*. Every formula
+  now carries a forward table: for each value bin (7 quantile bins once it
+  has a record) and each last-window direction, the decayed frequency of
+  what the NEXT window did — up / down / tie — and the mean forward move.
+  A formula's **forward value** is 2·P(next up | this reading, last window)
+  − 1; it can and does carry the opposite sign to the reading.
+* **Where it replaces the present** (`backend/core/forward.py`):
+  1. *the brain* — `FormulaEngine.forward_hook` feeds the real mushroom
+     body's projection neurons the forward values of every formula with a
+     record (readings only for the rest), so the fly smells "what followed
+     readings like these";
+  2. *the fusion* — the `forward` voter (`weight_forward` 0.35, availability
+     scaled by coverage) carries the composite P(next window up): naive-Bayes
+     log-odds of every covered formula's forward conditional, shrunk by
+     sample size, / √k for correlation; abstains below 5 covered formulas;
+  3. *the ledger* — `forward:composite` is a source, scored on the future
+     like everything else; the lock-weight table knows it.
+* **Learning**: the warm start fills the tables from the last **24 h** of
+  real tape (default raised from 6 h; ~1 600 windows, the replayed brain
+  uses the same hook), then every live window is observed at publication
+  and settled at the competition settle (strict sign, ties counted). State
+  is in the vault (`forward`), half-life 400 windows.
+* **Shown, not claimed**: every Formula Explorer row prints "→ next 44 %
+  up · n 212" and flags **AGAINST the reading** when the measured future
+  contradicts the present sign; the "who decides" line prints FROM THE
+  FUTURE: P(up), formulas covered, how many point against themselves;
+  `GET /api/formulas/forward?name=TAI` returns a formula's whole table.
+* **Honesty**: a bin with no record says 50 % and does not vote; a 53 s
+  BTC window stays close to a coin — the change is that the number the
+  engine acts on is now the measured distribution of the next window, with
+  its sample size beside it, never the present reading extrapolated.

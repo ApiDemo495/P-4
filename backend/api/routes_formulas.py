@@ -57,6 +57,21 @@ async def live_formulas() -> dict:
     )
 
 
+@router.get("/api/formulas/forward")
+async def forward_tables(name: str | None = None) -> dict:
+    """Round BB: the forward-expectancy tables - for every formula and value
+    bin, the measured frequency of what the NEXT window did (up / down / tie,
+    mean move) after readings like it, split by the last window's direction.
+    ``?name=TAI`` returns one formula's full table."""
+    manager = get_manager()
+    out = manager.forward.to_dict()
+    out["composite"] = manager.forward.composite(manager.last_live_formulas, manager._last_window_dir()) \
+        if manager.last_live_formulas else {}
+    if name:
+        out["table"] = manager.forward.table(name.upper())
+    return out
+
+
 @router.get("/api/formulas/categories")
 async def categories() -> dict:
     return {

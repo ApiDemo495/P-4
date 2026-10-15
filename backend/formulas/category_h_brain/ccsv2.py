@@ -73,8 +73,11 @@ NON_DIRECTIONAL_PN = frozenset({"HSI", "ERC"})
 
 
 def _vector_from_ctx(ctx: dict) -> np.ndarray:
+    # Round BB: a formula with a forward record enters the brain as its
+    # forward value (2 P(next up) - 1); the rest enter as their reading.
+    fwd = ctx.get("_forward_edges") or {}
     return np.asarray(
-        [0.0 if name in NON_DIRECTIONAL_PN else float(ctx.get(name, 0.0)) for name in FORMULA_ORDER],
+        [0.0 if name in NON_DIRECTIONAL_PN else float(fwd.get(name, ctx.get(name, 0.0))) for name in FORMULA_ORDER],
         dtype=np.float64,
     )
 

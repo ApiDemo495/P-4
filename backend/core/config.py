@@ -226,6 +226,9 @@ class Settings:
     # to reach the side only through the brain, so a model-only physics vote
     # could out-vote twenty live formulas).  0 disables it.
     weight_formulas: float = field(default_factory=lambda: _env_float("FORMULAS_WEIGHT", 0.30))
+    #: Round BB: the forward-expectancy composite - P(next window up) measured
+    #: from what FOLLOWED readings like the present ones (backend/core/forward.py).
+    weight_forward: float = field(default_factory=lambda: _env_float("FORWARD_WEIGHT", 0.35))
     #: Round Z: the news wire's signed impact (impact.py) votes with this
     #: weight, scaled by how much classified, fresh news there is.
     weight_news: float = field(default_factory=lambda: _env_float("NEWS_WEIGHT", 0.15))

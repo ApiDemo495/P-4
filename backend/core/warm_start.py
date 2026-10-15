@@ -20,7 +20,7 @@ with the blind recipe.
 
 The warm start closes that gap in seconds:
 
-1. fetch the last ``hours`` of **real** 1-second klines for the asset from
+1. fetch the last ``hours`` (default 24) of **real** 1-second klines for the asset from
    Binance (public REST, no key; paginated, 1000 bars per call);
 2. turn them into the same tape the live engine sees (one trade per second:
    time, close, volume, aggressor side from the taker-buy share; one-minute
@@ -192,7 +192,7 @@ def window_boundaries(first_ms: float, last_ms: float, period_s: float) -> np.nd
 
 def replay(asset: str, bars: np.ndarray, hedge_bars: np.ndarray | None, ledger, *, brain_mb=None,
            period_s: float | None = None, directional: dict | None = None,
-           report: WarmStartReport | None = None, max_windows: int = 2000) -> WarmStartReport:
+           report: WarmStartReport | None = None, max_windows: int = 2000, forward=None) -> WarmStartReport:
     """Run the formulas at every historical boundary and score them on the
     next window (strict sign).  ``ledger`` is the live EvidenceLedger."""
     from backend.core.calibration import EvidenceLedger
@@ -208,6 +208,9 @@ def replay(asset: str, bars: np.ndarray, hedge_bars: np.ndarray | None, ledger, 
         rep.phase, rep.error = "failed", f"only {ticks.shape[0]} seconds of history"
         return rep
     engine = FormulaEngine(brain=_ReplayBrain(brain_mb) if brain_mb is not None else None)
+    last_dir = [0]
+    if forward is not None:          # the replayed brain smells forward values too, as live
+        engine.forward_hook = lambda values: forward.edges_vector(values, last_dir[0])
     bounds = window_boundaries(ticks[LOOKBACK_TICKS, 0], ticks[-1, 0] - period * 1000.0, period)
     if bounds.size > max_windows:
         bounds = bounds[-max_windows:]
@@ -267,13 +270,23 @@ def replay(asset: str, bars: np.ndarray, hedge_bars: np.ndarray | None, ledger, 
             )
             if not votes:
                 continue
-            learned = ledger.evaluate(asset, votes)
-            p_up = float(learned.get("p_up") or 0.5)
             cycle = -(int(b // 1000))            # negative cycle ids: never collide with live windows
-            ledger.remember(asset, cycle, votes, p_up)
             move_bps = (exit_px / entry - 1.0) * 1e4 if entry > 0 else 0.0
             actual_up = None if exit_px == entry else exit_px > entry
+            # Round BB: the forward tables learn here too, and the composite
+            # votes in the ledger once it has coverage - so it is scored on
+            # the future like every other source
+            if forward is not None:
+                fwd = forward.composite(result.values, prev_sign)
+                if fwd.get("available"):
+                    votes["forward:composite"] = 1 if float(fwd.get("value") or 0.0) > 0 else -1
+                forward.observe(cycle, result.values, prev_sign)
+            learned = ledger.evaluate(asset, votes)
+            p_up = float(learned.get("p_up") or 0.5)
+            ledger.remember(asset, cycle, votes, p_up)
             ledger.score(asset, cycle, actual_up, move_bps=move_bps, cost_bps=1.0)
+            if forward is not None:
+                forward.settle(cycle, actual_up, move_bps)
             # facts for the report (un-decayed, strict sign)
             sign_next = 0 if actual_up is None else (1 if actual_up else -1)
             if sign_next == 0:
@@ -293,6 +306,7 @@ def replay(asset: str, bars: np.ndarray, hedge_bars: np.ndarray | None, ledger, 
             pnl = move_bps if (recipe >= 0) else -move_bps
             drg_hist = np.vstack([drg_hist, [[1.0 if (recipe and recipe == sign_next) else -1.0 if recipe else 0.0, pnl]]])
             prev_sign = sign_next
+            last_dir[0] = sign_next
             rep.scored += 1
     finally:
         if saver is not None:
@@ -330,11 +344,12 @@ def _verdict(rate: float, n: int) -> str:
 class WarmStarter:
     """Runs the fetch + replay on a worker thread; never blocks the engine."""
 
-    def __init__(self, ledger, *, asset: str = "BTC", hours: float | None = None, brain=None) -> None:
+    def __init__(self, ledger, *, asset: str = "BTC", hours: float | None = None, brain=None, forward=None) -> None:
         self.ledger = ledger
+        self.forward = forward
         self.asset = asset
         env_hours = os.environ.get("WARM_START_HOURS", "").strip()
-        self.hours = float(hours if hours is not None else (env_hours or 6.0))
+        self.hours = float(hours if hours is not None else (env_hours or 24.0))
         self.enabled = os.environ.get("WARM_START", "1").strip().lower() not in ("0", "false", "no")
         self.brain = brain
         self.report = WarmStartReport(asset=asset, hours=self.hours,
@@ -377,7 +392,7 @@ class WarmStarter:
                     break
                 time.sleep(0.2)
             rep.detail = f"replaying {bars.shape[0]:,} seconds of real tape through the 31 formulas"
-            replay(self.asset, bars, hedge, self.ledger, brain_mb=mb, report=rep)
+            replay(self.asset, bars, hedge, self.ledger, brain_mb=mb, report=rep, forward=self.forward)
             rep.detail = (f"{rep.scored} real windows scored on the NEXT window · recipe agreed with the past "
                           f"{(rep.recipe_agrees_with_past or 0) * 100:.0f} %, with the future "
                           f"{(rep.recipe_agrees_with_future or 0) * 100:.0f} %")
