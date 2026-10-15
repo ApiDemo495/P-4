@@ -5,7 +5,7 @@ The user's words: "they were right but in the past, not future".  That is the
 exact failure mode of a recipe built from backward-looking measurements: a
 formula that says "buyers were aggressive for the last 40 s" is *true* about
 the window that just closed and is read as a forecast of the next one.  At a
-53 s horizon on BTC/USDT last-trade settlement the next window reverts about
+70 s horizon on BTC/USDT last-trade settlement the next window reverts about
 as often as it continues (bid-ask bounce, Roll 1984; one-minute
 autocorrelation is small and often negative), so a momentum reading that is
 right about the past is wrong about the future roughly half the time - and
@@ -25,7 +25,7 @@ The warm start closes that gap in seconds:
 2. turn them into the same tape the live engine sees (one trade per second:
    time, close, volume, aggressor side from the taker-buy share; one-minute
    closes for the candle inputs);
-3. cut the history on the **same epoch-aligned 53 s grid** the live clock
+3. cut the history on the **same epoch-aligned 70 s grid** the live clock
    uses, build a ``FrozenMarketSnapshot`` at every boundary from the 600 s
    before it, run the full :class:`FormulaEngine` (all 31 formulas + the real
    mushroom body, no side effects on the live brain) and collect the window's

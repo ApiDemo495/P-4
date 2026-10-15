@@ -95,7 +95,7 @@ def compute(
     r = outcomes.shape[0]
     # Round AW: magnitudes are *normalised* to the window's own typical |P&L|
     # (median of the buffer, floored at 1 bp).  The spec's GAIN = 0.1 was
-    # written for unit-sized rewards; with raw basis points (a 53 s window
+    # written for unit-sized rewards; with raw basis points (a 70 s window
     # ordinarily moves 5-15 bps) the TD error ran to -14, the dopamine term to
     # -24 and tanh pinned at -0.985 after a single ordinary loss - the gate
     # closed fully on every miss and taught nothing about *runs* of misses.

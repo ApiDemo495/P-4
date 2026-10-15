@@ -1993,13 +1993,13 @@ Codespace must carry. Three layers make them appear with zero actions:
    settings page "models.json" chips. Prebuild instructions in
    `docs/LOCAL_MODELS.md §8`.
 
-## AW - 53 s windows, a memory that survives restarts, and violence is not calm
+## AW - 70 s windows, a memory that survives restarts, and violence is not calm
 
-**The window is 53 seconds everywhere.** `Settings.cycle_seconds` defaults to
+**The window is 70 seconds everywhere.** `Settings.cycle_seconds` defaults to
 53 and every subsystem reads it (`window_seconds()` is the same number):
-clock grid (boundaries are multiples of 53 s since the epoch), countdown,
+clock grid (boundaries are multiples of 70 s since the epoch), countdown,
 lock, emotions, deep-micro, physics, prediction horizon, risk, hedge
-outcomes, competition, cross-asset sync grid (`SYNC_WINDOW_SECONDS = 53`),
+outcomes, competition, cross-asset sync grid (`SYNC_WINDOW_SECONDS = 70`),
 synthetic tapes, the dashboard strings. `CYCLE_SECONDS` still overrides.
 
 **StateVault (`backend/core/state_vault.py`).** The user's requirement:
@@ -2046,15 +2046,15 @@ Tests: `test_round_as.py` (+ violent-market, + restart-survival), 336 pass.
 
 The user found parts still coded for 60 s.  Fixed: the AI/agent prompts
 (`SYSTEM_PROMPT`, `build_cycle_prompt`, `SYSTEM_PROMPT_LOCAL`) now state the
-53 s horizon and the contest rule (strictly above/below, unchanged = loss) so
+70 s horizon and the contest rule (strictly above/below, unchanged = loss) so
 Gemini, GitHub Models and the local GGUF model all answer the right question;
 the API description; `FrozenSignal.window_seconds` default; SHRP's flow
 window; the utility-inversion sigma scaling (√60 → √window); the competition
-ladder's expected time (windows × 53 s, not minutes); dashboard "minute"
+ladder's expected time (windows × 70 s, not minutes); dashboard "minute"
 labels and the "minute-aligned" clock caption; HRDD/VSS descriptions.
 
 Formula fixes: **VSS** measured "60 ticks vs 300 ticks" - 6 s vs 30 s on a
-10 Hz tape, a minute on a thin one - it now measures the last 53 s against the
+10 Hz tape, a minute on a thin one - it now measures the last 70 s against the
 last 265 s on the tape's own timestamps (tick-count fallback; a tape shorter
 than two windows keeps a 1:5 split and says so).  **DRG** fed raw basis
 points into a formula written for unit rewards: one ordinary 9 bps loss gave
@@ -2072,7 +2072,7 @@ seconds".
 
 **Category I - THE 53-SECOND WINDOW (formulas 23-31,
 `backend/formulas/category_i_window/`).** Every one is a function of the
-contest's own horizon - overlapping 53 s windows at a 5 s stride over the
+contest's own horizon - overlapping 70 s windows at a 5 s stride over the
 frozen tape - and none repeats an existing measurement:
 
 | # | name | the mathematics | reads |
@@ -2231,7 +2231,7 @@ tracked file is referenced; nothing was deleted on a hunch.
 * **What the user saw.** Picks that matched the move that had *just*
   happened and lost the next window. Mechanism, not mystery: the recipe's
   inputs are measurements of the closing window (aggression, drift,
-  absorption …) read as forecasts of the next one. At 53 s on BTC/USDT
+  absorption …) read as forecasts of the next one. At 70 s on BTC/USDT
   last-trade settlement the next window continues about as often as it
   reverts, so a late-but-true reading wins ~half the time and *looks* 95 %
   wrong to someone watching the arrow against the move that produced it.
@@ -2241,7 +2241,7 @@ tracked file is referenced; nothing was deleted on a hunch.
   session ran the blind recipe. **`backend/core/warm_start.py`** closes the
   gap: at start it fetches the last 6 h of real Binance 1 s klines (public,
   no key), builds the same tape the live engine sees, cuts it on the same
-  epoch-aligned 53 s grid, runs all 31 formulas + the real mushroom body
+  epoch-aligned 70 s grid, runs all 31 formulas + the real mushroom body
   at every boundary (no side effects on the live brain), collects the votes
   exactly as a live window does and scores them on the NEXT window — strict
   sign — through `EvidenceLedger.remember/score`. ~400 forward-scored
@@ -2268,7 +2268,7 @@ tracked file is referenced; nothing was deleted on a hunch.
 * **The user's diagnosis** ("everything calculates on the basis of the
   present and thinks the future will be like the present") is correct about
   the recipe's grammar: a reading of +0.42 was treated as +0.42 bullish for
-  the next window, which silently assumes the next 53 s resemble the last.
+  the next window, which silently assumes the next 70 s resemble the last.
   Nobody observes the future, but it can be *conditioned on*. Every formula
   now carries a forward table: for each value bin (7 quantile bins once it
   has a record) and each last-window direction, the decayed frequency of
@@ -2296,7 +2296,7 @@ tracked file is referenced; nothing was deleted on a hunch.
   contradicts the present sign; the "who decides" line prints FROM THE
   FUTURE: P(up), formulas covered, how many point against themselves;
   `GET /api/formulas/forward?name=TAI` returns a formula's whole table.
-* **Honesty**: a bin with no record says 50 % and does not vote; a 53 s
+* **Honesty**: a bin with no record says 50 % and does not vote; a 70 s
   BTC window stays close to a coin — the change is that the number the
   engine acts on is now the measured distribution of the next window, with
   its sample size beside it, never the present reading extrapolated.

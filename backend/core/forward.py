@@ -5,8 +5,8 @@ present.
 The user's diagnosis, verbatim: "everything in the app calculates on the
 basis of present and thinks the future would be like present".  He is right
 about the recipe's grammar.  A formula reading of +0.42 was treated as
-"+0.42 bullish for the next window" - which silently assumes the next 53 s
-look like the last 53 s.  Nobody can observe the future, but it *can* be
+"+0.42 bullish for the next window" - which silently assumes the next 70 s
+look like the last 70 s.  Nobody can observe the future, but it *can* be
 measured in the only honest way: by conditioning on it.  For every formula
 and every value it has taken, this layer keeps what the price did in the
 window that FOLLOWED - the forward conditional

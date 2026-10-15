@@ -26,9 +26,9 @@ from backend.core import config as cfg
 from backend.core.timebase import now_us, us_to_iso
 
 #: The forecast window the specification asks for: every prediction covers the
-#: 53 seconds that follow its release.  ``Settings(time_scale=...)`` can compress
+#: 70 seconds that follow its release.  ``Settings(time_scale=...)`` can compress
 #: that for tests; this constant is the *intended* window and is always published.
-BASE_HORIZON_SECONDS = float(cfg.SETTINGS.cycle_seconds)   # Round AW: 53 s
+BASE_HORIZON_SECONDS = float(cfg.SETTINGS.cycle_seconds)   # Round AW: 70 s
 
 #: How a prediction is labelled once its age passes the contract.
 LIVE = "LIVE"
@@ -480,7 +480,7 @@ def horizon(
 ) -> dict:
     """The forecast window: what this prediction is *for*.
 
-    A prediction is released at one instant and covers the 53 seconds that
+    A prediction is released at one instant and covers the 70 seconds that
     follow.  This block says so explicitly - the instant of release, the instant
     the forecast targets, and how long is left before it is scored - in whole
     microseconds and in words.  A reader should never have to guess whether a
@@ -493,7 +493,7 @@ def horizon(
     scoring = released + float(scoring_seconds if scoring_seconds else seconds)
     return {
         "seconds": round(float(seconds), 3),
-        #: The specification's window.  Production runs 53-second windows, so
+        #: The specification's window.  Production runs 70-second windows, so
         #: ``seconds == base_seconds`` there; the accelerated test harness keeps
         #: ``base_seconds`` at 60 and reports its own compressed window in
         #: ``seconds``, with ``accelerated`` saying which one is which.
@@ -685,7 +685,7 @@ def build(
 ) -> dict:
     """The complete prediction object embedded in every payload.
 
-    ``horizon_seconds`` is the forecast window - 53 seconds by default, i.e. the
+    ``horizon_seconds`` is the forecast window - 70 seconds by default, i.e. the
     prediction released now covers the next minute.  ``scoring_seconds`` is when
     its result is measured, which defaults to the same instant.
     """

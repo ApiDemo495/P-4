@@ -1,4 +1,4 @@
-"""The 53-second cycle manager - the heart of DROSOPHILA TRADER v2.0.
+"""The 70-second cycle manager - the heart of DROSOPHILA TRADER v2.0.
 
 One cycle, exactly as specified in Section 1.1 and Section 2.2:
 
@@ -6,14 +6,14 @@ One cycle, exactly as specified in Section 1.1 and Section 2.2:
     t=0-3ms     run all 31 formulas on the frozen snapshot
     t=3-8s      call the AI agents concurrently (7 s budget)
     t~8s        fuse, then LOCK the signal and broadcast it
-    t=8-53s     broadcast nothing that changes the signal panel; the Formula
+    t=8-70s     broadcast nothing that changes the signal panel; the Formula
                 Explorer refreshes every 15 s with the explicit note that the
                 signal remains locked
-    t=53s       next cycle begins
+    t=70s       next cycle begins
 
 The manager also owns:
 
-* the **outcome tracker** - one window (53 s) after a signal fires, the result is evaluated
+* the **outcome tracker** - one window (70 s) after a signal fires, the result is evaluated
   and pushed into the DRG reward buffer
 * the **emergency path** - critical news events or a flash move override the
   locked signal to the *exit side* (the opposite of the direction that is open)
@@ -120,7 +120,7 @@ def _readings_for(result) -> dict:
 
 
 class CycleManager:
-    """Owns every subsystem and drives the 53-second world clock."""
+    """Owns every subsystem and drives the 70-second world clock."""
 
     def __init__(self, settings=None, clock: WorldClock | None = None, local_stub: bool | None = None) -> None:
         self.settings = settings or cfg.SETTINGS
@@ -161,7 +161,7 @@ class CycleManager:
         # Round AS: the competition's own scoreboard and the boundary picker
         self.competition = CompetitionLedger()
         self.picker = BoundaryPicker()
-        #: Round AX: what each emotion has really meant for the next 53 s window
+        #: Round AX: what each emotion has really meant for the next 70 s window
         self.emotion_outcomes = EmotionOutcomes()
         self.last_pick: dict = {}
         self.triune = TriuneAnalyst()
@@ -534,7 +534,7 @@ class CycleManager:
     @staticmethod
     def _snap_to_minute(timestamp: float, period: float | None = None) -> float:
         """Round a wall-clock timestamp up to the next epoch-aligned window
-        boundary (53 s grid by default; the UTC minute when CYCLE_SECONDS=60)."""
+        boundary (70 s grid by default; the UTC minute when CYCLE_SECONDS=60)."""
         period = float(period or cfg.SETTINGS.cycle_period_seconds)
         return math.ceil((timestamp - 1e-6) / period) * period
 
@@ -1695,7 +1695,7 @@ class CycleManager:
         return self.brain.status_dict()
 
     def history_payload(self, limit: int = 72) -> dict:
-        # The lock keeps 1440 windows (~21 h at 53 s, x6 data); the clamp
+        # The lock keeps 1440 windows (~21 h at 70 s, x6 data); the clamp
         # matches it instead of silently cutting the request at 240.
         return {"history": self.lock.recent_history(min(max(int(limit), 1), 1440))}
 
@@ -2319,7 +2319,7 @@ class CycleManager:
                            now: float | None = None) -> dict:
         """The prediction block: side, levels, freshness, reasoning, detail.
 
-        The forecast window is the 53-second window that starts when the
+        The forecast window is the 70-second window that starts when the
         prediction is released, and its result is scored one window later; both
         are stated explicitly in the ``horizon`` block, in microseconds.
         """

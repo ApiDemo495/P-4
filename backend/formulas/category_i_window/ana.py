@@ -1,7 +1,7 @@
 """FORMULA 31 - Analogue-Window Outcome (ANA).
 
 A tiny empirical classifier trained on the tape itself.  Every overlapping
-53 s window on the tape is labelled by the state at its *open* - the side
+70 s window on the tape is labelled by the state at its *open* - the side
 of the opening print, whether the preceding 10 s moved up or down, and
 whether the window before it closed up - eight cells.  ANA finds the cell
 the *current* boundary is in and reports the excess share of analogue

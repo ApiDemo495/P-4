@@ -29,7 +29,7 @@ TITLE = "Hedge Ratio Drift Detector"
 BRAIN_NODE = "Bilateral antennal lobe"
 DIRECTIONAL = True
 LATENCY_MS = 0.1
-DESCRIPTION = "Drift of the instantaneous BTC/PAXG hedge ratio vs. its 60-window (~53 min) baseline."
+DESCRIPTION = "Drift of the instantaneous BTC/PAXG hedge ratio vs. its 60-window (~70 min) baseline."
 
 BETA_HISTORY = 240  # ~4 hours of 1-minute betas: enough samples for a stable std()
 #: How many standard errors of the instantaneous beta estimate a change has

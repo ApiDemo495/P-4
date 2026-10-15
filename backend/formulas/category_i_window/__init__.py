@@ -1,1 +1,1 @@
-"""Category I - formulas designed for the 53-second contest window (Round AX)."""
+"""Category I - formulas designed for the 70-second contest window (Round AX)."""

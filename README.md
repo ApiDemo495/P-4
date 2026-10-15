@@ -1,7 +1,7 @@
 # DROSOPHILA TRADER v2.0
 
 A scalp-trading engine for **BTC** and **PAXG** built around a Drosophila
-mushroom-body connectome. One immutable prediction per **53-second window**,
+mushroom-body connectome. One immutable prediction per **70-second window**,
 31 formulas, three AI agents, and a brain that keeps working when neuPrint, the
 exchange or your API keys do not.
 
@@ -12,12 +12,12 @@ exchange or your API keys do not.
    │            t=15  ⚡ PULSE ─▶ formulas · news · agents · brain · rates │
    │            t=30  ⚡ PULSE ─▶ the same, plus a fresh news poll         │
    │            t=45  ⚡ PULSE ─▶ the same                                 │
-   │            t=53  boundary ─▶ next signal; this one is scored         │
+   │            t=70  boundary ─▶ next signal; this one is scored         │
    └──────────────────────────────────────────────────────────────────────┘
 ```
 
-**One clock, one tick.** The countdown is 53 seconds, phase-locked to the Unix
-epoch grid (every boundary is a multiple of 53 s), and it is rendered from absolute instants the backend publishes - so it
+**One clock, one tick.** The countdown is 70 seconds, phase-locked to the Unix
+epoch grid (every boundary is a multiple of 70 s), and it is rendered from absolute instants the backend publishes - so it
 cannot drift or restart. Every panel (signal, formulas, news, agents, brain,
 accuracy) refreshes on the *same* tick, from a single message, instead of each
 one polling on a private timer.
@@ -25,7 +25,7 @@ one polling on a private timer.
 Every prediction carries a **side (BUY or SELL - there is no HOLD), a fresh-ness
 age, the reasoning behind it, and a 1:1 take-profit / stop-loss pair**.
 
-**The crowd's emotions, live.** A 53-second market is easily pushed around by
+**The crowd's emotions, live.** A 70-second market is easily pushed around by
 retail emotion, so the engine reads the crowd continuously - eight emotions
 (fear, panic, capitulation, denial, hope, euphoria, FOMO, complacency), each
 measured from microseconds to minutes - and the dashboard says **which emotion
@@ -41,7 +41,7 @@ pushable the tape is), Lo-MacKinlay variance ratios, the Hurst exponent,
 Bandt-Pompe permutation entropy, Lillo-Farmer trade-sign memory, a Haar wavelet
 energy spectrum (which timescale carries the action), a three-state regime
 filter, and momentum-ignition / quote-stuffing / spoofing detectors - each on
-three bands from ticks to the whole 53 s window. A discrete Bayesian filter with sticky
+three bands from ticks to the whole 70 s window. A discrete Bayesian filter with sticky
 transitions turns that evidence into a *belief* over the eight emotions, and the
 dashboard renders the whole **reasoning chain**: formula, inputs, value, what it
 reads as, and which emotions it argues for. The belief is blended into the bars,
@@ -316,11 +316,11 @@ bash tools/codespace_autostart.sh --update
 | `bash run.sh --stop` | stops the engine and its supervisor |
 | `bash run.sh --setup-only` | installs everything, starts nothing |
 | `bash run.sh --port 8020` | uses a different port (then forward that one instead) |
-| `CYCLE_SECONDS=53` | length of one prediction window; boundaries are multiples of 53 s since the epoch |
+| `CYCLE_SECONDS=70` | length of one prediction window; boundaries are multiples of 70 s since the epoch |
 | `CALIBRATION_ENABLED=1` | learned reliability: after `CALIBRATION_MIN_SAMPLES` (30) scored windows per asset the per-source hit-rate ledger decides the side and the confidence shown is the realised rate; `CALIBRATION_HALF_LIFE=120` windows of memory; inspect with `GET /api/signal/calibration?asset=BTC` |
-| `PREDICTION_MAX_AGE_SECONDS=0` | `0` = as long as its own window (53 s + a 5 s grace); set a number to pin a hard cap |
+| `PREDICTION_MAX_AGE_SECONDS=0` | `0` = as long as its own window (70 s + a 5 s grace); set a number to pin a hard cap |
 | `RR_TARGET=1.0` | reward:risk target; 1.0 = take-profit and stop-loss are equidistant |
-| `OUTCOME_HORIZON_SECONDS=0` | `0` = score each prediction one window later (53 s) |
+| `OUTCOME_HORIZON_SECONDS=0` | `0` = score each prediction one window later (70 s) |
 | `bash run.sh --public` | flips the Codespaces port to public |
 | `bash .devcontainer/setup.sh` | the Codespaces `postCreateCommand`: system packages, venv, requirements, redis, `.env` |
 
@@ -577,8 +577,8 @@ tail -f server.log
 
 ## 9. The parts that make it v2.0
 
-* **A 53-second countdown you can watch.** The window is 53 seconds, aligned to
-  the epoch grid, and the countdown walks 53 → 1 one second at a time. It is
+* **A 70-second countdown you can watch.** The window is 70 seconds, aligned to
+  the epoch grid, and the countdown walks 70 → 1 one second at a time. It is
   rendered from the absolute instants the backend publishes
   (`window_started_at_ms`, `window_ends_at_ms`, `server_time_ms`, `cycle_id`),
   and it only re-anchors when the window id changes - a late message can never
@@ -650,10 +650,10 @@ tail -f server.log
   p95, jitter, tick rate, quote lifetime, aggression), and publishes its own
   clock as epoch microseconds. The dashboard prints `812 µs`, `4.31 ms`,
   `1.204 s` — never a rounded "0.0 ms".
-* **Every prediction covers the 53 seconds that follow its release.** The payload
+* **Every prediction covers the 70 seconds that follow its release.** The payload
   carries `horizon` with `released_at` / `target_at` (six-digit ISO *and* epoch
   µs), `microseconds_to_target`, `scored_in_seconds`, and the words "the next
-  53 seconds" — so a side is never mistaken for "now". The dashboard shows that
+  70 seconds" — so a side is never mistaken for "now". The dashboard shows that
   line under the prediction, plus a `▸ prediction detail` block naming the
   formulas that backed the side and the µs the pass cost.
 * **A dashboard you can read at a glance.** Row 1: prediction + reasoning ·
@@ -678,8 +678,8 @@ tail -f server.log
   exception is a *critical* news event, which can only force HOLD.
 * **31 formulas, 9 categories.** Each one is isolated: an exception zeroes that
   formula, records the error, and the other 30 still run. 11 zeros ⇒ thin evidence.
-  Category I, *The 53-second Window* (Round AX), is nine formulas built on
-  overlapping 53 s windows of the tape: **PIN** (the probability the window
+  Category I, *The 70-second Window* (Round AX), is nine formulas built on
+  overlapping 70 s windows of the tape: **PIN** (the probability the window
   closes exactly where it opened - a tie, which the contest scores as a loss),
   MPL microprice lean, RBB bid-ask bounce, RAR run-age hazard, WDR horizon
   drift, PRT window-to-window persistence, FIH book-level order-flow
@@ -704,7 +704,7 @@ tail -f server.log
   scores every source on the *next* window and fades the late ones, but it
   used to start blind in every fresh Codespace. Now the engine **warm
   starts**: it fetches the last 6 h of real Binance 1 s tape, replays all
-  31 formulas + the real mushroom body on the live 53 s grid and scores
+  31 formulas + the real mushroom body on the live 70 s grid and scores
   them forward (~400 windows in ~10 s), so the ledger is active from the
   first live boundary. The competition cell prints "Past vs future": how
   often the recipe agreed with the past window vs the future one, the
@@ -732,7 +732,7 @@ tail -f server.log
   EUPHORIA, FOMO, COMPLACENCY and **PARALYSIS** (the frozen tape). Every
   boundary records the dominant emotion and the settled window is scored under
   it, so the emotion card prints what each feeling has *really* meant for the
-  next 53 s on this tape (up / down / tie) instead of asserting it.
+  next 70 s on this tape (up / down / tie) instead of asserting it.
 * **The real fly brain (Round AQ).** On first start the engine downloads the
   FlyWire FAFB v783 connectome from GitHub (no account, ~130 MB: 138 639
   proofread neurons, 15.09 M connections carrying 54.5 M synapses with their
@@ -747,9 +747,9 @@ tail -f server.log
   `GET /api/brain/connectome` has the full read-out; the brain card shows which
   circuit answered.
 * **The competition scoreboard and the boundary pick (Round AS).** The app is
-  played in a streak competition: every 53 s window must be called BUY or
+  played in a streak competition: every 70 s window must be called BUY or
   SELL, entry is the exchange's last trade at :00, settlement the last trade
-  at :53, strictly higher/lower wins, **a tie loses**, and the ladder pays on
+  at :70, strictly higher/lower wins, **a tie loses**, and the ladder pays on
   5 / 20 / 50 / 72 consecutive wins. The engine now scores every window by
   exactly that rule (`/api/competition`, the gold card at the top of the
   prediction panel: streak, ladder with per-attempt probability and expected
@@ -804,20 +804,20 @@ excluded from the blend) instead of voting 0.00.
 
 | § | mechanism | what it measures |
 |---|---|---|
-| 8.3 | Ornstein-Uhlenbeck bridge | reversion of the BTC/PAXG ratio to its 5-min VWAP; tradeable only if the half-life is 5-600 s and E[ΔP] clears the spread; edge capped at one window σ (53 s) |
+| 8.3 | Ornstein-Uhlenbeck bridge | reversion of the BTC/PAXG ratio to its 5-min VWAP; tradeable only if the half-life is 5-600 s and E[ΔP] clears the spread; edge capped at one window σ (70 s) |
 | 8.1 | VPIN | flow toxicity; above 0.40 the dominant side is informed |
 | 8.6 | Hawkes self-excitation | branching ratio n of trade arrivals; clustered flow carries its sign, n ≥ 0.95 is a cascade about to exhaust |
-| 8.7 | Momentum flux (kinetic energy) | p = Σ side·v·\|Δln P\| over one window (53 s), z-scored against ten minutes |
+| 8.7 | Momentum flux (kinetic energy) | p = Σ side·v·\|Δln P\| over one window (70 s), z-scored against ten minutes |
 | 8.8 | Trade-sign entropy | Shannon entropy of sign blocks; low entropy = an order being worked |
 | 8.9 | Cross-leg diffusion | lagged BTC↔PAXG cross-correlation on a 5 s grid; the leader's last move predicts the follower |
-| 8.4 | REI pendulum | BTC share of pair notional as a damped oscillator, integrated one window (53 s) ahead |
+| 8.4 | REI pendulum | BTC share of pair notional as a damped oscillator, integrated one window (70 s) ahead |
 | 8.10 | Tape temperature | realised variance of the last minute vs ten minutes; a hot tape drags every vote |
 | 8.5 | Avellaneda-Stoikov | the spread cost the blend must beat |
 | 8.2 / 10 | fragmentation · peg | only when 2+ venue quotes / a gold-spot quote are live |
 | 11 | Kelly | Σ⁻¹μ over the active mechanisms, temperature drag, spread-cost gate |
 
 The planetary sections of the original document (Landauer valve, solar flux,
-E = mc², AMM surface) were retired: inside a 53-second window the global
+E = mc², AMM surface) were retired: inside a 70-second window the global
 hashrate is a constant, so they printed 0.00 and "balanced" every window.
 
 Dashboard card "Physics layer" (every mechanism with its numbers and reason),
@@ -829,7 +829,7 @@ estimates; no "cannot lose" claim is made anywhere.
 
 The "Hedge Status" tiles were replaced by an outcome system. For the locked
 side the engine prints the distribution it is trading on: σ of each leg over
-one window (53 s), ρ, the dollar hedge ratio β and the variance a hedge removes; the
+one window (70 s), ρ, the dollar hedge ratio β and the variance a hedge removes; the
 **joint outcome matrix** P(BTC↑/↓ × PAXG↑/↓) from a bivariate normal; the
 four pair actions consistent with the lock (outright, hedged at β,
 pair-neutral, mirror leg) with expected bp, σ and P(profit), the best by μ/σ;
@@ -882,8 +882,8 @@ expression trees over frame columns and the survivors' signals (no `eval`).
 **Every exchange candle, read every window.** The 200+ generated formulas
 live on real 1-minute exchange candles (that is the resolution Kraken and
 Gemini publish), so the pool re-scores when a candle closes; the fusion reads
-the latest composite at every 53 s boundary and the ledger scores that vote
-on the 53 s outcome, so the genesis weight is earned on the contest's own
+the latest composite at every 70 s boundary and the ledger scores that vote
+on the 70 s outcome, so the genesis weight is earned on the contest's own
 horizon. The regime (trending / mean-reverting / high-vol / low-vol /
 cascade, from Hurst, vol percentile and 3-minute σ-moves) gates the active
 set to 80 / 70 / 60 / 50 / 40 formulas, preferring the domains the spec names
@@ -937,4 +937,4 @@ engine does this itself):
   v2.0 draft, with symptom → cause → decision → verification → escape hatch.
 
 **Nothing here is financial advice.** The engine is a research instrument: it
-emits a locked directional opinion every 53 s window and scores itself afterwards.
+emits a locked directional opinion every 70 s window and scores itself afterwards.

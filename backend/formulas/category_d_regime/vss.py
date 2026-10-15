@@ -1,6 +1,6 @@
 """FORMULA 13 - Volatility Surprise Score (VSS).
 
-Compares realised volatility over the last window (53 s) with the 5-window baseline
+Compares realised volatility over the last window (70 s) with the 5-window baseline
 that the market has "priced in".  A positive surprise means the tape is waking
 up - large moves are becoming likely.  The magnitude is then multiplied by the
 sign of the recent mean return, so a volatility spike *with* upward drift reads
@@ -73,7 +73,7 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
 
     # Round AW: the windows are *time*, not tick counts.  "60 ticks" was 6 s
     # on a 10 Hz tape and a minute on a thin one - the surprise then compared
-    # whatever the feed rate happened to be.  Short = the last window (53 s),
+    # whatever the feed rate happened to be.  Short = the last window (70 s),
     # long = the last five windows, both on the tape's own timestamps; the
     # tick counts are only the fallback when the tape carries no clock.
     n_short, n_long = min(SHORT_WINDOW, returns.size), min(LONG_WINDOW, returns.size)

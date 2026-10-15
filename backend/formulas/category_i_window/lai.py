@@ -4,7 +4,7 @@ Who is hitting with *size*.  Over the last window the trades above the
 tape's own 80th size percentile are kept; LAI is their signed notional
 share, (Σ buy − Σ sell) / Σ all, times the share of total notional those
 large prints represent.  Small prints are the crowd; the top quintile is
-whoever is actually moving inventory - and inside 53 s inventory moves
+whoever is actually moving inventory - and inside 70 s inventory moves
 decide the close.
 
 AFPR is a recency-weighted ratio over *every* print; LAI deliberately throws

@@ -2,7 +2,7 @@
 
 The rules, as the user plays them:
 
-* every 53 s window must be called BUY or SELL - no skipping, no sizing;
+* every 70 s window must be called BUY or SELL - no skipping, no sizing;
 * entry = the exchange's **last trade** at the opening second, settlement =
   the last trade at the closing second;
 * strictly higher wins a BUY, strictly lower wins a SELL, **a tie loses**;
@@ -25,7 +25,7 @@ the one-tick windows where ties and coin-flips live:
   entry print.  A print at the ask with a heavy bid is *above* fair value and
   the next prints lean down (Stoikov 2018);
 * **last-print reversal** - the aggressor side of the entry print itself
-  (bid-ask bounce: Roll 1984), and the move of the last 3 s, which at a 53 s
+  (bid-ask bounce: Roll 1984), and the move of the last 3 s, which at a 70 s
   horizon reverts more often than it continues;
 * **short order-flow imbalance** - signed volume of the last 5 s (Cont,
   Kukanov & Stoikov 2014), the only short-horizon feature that *continues*.
@@ -221,7 +221,7 @@ class BoundaryPicker:
         # When the window is likely to end within a tick of where it started,
         # the close is decided by the microstructure of the entry print - the
         # queue the microprice leans to, the bounce off the print side, the
-        # book's own flow - not by a 53 s trend recipe that is indifferent to
+        # book's own flow - not by a 70 s trend recipe that is indifferent to
         # a one-tick move.  So the microstructure terms (everything but the
         # recipe) are re-read on their own, amplified, and blended in with the
         # tie probability as the weight.

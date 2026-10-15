@@ -289,10 +289,10 @@ register(
     Logic(
         name="HRDD",
         expression="d_beta = (beta_now - EMA_60(beta)) / scale;  HRDD = -tanh(d_beta) for BTC",
-        reads=("synchronised 1-second BTC and PAXG return grid", "60-window (~53 min) EMA of the hedge ratio"),
+        reads=("synchronised 1-second BTC and PAXG return grid", "60-window (~70 min) EMA of the hedge ratio"),
         steps=(
             "Regress PAXG returns on BTC returns over the synchronised grid -> instantaneous beta.",
-            "Compare beta with its 60-window (~53 min) EMA baseline.",
+            "Compare beta with its 60-window (~70 min) EMA baseline.",
             "Normalise the drift by the historical dispersion of beta.",
             "Negate for BTC: if the hedge ratio is drifting, BTC is the leg that is out of line.",
         ),
@@ -312,7 +312,7 @@ register(
         ),
         reads=("synchronised BTC and PAXG returns", "tick flow per leg"),
         steps=(
-            "Dollar flow per leg = sum of (i/T)^2 * volume * side * price over the last window (53 s), a recency-weighted net flow in dollars.",
+            "Dollar flow per leg = sum of (i/T)^2 * volume * side * price over the last window (70 s), a recency-weighted net flow in dollars.",
             "Normalise each leg by the flow *that leg* normally does (EMA of its own |flow|, floored at half of the pair's typical flow) - dividing a window by itself would always give +/-1.",
             "Rotation R = half the difference of the two normalised flows: +1 is a complete rotation into PAXG, -1 a complete rotation into BTC.",
             "Sign it for the asset under analysis: money leaving BTC for gold is bearish BTC.",
@@ -634,16 +634,16 @@ register(
 
 
 # ---------------------------------------------------------------------------
-# Category I - the 53-second window (Round AX)
+# Category I - the 70-second window (Round AX)
 # ---------------------------------------------------------------------------
 register(
     Logic(
         name="PIN",
-        expression="PIN = max( share of 53 s windows that closed at their open,  2·Φ(tick / (2·σ₅₃)) − 1 )",
-        reads=("trade tape", "best bid/ask (tick size)", "overlapping 53 s windows every 5 s"),
+        expression="PIN = max( share of 70 s windows that closed at their open,  2·Φ(tick / (2·σ₅₃)) − 1 )",
+        reads=("trade tape", "best bid/ask (tick size)", "overlapping 70 s windows every 5 s"),
         steps=(
             "Estimate the exchange tick from the tape's smallest price steps (floored by half the spread).",
-            "Lay overlapping 53 s windows over the trade tape every 5 s and record each one's open and close - the contest's own sample.",
+            "Lay overlapping 70 s windows over the trade tape every 5 s and record each one's open and close - the contest's own sample.",
             "Empirical: the share of those windows whose close equals its open within half a tick.",
             "Parametric: with σ₅₃ = the std of window returns in ticks, the chance a normal move stays within ±½ tick is 2·Φ(0.5/σ₅₃) − 1.",
             "Take the larger of the two: the tie risk of calling THIS window.",
@@ -715,10 +715,10 @@ register(
 register(
     Logic(
         name="WDR",
-        expression="WDR = tanh( t / 2 ),  t = weighted mean(53 s window returns) / (sd / √n_independent)",
-        reads=("overlapping 53 s windows every 5 s", "half-life 2 windows"),
+        expression="WDR = tanh( t / 2 ),  t = weighted mean(70 s window returns) / (sd / √n_independent)",
+        reads=("overlapping 70 s windows every 5 s", "half-life 2 windows"),
         steps=(
-            "Returns of overlapping 53 s windows are the contest's own sample.",
+            "Returns of overlapping 70 s windows are the contest's own sample.",
             "Recency-weight them (half-life two windows) and take mean and dispersion.",
             "Independent sample size = effective n / overlap, so 5 s strides cannot fake precision; t = mean / standard error.",
         ),
@@ -733,7 +733,7 @@ register(
     Logic(
         name="PRT",
         expression="PRT = ρ₁(shrunk) × sign(last window) × min(1, |last window| / σ)",
-        reads=("non-overlapping 53 s window returns", "the window that just closed"),
+        reads=("non-overlapping 70 s window returns", "the window that just closed"),
         steps=(
             "ρ₁ = lag-one autocorrelation of consecutive window returns on the tape.",
             "Shrink ρ₁ toward zero by its standard error 1/√n.",
@@ -767,7 +767,7 @@ register(
     Logic(
         name="LAI",
         expression="LAI = (Σ large buy − Σ large sell) / Σ large  ×  Σ large / Σ all,  large = notional ≥ 80th percentile",
-        reads=("trades of the last 53 s: price, size, aggressor side"),
+        reads=("trades of the last 70 s: price, size, aggressor side"),
         steps=(
             "Keep the prints at or above the 80th percentile of notional - the top quintile by size.",
             "Signed share among them, times their share of all notional in the window.",
@@ -775,7 +775,7 @@ register(
         bands=DIRECTIONAL_SYMMETRIC,
         sign="positive = size is buying",
         trace=("prints in window", "size cut", "large buy notional", "large sell notional", "large share", "imbalance"),
-        why="Inside 53 s inventory moves decide the close; the crowd's small prints do not.",
+        why="Inside 70 s inventory moves decide the close; the crowd's small prints do not.",
     )
 )
 
@@ -783,7 +783,7 @@ register(
     Logic(
         name="ANA",
         expression="ANA = (2·P(up | boundary cell) − 1) × n / (n + 8)",
-        reads=("every overlapping 53 s window on the tape, labelled by its opening state"),
+        reads=("every overlapping 70 s window on the tape, labelled by its opening state"),
         steps=(
             "Label each past window by three bits at its open: entry print side, 10 s pre-move sign, previous window sign.",
             "Find the cell the current boundary is in; P(up) among those analogue windows (ties count as neither).",
@@ -960,7 +960,7 @@ DETAIL: dict[str, dict] = {
     },
     "HRDD": {
         "units": "-1 … +1 relative-value score (BTC leg)",
-        "sensitivity": "a beta one scale-unit from its 60-window (~53 min) EMA reads ±0.76",
+        "sensitivity": "a beta one scale-unit from its 60-window (~70 min) EMA reads ±0.76",
         "misleads": (
             "a single-leg news event moves beta without any relative-value story",
             "the EMA needs ~60 windows before the baseline is trustworthy",

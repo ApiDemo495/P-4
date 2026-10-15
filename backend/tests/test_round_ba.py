@@ -34,13 +34,13 @@ def test_bars_become_the_live_tape_shape():
 
 
 def test_boundaries_follow_the_epoch_grid():
-    b = ws.window_boundaries(1_000_000, 1_000_000 + 10 * 53_000, 53.0)
-    assert all(int(x) % 53_000 == 0 for x in b) and b.size >= 9
+    b = ws.window_boundaries(1_000_000, 1_000_000 + 10 * 70_000, 70.0)
+    assert all(int(x) % 70_000 == 0 for x in b) and b.size >= 9
 
 
 def test_replay_scores_every_source_on_the_next_window_and_activates_the_ledger():
     ledger = EvidenceLedger(path=None, enabled=True, min_samples=30)
-    rep = ws.replay("BTC", _bars(3600 + 700), None, ledger, brain_mb=None, period_s=53.0)
+    rep = ws.replay("BTC", _bars(3600 + 700), None, ledger, brain_mb=None, period_s=70.0)
     assert rep.phase == "done", rep.error
     assert rep.scored >= 50 and rep.recipe_windows <= rep.scored
     assert rep.continuation_rate is not None and 0.0 <= rep.continuation_rate <= 1.0

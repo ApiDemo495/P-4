@@ -380,7 +380,7 @@ CATEGORY_NAMES = {
     "F": "Kalman & State Estimation",
     "G": "News & Sentiment",
     "H": "Drosophila Brain Output",
-    "I": "The 53-second Window",
+    "I": "The 70-second Window",
     "REWARD": "Reward Learning",
 }
 
@@ -475,7 +475,7 @@ def _readings(values: dict) -> dict:
 
 
 #: How many samples of each formula the engine remembers, per asset.
-#: 360 windows is ~5 minutes at the 53-second cadence - exactly the 6x the
+#: 360 windows is ~5 minutes at the 70-second cadence - exactly the 6x the
 #: dashboard used to show - and it is what makes the per-formula statistics
 #: (mean, sigma, z-score, trend, zero rate) meaningful instead of decorative.
 FORMULA_HISTORY = 360
@@ -745,7 +745,7 @@ class FormulaEngine:
         for spec in INPUT_FORMULAS:
             self._run_one(spec, snapshot, asset, params, ctx, result)
 
-        # --- Formulas 23-31: the 53-second window (Round AX) ---------------
+        # --- Formulas 23-31: the 70-second window (Round AX) ---------------
         # Before the brain pass: the eight directional ones are projection
         # neurons of the real mushroom body (gc.BRAIN_INPUT_NAMES).
         for spec in WINDOW_FORMULAS:

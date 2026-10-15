@@ -344,7 +344,7 @@ def test_everything_learned_survives_a_restart(tmp_path, monkeypatch):
 
 
 # -------------------------------------------- Round AW: the window reaches the agents and the formulas
-def test_agents_and_formulas_speak_the_53_second_window():
+def test_agents_and_formulas_speak_the_70_second_window():
     from backend.agents import base, local_model_agent
     from backend.core import config as cfg
 
@@ -355,7 +355,7 @@ def test_agents_and_formulas_speak_the_53_second_window():
     from backend.formulas.category_c_hedge import shrp
     assert shrp.FLOW_SECONDS == cfg.window_seconds()
     from backend.core.signal_lock import FrozenSignal
-    assert FrozenSignal._field_defaults["window_seconds"] == 53.0
+    assert FrozenSignal._field_defaults["window_seconds"] == 70.0
     # DRG no longer pins at -0.98 on one ordinary loss (magnitudes are normalised)
     import numpy as np
     from backend.formulas import drg
@@ -376,7 +376,7 @@ def test_the_nine_window_formulas_are_distinct_and_pin_drives_the_pick():
     assert len(ALL_FORMULAS) == 31 and len(WINDOW_FORMULAS) == 9
     names = [s.name for s in WINDOW_FORMULAS]
     assert names == ["PIN", "MPL", "RBB", "RAR", "WDR", "PRT", "FIH", "LAI", "ANA"]
-    assert CATEGORY_NAMES["I"] == "The 53-second Window"
+    assert CATEGORY_NAMES["I"] == "The 70-second Window"
     # every one has its own mathematics, logic entry, detail and double-check
     rules = set()
     for spec in WINDOW_FORMULAS:

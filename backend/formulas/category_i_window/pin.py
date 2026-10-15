@@ -1,11 +1,11 @@
 """FORMULA 23 - Pinned-Window Probability (PIN).
 
-The contest's silent killer: a window whose last trade at :53 equals the
+The contest's silent killer: a window whose last trade at :70 equals the
 last trade at :00 is a LOSS whichever side was called.  PIN estimates that
 probability *for this tape right now* from two independent readings and
 takes the larger:
 
-* empirical - lay overlapping 53 s windows over the tape every 5 s and count
+* empirical - lay overlapping 70 s windows over the tape every 5 s and count
   the share whose close equals its open to the tick;
 * parametric - P(|ΔP| < tick/2) under a normal with the tape's own horizon
   sigma: 2·Φ(tick / (2σ₅₃)) − 1, i.e. how many ticks one window-sigma is.

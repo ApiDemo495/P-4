@@ -108,7 +108,7 @@ EXPECTATIONS: tuple[Expectation, ...] = (
                 kind="range", lo=0.0, hi=1.0),
     Expectation("CCSv2", "the whole circuit votes with the tape",
                 threshold=0.15, flat_max=0.45),
-    # Round AX - the 53-second window.  The synthetic tapes are one window
+    # Round AX - the 70-second window.  The synthetic tapes are one window
     # long (600 ticks at 10 Hz), so the horizon statistics that need two or
     # more windows (WDR, PRT, ANA) legitimately abstain there; what can be
     # claimed on one window is claimed.

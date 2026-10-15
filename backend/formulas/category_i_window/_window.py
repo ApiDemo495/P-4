@@ -1,4 +1,4 @@
-"""Shared mathematics for Category I - the formulas designed for the 53 s
+"""Shared mathematics for Category I - the formulas designed for the 70 s
 contest window (Round AX).
 
 Everything here reads the frozen snapshot only: the tick tape
@@ -7,7 +7,7 @@ the two order-book frames ``book`` / ``book_prev`` of shape (2, L, 2) -
 bids then asks, each level ``(price, qty)``.
 
 The contest rule shapes these helpers: a window is won on the *last trade*
-at :53 against the last trade at :00, strictly - an unchanged price is a
+at :70 against the last trade at :00, strictly - an unchanged price is a
 loss.  So the tick size, the horizon-matched return distribution and the
 best quotes are what every formula in this category starts from.
 """

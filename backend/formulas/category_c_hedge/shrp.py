@@ -33,7 +33,7 @@ DIRECTIONAL = True
 LATENCY_MS = 0.15
 DESCRIPTION = "Recency-weighted dollar-flow rotation between BTC (risk) and PAXG (safety)."
 
-FLOW_SECONDS = float(cfg.window_seconds())   # one window of flow (53 s)
+FLOW_SECONDS = float(cfg.window_seconds())   # one window of flow (70 s)
 
 
 class State:

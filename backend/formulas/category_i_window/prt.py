@@ -1,7 +1,7 @@
 """FORMULA 28 - Previous-Window Reversal Tendency (PRT).
 
 Does a window that closed up tend to be followed by one that closes down?
-PRT estimates the lag-one autocorrelation ρ₁ of *non-overlapping* 53 s
+PRT estimates the lag-one autocorrelation ρ₁ of *non-overlapping* 70 s
 window returns on the tape and applies it to the window that just ended:
 value = ρ₁ × sign(last window return) × min(1, |last| / σ).  Negative ρ₁ on
 an up window leans SELL (mean reversion at the horizon), positive leans BUY

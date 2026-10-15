@@ -13,7 +13,7 @@ are measured at microsecond resolution but aggregated over five bands:
 ===========  ==========================================================
 ``micro``    µs - ms: inter-tick intervals, jitter, quote lifetime, burst
 ``seconds``  1 - 15 s: velocity, aggression, spread blow-out
-``window``   the 53-second window (the engine period): range position, drawdown, volume climax
+``window``   the 70-second window (the engine period): range position, drawdown, volume climax
 ``minutes``  1-minute candles: trend, run-up, drawdown from the high
 ``news``     the headlines: sentiment and how much of it there is
 ===========  ==========================================================
@@ -29,7 +29,7 @@ The nine emotions
 ``EUPHORIA``      "happy": price pinned at the top, buys aggressive, calm.
 ``FOMO``          chasing: fast up-move, volume surge, the ask side thinning.
 ``COMPLACENCY``   nothing happening: tight spread, low volatility, mid-range.
-``PARALYSIS``     Round AX: the price stays at one point - the 53 s window is
+``PARALYSIS``     Round AX: the price stays at one point - the 70 s window is
                   likely to close exactly where it opened (a tie, which the
                   contest scores as a loss).  Built from the PIN mathematics.
 
@@ -82,15 +82,15 @@ EMOTIONS: dict[str, tuple[str, str]] = {
 TIMESCALES: tuple[str, ...] = ("micro", "seconds", "window", "minutes", "news")
 
 #: Round AW: the window-length horizon of the velocity ladder - read from the
-#: engine period (53 s) at call time, never hard-coded.
-WIN = 53.0
+#: engine period (70 s) at call time, never hard-coded.
+WIN = 70.0
 
 
 def _window_horizon() -> float:
     try:
         return float(cfg.window_seconds())
     except Exception:  # noqa: BLE001
-        return 53.0
+        return 70.0
 
 #: The emotional families, for the one-line summary the UI prints.
 FAMILIES: dict[str, str] = {
@@ -242,7 +242,7 @@ TERM_DEFINITIONS: dict[str, str] = {
     "social_buzz": "ramp(social posts among the last 30 wire items; 2, 12)",
     "social_pos": "ramp(social_sentiment; 0.10, 0.60) × social_buzz",
     "social_neg": "ramp(−social_sentiment; 0.10, 0.60) × social_buzz",
-    "pinned": ("ramp(pin_prob; 0.05, 0.40) - pin_prob = max(share of the last 53 s windows that closed "
+    "pinned": ("ramp(pin_prob; 0.05, 0.40) - pin_prob = max(share of the last 70 s windows that closed "
                "exactly at their open, 2·Φ(tick/(2·σ₅₃)) − 1) - the probability the next window ties"),
     "frozen_tape": "1 − ramp(tick rate / its own pace; 0.30, 1.00) - prints drying up",
 }
@@ -862,7 +862,7 @@ def _typical_move_bps(times_ms: np.ndarray, prices: np.ndarray, seconds: float) 
     base = prices[earlier[valid]]
     moves = np.abs(prices[valid] / base - 1.0) * 10_000.0
     moves = moves[np.isfinite(moves)]
-    # A horizon the tape barely covers (a 53 s lookback on a 58 s tape) has
+    # A horizon the tape barely covers (a 70 s lookback on a 58 s tape) has
     # too few samples for a median to mean anything; report "no scale" and
     # let the caller derive it from the next-shortest horizon.
     if moves.size < 30:
@@ -979,7 +979,7 @@ def features(
         bps = (last - base) / base * 10_000.0 if base else 0.0
         out[f"z_{seconds:g}s"] = bps / typical if typical > 1e-6 else 0.0
     # Round AW: horizon-independent aliases for the window-length reading
-    # (53 s by default) so every reader stops hard-coding "60".
+    # (70 s by default) so every reader stops hard-coding "60".
     out["return_win_bps"] = out[f"return_{WIN:g}s_bps"]
     out["scale_win_bps"] = out[f"scale_{WIN:g}s_bps"]
     out["z_win"] = out[f"z_{WIN:g}s"]
@@ -1106,7 +1106,7 @@ def features(
     # --- Round AX: the frozen tape --------------------------------------
     # The contest loses on a tie, so "the price stays at one point" is a
     # feeling of its own (PARALYSIS).  Same mathematics as the PIN formula:
-    # the share of overlapping 53 s windows that closed exactly at their
+    # the share of overlapping 70 s windows that closed exactly at their
     # open, and the parametric tie probability 2·Φ(tick/(2σ)) − 1.
     out.update(_pin_statistics(times_ms, prices))
 
@@ -1741,16 +1741,16 @@ def formula_agreement(agreement: dict, tone_bias: float) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Round AX: what each emotion has actually been worth over 53 s windows
+# Round AX: what each emotion has actually been worth over 70 s windows
 # ---------------------------------------------------------------------------
 @dataclass
 class EmotionOutcomes:
     """The learned side of the emotion layer.
 
     Every window the dominant emotion at the boundary is recorded; when the
-    window settles (last trade at :53 against last trade at :00) the outcome
+    window settles (last trade at :70 against last trade at :00) the outcome
     is scored under that emotion: up, down or tie.  The panel then prints
-    what FEAR, FOMO or PARALYSIS have *really* meant for the next 53 s on this
+    what FEAR, FOMO or PARALYSIS have *really* meant for the next 70 s on this
     tape - the user asked for emotions that are measured, not asserted - and
     PARALYSIS is scored on the thing it predicts: the tie rate.
 
@@ -1825,6 +1825,6 @@ class EmotionOutcomes:
             "pending": len(self.pending),
             "by_emotion": out,
             "recent": [{"cycle": c, "emotion": e, "intensity": round(i, 3), "outcome": o} for c, e, i, o in self.rows[-12:]],
-            "note": ("per emotion dominant at the boundary: how the next 53 s window really closed on this tape "
+            "note": ("per emotion dominant at the boundary: how the next 70 s window really closed on this tape "
                      "(up / down / tie, last trade to last trade) - measured, never asserted"),
         }

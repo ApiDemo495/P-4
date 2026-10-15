@@ -1,6 +1,6 @@
 """World-clock timing.
 
-The 53-second cycle is phase-locked to the UTC epoch grid (Section 9 of the
+The 70-second cycle is phase-locked to the UTC epoch grid (Section 9 of the
 specification).  NTP is used to correct for system-clock drift; if NTP is
 unreachable the module silently falls back to the system clock and re-attempts
 every 60 seconds (Section 13.1).
@@ -51,12 +51,12 @@ class WorldClock:
 
     def seconds_into_minute(self, period: float | None = None) -> float:
         """Seconds since the last epoch-aligned boundary of ``period`` (the
-        53 s window by default; the name is historical)."""
+        70 s window by default; the name is historical)."""
         return self.now() % float(period or cfg.SETTINGS.cycle_seconds)
 
     def seconds_until_next_minute(self, period: float | None = None) -> float:
         """Seconds to the next epoch-aligned boundary of ``period`` (Round AW:
-        the name is historical - the grid is 53 s by default)."""
+        the name is historical - the grid is 70 s by default)."""
         period = float(period or cfg.SETTINGS.cycle_seconds)
         return period - self.seconds_into_minute(period)
 

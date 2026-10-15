@@ -146,7 +146,7 @@ L2_DEPTH_LEVELS = 20 * DATA_MULTIPLIER            # 120 levels per side
 CANDLE_BUFFER_SIZE = 60 * DATA_MULTIPLIER         # 360 candles
 NEWS_CACHE_SIZE = 20 * DATA_MULTIPLIER            # 120 headlines
 OUTCOME_BUFFER_SIZE = 20 * DATA_MULTIPLIER        # 120 scored windows
-SYNC_WINDOW_SECONDS = 53   # Round AW: the cross-asset grid is one window
+SYNC_WINDOW_SECONDS = 70   # Round AW: the cross-asset grid is one window
 
 
 @dataclass(frozen=True)
@@ -326,7 +326,7 @@ class Settings:
 
     # Cycle timing
     #: Length of one prediction window, in wall-clock seconds.  This is the
-    #: countdown the user watches, and it is **53 seconds**, phase-locked to the
+    #: countdown the user watches, and it is **70 seconds**, phase-locked to the
     #: UTC minute (the literal v2.0 timing, Section 9).  Every feature of the
     #: engine - the signal, the formulas, the news poll, the accuracy scoring -
     #: is scheduled on that one grid, so the dashboard refreshes in parallel
@@ -334,11 +334,11 @@ class Settings:
     #:
     #: ``CYCLE_SECONDS`` still overrides it for compressed demos, and
     #: ``TIME_SCALE`` compresses it further for the test suite.
-    #: Round AW: the window is **53 seconds** (user), epoch-aligned - every
-    #: boundary is a multiple of 53 s since the Unix epoch, so two Codespaces
+    #: Round AW: the window is **70 seconds** (user), epoch-aligned - every
+    #: boundary is a multiple of 70 s since the Unix epoch, so two Codespaces
     #: see the same boundaries.  ``CYCLE_SECONDS`` overrides.
     cycle_seconds: float = field(
-        default_factory=lambda: _env_float("CYCLE_SECONDS", 53.0)
+        default_factory=lambda: _env_float("CYCLE_SECONDS", 70.0)
     )
     #: Freshness contract for a published prediction.  ``0`` (the default) means
     #: "as long as its own window": the signal rendered on screen is the signal
@@ -364,7 +364,7 @@ class Settings:
     )
     #: How long after a prediction its result is scored.  ``0`` (the default)
     #: means "one window later", so the accuracy panel fills at the same rate
-    #: the predictions arrive: one window (53 s) with the countdown.
+    #: the predictions arrive: one window (70 s) with the countdown.
     outcome_horizon_seconds: float = field(
         default_factory=lambda: _env_float("OUTCOME_HORIZON_SECONDS", 0.0)
     )
@@ -399,7 +399,7 @@ class Settings:
     def cycle_period_seconds(self) -> float:
         """Wall-clock length of one prediction window.
 
-        ``CYCLE_SECONDS`` (53 s by default, epoch-aligned) sets the cadence; a
+        ``CYCLE_SECONDS`` (70 s by default, epoch-aligned) sets the cadence; a
         larger ``TIME_SCALE`` compresses it further for demos and tests.
         """
         return self.cycle_seconds / max(self.time_scale, 0.01)
@@ -424,7 +424,7 @@ class Settings:
     @property
     def use_world_clock(self) -> bool:
         """True at real time (TIME_SCALE 1): windows are phase-locked to the
-        epoch grid of ``cycle_seconds`` (53 s by default; the UTC minute when
+        epoch grid of ``cycle_seconds`` (70 s by default; the UTC minute when
         CYCLE_SECONDS=60) via the NTP-corrected world clock."""
         return abs(self.time_scale - 1.0) < 1e-9 and self.cycle_seconds >= 5.0
 
@@ -451,10 +451,10 @@ SETTINGS = Settings()
 def window_seconds() -> float:
     """Round AW: the ONE number every horizon-bound feature reads - emotions,
     physics, risk, prediction, hedge outcomes, the competition rule, the UI.
-    53 s by default (``CYCLE_SECONDS``).  This is the *market* horizon the
+    70 s by default (``CYCLE_SECONDS``).  This is the *market* horizon the
     formulas reason about, so it is NOT compressed by ``TIME_SCALE`` (the
     schedule is - see ``Settings.cycle_period_seconds``)."""
     try:
         return float(SETTINGS.cycle_seconds)
     except Exception:  # noqa: BLE001 - import-time fallback
-        return 53.0
+        return 70.0

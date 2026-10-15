@@ -1,6 +1,6 @@
 """FORMULA 27 - Window Drift Ratio (WDR).
 
-Momentum measured at *exactly* the contest horizon.  Overlapping 53 s
+Momentum measured at *exactly* the contest horizon.  Overlapping 70 s
 windows are laid over the tape every 5 s; their returns are the sample the
 contest draws from.  WDR is the t-statistic of their recency-weighted mean
 (half-life 2 windows) against their dispersion, squashed: positive when the
@@ -23,7 +23,7 @@ TITLE = "Window Drift Ratio"
 BRAIN_NODE = ""
 DIRECTIONAL = True
 LATENCY_MS = 0.2
-DESCRIPTION = "t-statistic of the recency-weighted mean return of overlapping 53 s windows."
+DESCRIPTION = "t-statistic of the recency-weighted mean return of overlapping 70 s windows."
 
 T_SCALE = 2.0
 

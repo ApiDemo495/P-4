@@ -84,7 +84,7 @@ class AgentHealth:
 
 def _window_rule() -> str:
     """The horizon sentence every agent prompt opens with (Round AW: the
-    window is ``cfg.window_seconds()`` - 53 s - and the contest rule is
+    window is ``cfg.window_seconds()`` - 70 s - and the contest rule is
     strict: only the last price at the end counts, a tie is a loss)."""
     w = int(round(cfg.window_seconds()))
     return (
@@ -149,7 +149,7 @@ def build_cycle_prompt(context: dict) -> str:
         f"TEMPORAL: MCPE={f.get('MCPE', 0):+.3f} MPS={f.get('MPS', 0):+.3f} "
         f"TWRS={f.get('TWRS', 0):+.3f}\n"
         f"KALMAN: DSKD={f.get('DSKD', 0):+.3f}\n"
-        f"THE WINDOW (53 s): PIN(tie risk)={f.get('PIN', 0):.2f} MPL={f.get('MPL', 0):+.3f} "
+        f"THE WINDOW (70 s): PIN(tie risk)={f.get('PIN', 0):.2f} MPL={f.get('MPL', 0):+.3f} "
         f"RBB={f.get('RBB', 0):+.3f} RAR={f.get('RAR', 0):+.3f} WDR={f.get('WDR', 0):+.3f} "
         f"PRT={f.get('PRT', 0):+.3f} FIH={f.get('FIH', 0):+.3f} LAI={f.get('LAI', 0):+.3f} "
         f"ANA={f.get('ANA', 0):+.3f}\n"

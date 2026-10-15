@@ -40,7 +40,7 @@ from backend.core import config as cfg
 HAWKES_BIN_S = 1.0
 HAWKES_WINDOW_S = 300.0
 HAWKES_CRITICAL = 0.95
-KINETIC_WINDOW_S = float(cfg.window_seconds())   # one window (53 s); historical name
+KINETIC_WINDOW_S = float(cfg.window_seconds())   # one window (70 s); historical name
 KINETIC_BASE_S = 600.0
 ENTROPY_BLOCK = 3
 ENTROPY_PRINTS = 240

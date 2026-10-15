@@ -105,7 +105,7 @@ def size_levels(
     sigma = float(volatility_bps)
     if not math.isfinite(sigma) or sigma <= 0:
         sigma = float(settings.default_volatility_bps)
-    base_horizon = float(getattr(settings, "cycle_seconds", 53) or 53)      # the 53 s window
+    base_horizon = float(getattr(settings, "cycle_seconds", 70) or 70)      # the 70 s window
     horizon = max(float(horizon_seconds or base_horizon), 1.0)
     sigma_t = sigma * math.sqrt(horizon / base_horizon)
 

@@ -63,14 +63,14 @@ def test_the_window_is_sixty_seconds_and_the_prediction_lives_exactly_that_long(
     # ``cycle_seconds`` is the un-compressed wall-clock cadence: 60 s, aligned
     # to the UTC minute.  The test harness compresses the *wall clock* by 20x,
     # but the ratio is preserved.
-    assert settings.cycle_seconds == 53.0, settings.cycle_seconds
+    assert settings.cycle_seconds == 70.0, settings.cycle_seconds
     # The harness compresses the wall clock, so alignment to the UTC minute is
     # asserted against the *uncompressed* configuration (what a Codespace runs).
     production = cfg.Settings(time_scale=1.0)
-    assert production.cycle_period_seconds == 53.0
-    assert production.use_world_clock is True, "the 53 s window must be grid-aligned"
-    assert production.prediction_expired == 58.0
-    assert production.outcome_horizon == 53.0
+    assert production.cycle_period_seconds == 70.0
+    assert production.use_world_clock is True, "the 70 s window must be grid-aligned"
+    assert production.prediction_expired == 75.0
+    assert production.outcome_horizon == 70.0
     assert settings.cycle_period_seconds <= settings.cycle_seconds + 1e-9
     # Fresh = "still the window it belongs to" (its own window + a small grace).
     # The grace has a 2 s floor so it cannot flap in a compressed window; at the
@@ -213,11 +213,11 @@ def test_a_live_prediction_covers_the_window_that_follows_its_release(
     """
     prediction = manager.signal_payload()["prediction"]
     horizon = prediction["horizon"]
-    assert horizon["base_seconds"] == 53.0
-    assert horizon["accelerated"] is (horizon["seconds"] != 53.0)
+    assert horizon["base_seconds"] == 70.0
+    assert horizon["accelerated"] is (horizon["seconds"] != 70.0)
     if not horizon["accelerated"]:
-        assert horizon["seconds"] == 53.0
-        assert horizon["label"] == "the next 53 seconds"
+        assert horizon["seconds"] == 70.0
+        assert horizon["label"] == "the next 70 seconds"
         assert prediction["forecast_for"] == "the next 60 seconds"
     # the target instant is exactly one window after the release moment
     span = horizon["target_at_us"] - horizon["released_at_us"]
