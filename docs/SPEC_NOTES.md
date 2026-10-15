@@ -2300,3 +2300,32 @@ tracked file is referenced; nothing was deleted on a hunch.
   BTC window stays close to a coin — the change is that the number the
   engine acts on is now the measured distribution of the next window, with
   its sample size beside it, never the present reading extrapolated.
+
+### BC — Superposition: every source already in the future; 70-second window
+
+* **Window 70 s everywhere.** `CYCLE_SECONDS=70.0`, `SYNC_WINDOW_SECONDS=70`,
+  `window_seconds()` fallback 70, prediction expiry 75 s, the epoch grid in
+  multiples of 70 s, every formula/physics/emotion/news/hedge/countdown/README
+  reference. Pulse marks on the 70 s grid are 15/30/45/60. The synthetic
+  self-test tapes now space their 600 ticks over exactly one window
+  (`TICK_STEP_MS`), otherwise the 70 s sync grid had a 10 s hole and HRDD
+  went quiet on the STRESS tape.
+* **`backend/core/superposition.py`.** `project()` — damped AR(1) (φ ≤ 0.9)
+  over a source's own last 24 values gives the reading it is expected to have
+  at the boundary. `Superposition.state(name, measured, last_dir)` blends the
+  forward table (Round BB) at the measured and the projected reading, weighted
+  by their record sizes, into |up⟩/|down⟩/|tie⟩; `collapsed = P(up) − P(down)`;
+  `coherence = 1 − H/ln 3`; `covered` iff the larger record has ≥ 8 settled
+  windows. Uncovered → collapsed = measured, coherence 0 (it says so).
+* **Wiring.** `CycleManager` remembers every value each window, collapses the
+  formula map before consensus and the ledger votes, feeds the brain hook
+  (`_brain_future_vector`) with collapsed values, replaces the physics `vote`
+  with the collapsed one (`measured_vote` kept, `future` added, FUTURE note),
+  and `forward.observe` now records formulas + `phys:vote` + `phys:<mech>` +
+  `emo:<NAME>` so physics and emotions earn their own forward records.
+  Payloads: competition `superposition`, `/api/formulas/live` `future` +
+  `superposition`. UI: the formula bar is the next-window value with a
+  "measured now → at the boundary" chip and the three amplitudes.
+* **Honesty.** A longer window is not automatically more accurate; the forward
+  tables are measured, not assumed, and the only lever is still the pick at
+  second 0.

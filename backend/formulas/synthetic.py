@@ -53,6 +53,10 @@ WINDOWS = 48
 #: Micro-cycle period, in ticks: 30 ticks = 3 s at 10 ticks/s.
 CYCLE_PERIOD_TICKS = 30
 WINDOW_SECONDS = float(cfg.SETTINGS.cycle_seconds)
+#: Tick spacing so that the 600 ticks of a synthetic window span exactly one
+#: contest window (Round BC: 70 s -> ~117 ms; a fixed 100 ms left a 10 s hole
+#: in every 70 s sync grid and starved the pair formulas of their last window).
+TICK_STEP_MS = WINDOW_SECONDS * 1000.0 / TICKS_PER_WINDOW
 END_MS = 1_700_000_000_000.0
 SEED = 20240924
 
@@ -319,7 +323,7 @@ def _spreads(
     return np.column_stack([times, spread])
 
 
-def _tick_times(n: int, end_ms: float = END_MS, step_ms: float = 100.0) -> np.ndarray:
+def _tick_times(n: int, end_ms: float = END_MS, step_ms: float = TICK_STEP_MS) -> np.ndarray:
     """Ascending tick timestamps ending exactly at ``end_ms``."""
     return end_ms - (n - 1 - np.arange(n)) * step_ms
 

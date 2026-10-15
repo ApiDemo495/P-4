@@ -698,6 +698,21 @@ tail -f server.log
   row prints "→ next 44 % up · n 212" and says **AGAINST the reading** when
   the measured future contradicts the present sign; the "who decides" line
   prints FROM THE FUTURE. A bin with no record says 50 % and does not vote.
+* **Superposition — every source already in the future (Round BC).** The
+  window is now **70 s** everywhere (`CYCLE_SECONDS=70`). Every formula,
+  every physics mechanism and every emotion is carried as a state of the
+  **next** window — |up⟩ / |down⟩ / |tie⟩ with measured probabilities — built
+  from two readings: the value measured now and the value the source itself
+  is projected to have at the boundary (a damped AR(1) over its own last 24
+  windows). The engine never acts on the reading: the crowd consensus, the
+  ledger's per-source votes, the brain's input vector and the physics vote
+  all use the collapsed value P(up) − P(down). Each formula bar shows the
+  next-window value with "measured now x → y at the boundary", the three
+  amplitudes and a coherence (1 − entropy / ln 3). A source without a
+  forward record stays on its measured value and says so. Honest note: a
+  longer window does not by itself make a pick more accurate — it only
+  lets the forward tables see a larger move per window; the lever is still
+  the pick at second 0.
 * **Right about the past, not the future — fixed at the root (Round BA).**
   Formulas measure the window that just closed; reading them as forecasts
   is why picks matched the last move and lost the next. The evidence ledger

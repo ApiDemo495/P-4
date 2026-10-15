@@ -2645,6 +2645,8 @@ function renderLiveFormulas(data) {
   state.liveReadings = data.readings || {};
   state.liveForward = data.forward || {};
   state.liveForwardComposite = data.forward_composite || {};
+  state.liveFuture = data.future || {};
+  state.liveSuperposition = data.superposition || {};
   state.liveTraces = data.traces || {};
   state.liveStats = data.stats || {};
   state.liveTimingsUs = data.timings_us || {};
@@ -2731,8 +2733,13 @@ function renderFormulas() {
 
 function formulaRow(name, value, description, meta, readings = {}, traces = {}) {
   const row = document.createElement("div");
+  // Round BC: the bar is the NEXT-window state (P(up) − P(down), collapsed
+  // from |up>/|down>/|tie>) when the source has a forward record; the
+  // measured reading is kept beside it as "measured now".
+  const fut = state.liveFuture?.[name];
+  const inFuture = !!(fut && fut.covered);
   const known = typeof value === "number";
-  const v = known ? value : 0;
+  const v = inFuture ? fut.collapsed : (known ? value : 0);
   // Round AP: a 0.00 carries its reason (engine zero_reasons, via the trace's "why 0.00" row)
   const zeroWhy = (() => {
     const t = traces && traces[name];
@@ -2788,6 +2795,9 @@ function formulaRow(name, value, description, meta, readings = {}, traces = {}) 
   // Round BB: the forward line - what FOLLOWED readings like this one.  Red
   // when the measured future points against the present reading.
   const fwd = state.liveForward?.[name];
+  const futChip = inFuture
+    ? `<span class="verdict ${fut.coherence >= 0.1 ? "pass" : "phase"}" title="${escapeHtml(fut.reads)}">|up⟩ ${Math.round(fut.p_up * 100)}% |down⟩ ${Math.round(fut.p_down * 100)}% |tie⟩ ${Math.round(fut.p_tie * 100)}% · measured now ${fmtSigned(fut.measured, 3)} → ${fmtSigned(fut.projected, 3)} at the boundary · coherence ${fut.coherence.toFixed(2)}</span>`
+    : (fut ? `<span class="verdict phase" title="${escapeHtml(fut.reads || "")}">measured ${fmtSigned(fut.measured, 3)} → projected ${fmtSigned(fut.projected, 3)} · superposition pending a forward record</span>` : "");
   const fwdChip = fwd && fwd.n >= 8 ? (() => {
     const against = v !== 0 && Math.abs(fwd.edge) > 0.04 && ((fwd.edge > 0) !== (v > 0));
     const cls = against ? "fail" : Math.abs(fwd.edge) > 0.06 ? "pass" : "phase";
@@ -2800,7 +2810,7 @@ function formulaRow(name, value, description, meta, readings = {}, traces = {}) 
     `  <div class="formula-bar"><div class="zero"></div>` +
     `    <div class="fill ${fillClass}" style="${v >= 0 ? "left:50%" : `right:50%`};width:${width}%"></div>` +
     `  </div>` +
-    `  <div class="formula-value ${posClass}">${known ? fmtSigned(v, 3) : "—"}</div>` +
+    `  <div class="formula-value ${posClass}" title="${inFuture ? "next-window value (collapsed superposition); measured now " + fmtSigned(fut.measured, 3) : "measured reading"}">${known || inFuture ? fmtSigned(v, 3) : "—"}${inFuture ? "<small> next</small>" : ""}</div>` +
     `  <div class="formula-head">` +
     `    <span class="formula-reading">${escapeHtml(reading)}</span>` +
     (known && Math.abs(v) < 1e-12 && zeroWhy ? `<span class="formula-zero-why" title="why this formula prints 0.00 right now">⚠ ${escapeHtml(zeroWhy)}</span>` : "") +
@@ -2811,7 +2821,7 @@ function formulaRow(name, value, description, meta, readings = {}, traces = {}) 
         (timingUs ? ` · ${fmtUs(timingUs)}` : "") +
         `</span>`
       : (timingUs ? `<span class="formula-stats">${fmtUs(timingUs)}</span>` : "")) +
-    `    ${verdictChip} ${checkChip} ${feedChip} ${phaseChip} ${fwdChip}` +
+    `    ${verdictChip} ${checkChip} ${feedChip} ${phaseChip} ${futChip} ${fwdChip}` +
     `    <button class="logic-toggle" type="button">${open ? "▾ hide logic" : "▸ logic"}</button>` +
     `  </div>` +
     (state.explain && description ? `<div class="formula-desc">${escapeHtml(description)}</div>` : "") +

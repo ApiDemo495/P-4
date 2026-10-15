@@ -295,12 +295,12 @@ def test_the_server_keeps_one_heartbeat_for_the_whole_dashboard():
 
 
 def test_the_pulse_cadence_matches_the_spec():
-    """15 s formula refresh and 30 s news - both on the 60 s grid."""
+    """15 s formula refresh and 30 s news - both on the 70 s grid (marks at 15, 30, 45, 60)."""
     production = cfg.Settings(time_scale=1.0)
     assert production.formula_refresh_seconds == 15.0
     assert production.news_poll_seconds == 30.0
     marks = _grid_offsets(production.formula_refresh_seconds, production.cycle_period_seconds)
-    assert marks == [15.0, 30.0, 45.0]
+    assert marks == [15.0, 30.0, 45.0, 60.0]
 
 
 # ---------------------------------------------------------------------------

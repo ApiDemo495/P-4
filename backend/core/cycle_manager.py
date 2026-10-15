@@ -53,6 +53,7 @@ from backend.core.calibration import EvidenceLedger
 from backend.core.state_vault import StateVault
 from backend.core.warm_start import WarmStarter
 from backend.core.forward import ForwardExpectancy
+from backend.core.superposition import Superposition
 from backend.core.competition import BoundaryPicker, CompetitionLedger, boundary_features
 from backend.core.dopamine import DopamineBrain
 from backend.core.triune import TriuneAnalyst
@@ -136,8 +137,13 @@ class CycleManager:
         # up | this reading, last window dir); feeds the brain, the fusion and
         # the ledger.  Learned on the warm start, then on every live window.
         self.forward = ForwardExpectancy()
-        self.formulas.forward_hook = lambda values: self.forward.edges_vector(values, self._last_window_dir())
+        # Round BC: superposition - every source carried as |up>/|down>/|tie>
+        # of the NEXT window from its measured AND its projected reading; the
+        # engine acts on the collapsed value wherever it used the reading.
+        self.superposition = Superposition(self.forward)
+        self.formulas.forward_hook = self._brain_future_vector
         self._last_forward: dict = {}
+        self._last_future: dict = {}
         # Round T: the thermodynamic capital layer - one more weighted voter.
         from backend.physics.engine import PhysicsEngine
 
@@ -1530,7 +1536,8 @@ class CycleManager:
         # settled on what the price does next (strict sign, ties counted).
         try:
             if self.last_formula_result is not None:
-                self.forward.observe(signal.cycle_number, self.last_formula_result.values, self._last_window_dir())
+                self.forward.observe(signal.cycle_number, self._all_sources(self.last_formula_result.values),
+                                     self._last_window_dir())
         except Exception as exc:  # noqa: BLE001
             log.debug("forward observe skipped: %s", exc)
         # Round AR: the analyst remembers the three opinions; the dopamine
@@ -1801,6 +1808,9 @@ class CycleManager:
             last_dir = self._last_window_dir()
             payload["forward"] = {name: e.as_dict() for name, e in
                                   self.forward.expect(self.last_live_formulas, last_dir).items()}
+            payload["future"] = {name: s.as_dict() for name, s in
+                                 self.superposition.states(self.last_live_formulas, last_dir).items()}
+            payload["superposition"] = self.superposition.summary()
             payload["forward_composite"] = self.forward.composite(self.last_live_formulas, last_dir) \
                 if self.last_live_formulas else {}
         except Exception as exc:  # noqa: BLE001
@@ -1971,11 +1981,15 @@ class CycleManager:
         weighted verdict to ``fuse`` which, once the ledger is active, lets it
         decide the side and cap the confidence at what has been earned.
         """
-        agreement = consensus(formula_result.values, self._directional_map())
+        last_dir = self._last_window_dir()
+        self.superposition.remember(formula_result.values)
+        future_values = self.superposition.collapse(formula_result.values, last_dir)
+        agreement = consensus(future_values, self._directional_map())
         physics_report = None
         if float(getattr(self.settings, "weight_physics", 0.0) or 0.0) > 0 and snapshot is not None:
             try:
                 physics_report = self.physics.compute(snapshot, self.asset)
+                physics_report = self._physics_future(physics_report, last_dir)
                 self.last_physics = physics_report
                 self.last_errors.pop("physics", None)
             except Exception as exc:  # noqa: BLE001
@@ -2009,7 +2023,9 @@ class CycleManager:
                 "ccs_blended": round(ccs_value, 4),
             }
         try:
-            forward = self.forward.composite(formula_result.values, self._last_window_dir())
+            forward = self.forward.composite(formula_result.values, last_dir)
+            self._last_future = {"sources": {n: s.as_dict() for n, s in self.superposition.last.items()},
+                                 "summary": self.superposition.summary()}
         except Exception as exc:  # noqa: BLE001
             log.debug("forward composite failed: %s", exc)
             forward = {}
@@ -2049,7 +2065,7 @@ class CycleManager:
         except (TypeError, ValueError):
             crowd_tone = 0.0
         votes = EvidenceLedger.votes_from(
-            formula_values=formula_result.values,
+            formula_values=future_values,
             directional=self._directional_map(),
             ccs_value=ccs_value,
             agents=agent_results,
@@ -2216,6 +2232,7 @@ class CycleManager:
         out["tie_risk"] = round(float(self.last_live_formulas.get("PIN", 0.0) or 0.0), 3)
         out["warm_start"] = self.warm_starter.report.to_dict()
         out["forward"] = self._last_forward or self.forward.last_composite
+        out["superposition"] = (self._last_future or {}).get("summary", {})
         out["ledger"] = {k: (self._last_learned or {}).get(k) for k in ("active", "scored", "min_samples", "handed_back",
                                                                         "ledger_hit_rate", "spec_hit_rate")}
         out["learning"] = {
@@ -2871,6 +2888,64 @@ class CycleManager:
             log.info("Vault: wrote %d/%d items to %s", sum(1 for v in written.values() if v), len(written), self.vault.root)
         except Exception as exc:  # noqa: BLE001
             log.debug("could not persist state: %s", exc)
+
+    def _brain_future_vector(self, values: dict) -> dict:
+        """What the real mushroom body smells: every covered source's collapsed
+        next-window value (P(up) − P(down)), the reading for the rest."""
+        last_dir = self._last_window_dir()
+        out = {}
+        for name, st in self.superposition.states(values, last_dir).items():
+            if st.covered:
+                out[name] = st.collapsed
+        return out
+
+    def _physics_sources(self, report: dict | None) -> dict:
+        """The physics layer as sources: the vote and every mechanism's signed edge."""
+        out = {}
+        if not report:
+            return out
+        out["phys:vote"] = float(report.get("vote") or 0.0)
+        for m in report.get("mechanisms") or []:
+            try:
+                key = str(m.get("key") or "")
+                if key:
+                    out[f"phys:{key}"] = float(m.get("direction") or 0.0) * min(1.0, abs(float(m.get("edge_bps") or 0.0)) / 5.0)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def _emotion_sources(self) -> dict:
+        out = {}
+        for e in (self.emotion_locked or {}).get("emotions") or []:
+            try:
+                tone = str(e.get("tone") or "")
+                # positive family +, negative family -, COMPLACENCY / PARALYSIS as
+                # magnitude: the forward table learns what follows (ties, mostly)
+                sign = 1.0 if tone == "positive" else -1.0 if tone == "negative" else 1.0
+                out[f"emo:{e.get('name')}"] = sign * float(e.get("intensity") or 0.0)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def _all_sources(self, formula_values: dict) -> dict:
+        return {**(formula_values or {}), **self._physics_sources(self.last_physics), **self._emotion_sources()}
+
+    def _physics_future(self, report: dict, last_dir: int) -> dict:
+        """Round BC: the physics vote the fusion sees is the collapsed
+        next-window state of the physics layer when it has a record."""
+        try:
+            src = self._physics_sources(report)
+            self.superposition.remember(src)
+            st = self.superposition.state("phys:vote", src.get("phys:vote", 0.0), last_dir)
+            report = dict(report)
+            report["measured_vote"] = report.get("vote")
+            report["future"] = st.as_dict()
+            if st.covered:
+                report["vote"] = round(st.collapsed, 4)
+                report["note"] = f"{report.get('note', '')} · FUTURE: measured {st.measured:+.3f} → next window |up⟩ {st.p_up:.0%} |down⟩ {st.p_down:.0%} → acts as {st.collapsed:+.3f}".strip(" ·")
+        except Exception as exc:  # noqa: BLE001
+            log.debug("physics future skipped: %s", exc)
+        return report
 
     def _last_window_dir(self) -> int:
         """Direction of the last settled window (+1 / -1 / 0 tie or unknown)."""
