@@ -25,6 +25,7 @@ The manager also owns:
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import math
 import os
@@ -53,6 +54,7 @@ from backend.core.calibration import EvidenceLedger
 from backend.core.state_vault import StateVault
 from backend.core.warm_start import WarmStarter
 from backend.core.forward import ForwardExpectancy
+from backend.core.hindsight import HindsightReviewer
 from backend.core.superposition import Superposition
 from backend.core.competition import BoundaryPicker, CompetitionLedger, boundary_features
 from backend.core.dopamine import DopamineBrain
@@ -137,6 +139,9 @@ class CycleManager:
         # up | this reading, last window dir); feeds the brain, the fusion and
         # the ledger.  Learned on the warm start, then on every live window.
         self.forward = ForwardExpectancy()
+        # Round BI: the trailing hour re-grades every input and corrects it
+        self.hindsight = HindsightReviewer()
+        self._last_hindsight: dict = {}
         # Round BC: superposition - every source carried as |up>/|down>/|tie>
         # of the NEXT window from its measured AND its projected reading; the
         # engine acts on the collapsed value wherever it used the reading.
@@ -1537,6 +1542,10 @@ class CycleManager:
         if self._last_votes:
             self.ledger.remember(signal.asset, signal.cycle_number, self._last_votes,
                                  float((self._last_learned or {}).get("p_up") or 0.5))
+        # Round BI: the hour's review will grade exactly what went in
+        if self._last_hindsight.get("inputs"):
+            self.hindsight.record(signal.cycle_number, signal.signal, float(getattr(signal, "confidence", 0.0) or 0.0),
+                                  self._last_hindsight["inputs"], self._last_hindsight["groups"])
         # Round BB: the forward tables remember this window's readings and are
         # settled on what the price does next (strict sign, ties counted).
         try:
@@ -1615,6 +1624,10 @@ class CycleManager:
         # +20 bps move is -20 bps.  (It used to print "LOSS +198 bps".)
         pnl_bps = change_bps if signal.signal == "BUY" else -change_bps
         self.outcomes.append(outcome, pnl_bps)
+        try:
+            self.hindsight.settle(signal.cycle_number, change_bps, cost_bps)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("hindsight settle skipped: %s", exc)
         if flat:
             self._flat_windows += 1
         else:
@@ -1868,6 +1881,7 @@ class CycleManager:
         payload["brain_explain"] = self.brain_explain_payload()
         payload["physics"] = self.physics_payload()
         payload["genesis"] = self.genesis_payload()
+        payload["hindsight"] = self.hindsight_payload()
         if include_history:
             payload["history"] = self.history_payload(limit=72)
             payload["outcomes"] = self.outcomes_payload()
@@ -2014,6 +2028,10 @@ class CycleManager:
         last_dir = self._last_window_dir()
         self.superposition.remember(formula_result.values)
         future_values = self.superposition.collapse(formula_result.values, last_dir)
+        # Round BI: the last hour's review corrects every formula reading
+        # before anything votes on it (re-centre / damp / boost / invert).
+        raw_future = dict(future_values)
+        future_values, hs_changed = self.hindsight.apply_map(future_values)
         agreement = consensus(future_values, self._directional_map())
         physics_report = None
         if float(getattr(self.settings, "weight_physics", 0.0) or 0.0) > 0 and snapshot is not None:
@@ -2060,6 +2078,33 @@ class CycleManager:
             log.debug("forward composite failed: %s", exc)
             forward = {}
         self._last_forward = forward
+        # Round BI: the agents and the systems carry the hour's verdict too
+        raw_agents = agent_results
+        agent_results = self._hindsight_agents(agent_results, hs_changed)
+        ccs_raw = ccs_value
+        ccs_value = self.hindsight.apply("brain:CCSv2", ccs_value)
+        if ccs_value != ccs_raw:
+            hs_changed["brain:CCSv2"] = {"before": round(ccs_raw, 6), "after": round(ccs_value, 6),
+                                        "action": self.hindsight.reviews["brain:CCSv2"].action}
+        if physics_report is not None and self.hindsight.active("physics") is not None:
+            pv = float(physics_report.get("vote") or 0.0)
+            physics_report = dict(physics_report)
+            physics_report["vote"] = round(self.hindsight.apply("physics", pv), 4)
+            physics_report["hindsight"] = self.hindsight.reviews["physics"].action
+            hs_changed["physics"] = {"before": round(pv, 6), "after": physics_report["vote"],
+                                     "action": physics_report["hindsight"]}
+        if genesis_report is not None and self.hindsight.active("genesis") is not None:
+            gv = float(genesis_report.get("vote") or 0.0)
+            genesis_report = dict(genesis_report)
+            genesis_report["vote"] = round(self.hindsight.apply("genesis", gv), 4)
+            hs_changed["genesis"] = {"before": round(gv, 6), "after": genesis_report["vote"],
+                                     "action": self.hindsight.reviews["genesis"].action}
+        if forward.get("available") and self.hindsight.active("forward") is not None:
+            fv = float(forward.get("value") or 0.0)
+            forward = dict(forward)
+            forward["value"] = round(self.hindsight.apply("forward", fv), 4)
+            hs_changed["forward"] = {"before": round(fv, 6), "after": forward["value"],
+                                     "action": self.hindsight.reviews["forward"].action}
         common = dict(
             forward=forward,
             agents=agent_results,
@@ -2094,6 +2139,24 @@ class CycleManager:
                                ((crowd or {}).get("formula_agreement") or {}).get("crowd_tone") or 0.0)
         except (TypeError, ValueError):
             crowd_tone = 0.0
+        niv_raw, tone_raw = niv, crowd_tone
+        niv = self.hindsight.apply("news:NIV", niv)
+        crowd_tone = self.hindsight.apply("crowd:tone", crowd_tone)
+        if niv != niv_raw:
+            hs_changed["news:NIV"] = {"before": round(niv_raw, 6), "after": round(niv, 6), "action": self.hindsight.reviews["news:NIV"].action}
+        if crowd_tone != tone_raw:
+            hs_changed["crowd:tone"] = {"before": round(tone_raw, 6), "after": round(crowd_tone, 6), "action": self.hindsight.reviews["crowd:tone"].action}
+        # the RAW readings are what the next hour's review will grade
+        try:
+            hs_inputs, hs_groups = HindsightReviewer.inputs_from(
+                formula_values=raw_future, directional=self._directional_map(), agents=raw_agents,
+                ccs_value=ccs_raw, physics_vote=float((self.last_physics or {}).get("measured_vote", (self.last_physics or {}).get("vote")) or 0.0),
+                genesis_vote=float((self.last_genesis or {}).get("vote") or 0.0) if (self.last_genesis or {}).get("status") == "live" else 0.0,
+                niv=niv_raw, crowd_tone=tone_raw, forward_vote=float(self._last_forward.get("value") or 0.0) if self._last_forward.get("available") else 0.0,
+                spec_score=float(spec.score), features=(crowd or {}).get("features") or {})
+            self._last_hindsight = {"inputs": hs_inputs, "groups": hs_groups, "changed": hs_changed}
+        except Exception as exc:  # noqa: BLE001
+            log.debug("hindsight inputs skipped: %s", exc)
         votes = EvidenceLedger.votes_from(
             formula_values=future_values,
             directional=self._directional_map(),
@@ -2140,8 +2203,53 @@ class CycleManager:
 
     def _tape_veto(self, fusion, snapshot):
         fusion.whole_brain = self.last_whole_brain
+        fusion.hindsight = self._hindsight_applied()
         fusion = self._apply_triune(fusion)
         return self._tape_veto_inner(fusion, snapshot)
+
+    def _hindsight_agents(self, agent_results: dict, changed: dict) -> dict:
+        """Round BI: an agent that lost the hour answers with less (or inverted)
+        confidence; the correction is printed on the agent row."""
+        if not agent_results:
+            return agent_results
+        out = {}
+        for name, res in agent_results.items():
+            mult = self.hindsight.multiplier(f"agent:{name}")
+            if mult == 1.0 or getattr(res, "decision", None) not in ("BUY", "SELL"):
+                out[name] = res
+                continue
+            try:
+                new = copy.copy(res)
+                conf = float(res.confidence or 0.5)
+                new.confidence = min(0.99, max(0.01, conf * abs(mult)))
+                if mult < 0:
+                    new.decision = "SELL" if res.decision == "BUY" else "BUY"
+                cr = self.hindsight.reviews[f"agent:{name}"]
+                new.reasoning = f"[hindsight: {cr.reason}] {res.reasoning or ''}"[:900]
+                changed[f"agent:{name}"] = {"before": round(conf if res.decision == "BUY" else -conf, 4),
+                                            "after": round(new.confidence if new.decision == "BUY" else -new.confidence, 4),
+                                            "action": cr.action}
+                out[name] = new
+            except Exception as exc:  # noqa: BLE001
+                log.debug("hindsight agent %s skipped: %s", name, exc)
+                out[name] = res
+        return out
+
+    def _hindsight_applied(self) -> dict:
+        changed = dict((self._last_hindsight or {}).get("changed") or {})
+        return {
+            "corrected_inputs": len(changed),
+            "changed": changed,
+            "windows_in_hour": self.hindsight.reviewed_rows,
+            "decided_in_hour": self.hindsight.reviewed_decided,
+            "note": (f"last hour ({self.hindsight.reviewed_decided} decided windows) corrected {len(changed)} inputs on this window"
+                     if changed else f"last hour: {self.hindsight.reviewed_decided} decided windows, no input earned a correction yet"),
+        }
+
+    def hindsight_payload(self) -> dict:
+        payload = self.hindsight.to_dict()
+        payload["applied_to_current"] = self._hindsight_applied()
+        return payload
 
     #: the analyst's share of the score once her record is mature (30 decided windows)
     TRIUNE_SHARE = 0.25
@@ -2871,6 +2979,7 @@ class CycleManager:
                 "last_dominant": tracker.last_dominant,
             })
         written["horizons"] = self.vault.save("horizons", self.horizons.export_state())
+        written["hindsight"] = self.vault.save("hindsight", self.hindsight.export_state())
         try:
             written["formulas"] = self.vault.save("formulas", self.formulas.export_state())
         except Exception as exc:  # noqa: BLE001
@@ -2904,6 +3013,11 @@ class CycleManager:
         if hz:
             self.horizons.import_state(hz)
             restored.append("horizons")
+        hs = self.vault.load("hindsight", max_age=self.VAULT_MAX_AGE)
+        if hs:
+            n = self.hindsight.import_state(hs)
+            if n:
+                restored.append(f"hindsight:{n}")
         payload = self.vault.load("formulas", max_age=self.VAULT_MAX_AGE)
         if payload:
             try:

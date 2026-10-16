@@ -511,6 +511,28 @@
     <div class="muted" style="font-size:11px;margin-top:8px" id="gn-note"></div>
   </section>
 
+  <section class="card hindsight-card" id="hindsight-card" data-panel="hindsight">
+    <div class="card-head">
+      <h2>⏪ Last-hour Hindsight <span class="muted">every formula · agent · system · feature re-graded on the hour that just happened</span></h2>
+      <span class="muted" id="hs-head">—</span>
+    </div>
+    <div class="hindsight-verdict" id="hs-verdict">waiting for the first settled windows of this hour…</div>
+    <div class="kv-grid physics-kv hindsight-kv">
+      <div class="kv-item"><span>Engine this hour (strict sign)</span><b id="hs-engine">—</b></div>
+      <div class="kv-item"><span>Inputs reviewed · corrected</span><b id="hs-counts">—</b></div>
+      <div class="kv-item"><span>Applied to the window on screen</span><b id="hs-applied">—</b></div>
+      <div class="kv-item"><span>Formulas</span><b id="hs-g-formula">—</b></div>
+      <div class="kv-item"><span>Agents · systems</span><b id="hs-g-system">—</b></div>
+      <div class="kv-item"><span>Features</span><b id="hs-g-feature">—</b></div>
+    </div>
+    <table class="physics-table hindsight-table"><thead><tr><th>input</th><th>group</th><th>hits / decided</th><th>won bp</th><th>lost bp</th><th>net bp</th><th>z</th><th>correction</th><th>lost in windows</th></tr></thead>
+      <tbody id="hs-table"></tbody></table>
+    <details class="physics-logic"><summary class="muted" style="cursor:pointer">Windows the engine lost this hour, and how many inputs were wrong in each</summary>
+      <div id="hs-lost" class="mono"></div>
+    </details>
+    <div class="muted" style="font-size:11px;margin-top:8px" id="hs-note"></div>
+  </section>
+
   <!-- ======================= FORMULA EXPLORER ======================= -->
   <!-- Round AP: LIVE CALCULATION - the 31 formulas as they are recomputed every
        2 s on the moving tape (the locked signal does not change; this is the

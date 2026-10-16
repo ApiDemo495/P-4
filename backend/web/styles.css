@@ -1216,3 +1216,11 @@ body.pulse .widget-panel, body.pulse .card { animation: pulse-breath .6s var(--e
 .horizon-lane .lane-meta { font-size: 10.5px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .horizon-lane .lane-logic { margin-top: 6px; font-size: 10.5px; line-height: 1.4; white-space: normal; opacity: .9; border-top: 1px dashed rgba(255,255,255,0.12); padding-top: 4px; }
 @media (max-width: 720px) { .horizon-lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Round BI: last-hour hindsight */
+.hindsight-verdict { font-size: 13px; line-height: 1.5; margin-bottom: 12px; }
+.hindsight-table td[data-act="damped"], .hindsight-table td[data-act="inverted"] { color: #f87171; }
+.hindsight-table td[data-act="boosted"] { color: #4ade80; }
+.hindsight-table td[data-act="re-centred"] { color: #fbbf24; }
+.hindsight-table td[data-act="watching"], .hindsight-table td[data-act="kept"] { color: var(--muted, #8b9bb4); }
+.hindsight-table .hs-losses { font-size: 10px; color: var(--muted, #8b9bb4); }

@@ -2424,6 +2424,49 @@ async function loadGenesisDomains() {
     `</div>`).join("");
 }
 
+function renderHindsight(h) {
+  markPanel("hindsight");
+  const card = $("hindsight-card");
+  if (!card || !h) return;
+  const groups = h.by_group || {};
+  const g = (k) => groups[k] ? `${groups[k].inputs} reviewed · ${groups[k].corrected} corrected · lost ${fx(groups[k].lost_bps, 0)} bp · won ${fx(groups[k].won_bps, 0)} bp` : "—";
+  $("hs-head").textContent = h.available
+    ? `${h.windows_in_hour} windows in the hour · ${h.decided_in_hour} decided · reviewed ${h.age_seconds === null || h.age_seconds === undefined ? "—" : `${fx(h.age_seconds, 0)} s`} ago`
+    : "no settled window in the last hour yet";
+  $("hs-engine").textContent = h.engine_hit_rate_hour === null || h.engine_hit_rate_hour === undefined
+    ? `— (${h.decided_in_hour || 0} decided)` : `${fx(h.engine_hit_rate_hour * 100, 1)}% (${h.engine_hits_in_hour}/${h.decided_in_hour})`;
+  $("hs-counts").textContent = `${h.inputs || 0} · ${h.corrected || 0}`;
+  const ap = h.applied_to_current || {};
+  $("hs-applied").textContent = ap.corrected_inputs ? `${ap.corrected_inputs} inputs changed` : "none yet";
+  $("hs-g-formula").textContent = g("formula");
+  const agentG = groups.agent, sysG = groups.system;
+  $("hs-g-system").textContent = (agentG || sysG)
+    ? `${(agentG?.inputs || 0) + (sysG?.inputs || 0)} reviewed · ${(agentG?.corrected || 0) + (sysG?.corrected || 0)} corrected · lost ${fx((agentG?.lost_bps || 0) + (sysG?.lost_bps || 0), 0)} bp`
+    : "—";
+  $("hs-g-feature").textContent = g("feature");
+  const rows = (h.table || []);
+  const worst = rows.filter((r) => r.decided >= (h.min_decided || 8));
+  $("hs-verdict").innerHTML = !h.available
+    ? "waiting for the first settled windows of this hour…"
+    : worst.length === 0
+      ? `${h.decided_in_hour} decided windows so far - every input is still <b>watching</b> (needs ${h.min_decided} decided windows before the hour may correct it).`
+      : `Worst input of the hour: <b>${escapeHtml(worst[0].name)}</b> lost ${fx(worst[0].lost_bps, 0)} bp in ${worst[0].misses} windows → <b>${escapeHtml(worst[0].action)}</b>. ` +
+        `Best: <b>${escapeHtml(worst[worst.length - 1].name)}</b> net ${fmtSigned(worst[worst.length - 1].net_bps, 0)} bp → ${escapeHtml(worst[worst.length - 1].action)}. ` +
+        `${escapeHtml(ap.note || "")}`;
+  const shown = rows.slice(0, 14).concat(rows.length > 14 ? rows.slice(-4) : []);
+  $("hs-table").innerHTML = shown.map((r) =>
+    `<tr><td title="${escapeHtml(r.reason || "")}">${escapeHtml(r.name)}</td><td>${escapeHtml(r.group)}</td>` +
+    `<td>${r.hits} / ${r.decided}${r.silent ? ` <span class="muted">(+${r.silent} silent)</span>` : ""}</td>` +
+    `<td>${fx(r.won_bps, 0)}</td><td>${fx(r.lost_bps, 0)}</td><td>${fmtSigned(r.net_bps, 0)}</td><td>${fmtSigned(r.z, 2)}</td>` +
+    `<td data-act="${escapeHtml(r.action)}" title="${escapeHtml(r.reason || "")}">${escapeHtml(r.action)}${r.action !== "watching" && r.action !== "kept" ? ` ×${fx(r.multiplier, 2)}${r.offset ? ` ${fmtSigned(-r.offset, 4)}` : ""}` : ""}</td>` +
+    `<td class="hs-losses">${(r.losses || []).slice(0, 4).map((l) => `#${l.cycle} ${fmtSigned(l.move_bps, 0)}bp`).join(", ") || "—"}</td></tr>`).join("") ||
+    `<tr><td colspan="9" class="muted">no input graded yet</td></tr>`;
+  $("hs-lost").innerHTML = (h.lost_windows || []).map((w) =>
+    `<div>#${w.cycle} ${escapeHtml(w.side)} · move ${fmtSigned(w.move_bps, 1)} bp · ${w.wrong_inputs}/${w.inputs} inputs were on the wrong side</div>`).join("") ||
+    `<div class="muted">no lost window in the hour</div>`;
+  $("hs-note").textContent = `${h.method || ""} · bounds: multiplier ${h.bounds?.multiplier?.[0]}–${h.bounds?.multiplier?.[1]}, offset ${h.bounds?.offset || ""}, ${h.bounds?.invert || ""}`;
+}
+
 function renderGenesis(payload) {
   markPanel("genesis");
   const card = $("genesis-card");
@@ -3199,6 +3242,7 @@ function applySnapshot(data, opts = {}) {
   if (data.brain_status) renderBrainStatus(data.brain_status);
   if (data.physics) renderPhysics(data.physics);
   if (data.genesis) renderGenesis(data.genesis);
+  if (data.hindsight) renderHindsight(data.hindsight);
   if (data.history) renderHistory(data.history);
   if (data.outcomes) renderOutcomes(data.outcomes);
   if (data.competition) renderCompetition(data.competition, data.boundary_pick);

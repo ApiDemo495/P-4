@@ -73,6 +73,14 @@ async def horizons() -> dict:
     return {"horizons": get_manager().horizons_payload()}
 
 
+@router.get("/api/hindsight")
+async def hindsight() -> dict:
+    """Round BI: the trailing hour's review of every input - formulas, agents,
+    systems, features - with hits, misses, bps lost, the windows they lost
+    in and the correction applied to the current window."""
+    return {"hindsight": get_manager().hindsight_payload()}
+
+
 @router.get("/api/triune")
 async def triune() -> dict:
     """Round AR: the three-minds analyst - human / AI / data votes, their

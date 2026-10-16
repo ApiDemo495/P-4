@@ -2411,3 +2411,25 @@ tracked file is referenced; nothing was deleted on a hunch.
   ±17 pp — statistically a coin flip, neither evidence of edge nor of its
   absence. 77 % on a 70 s BTC sign is not a target any honest pipeline can
   promise; `/api/horizons` reports the best *measured* lane instead.
+
+### BI — Last-hour hindsight
+
+* `backend/core/hindsight.py` (`HindsightReviewer`): at every lock the
+  signed reading of every input is recorded — each directional formula,
+  each AI agent (side × confidence), brain CCSv2, physics, genesis, news
+  NIV, crowd tone, forward table, the spec's fused score and the signed
+  crowd features. At settlement the window is graded on the real move; only
+  the trailing hour counts. Per input: hits, misses, bp won / lost, the
+  windows it lost in, bias, spread, slope, `z = (hits − misses)/√decided`.
+* Corrections (bounded, printed, applied from the next window):
+  multiplier `clip(1 + 0.25 z, 0.25, 1.5)`; re-centre by the hourly mean
+  (≤ ½ spread) when the side the input leaned to earned nothing; invert only
+  at `z ≤ −3` on ≥ 16 decided windows. Needs 8 decided windows per input;
+  corrections expire with the rows that justified them. Applied in
+  `_fuse` to the formula vector before consensus/ledger/fusion, to agent
+  confidences (sign flip when inverted), to the brain/physics/genesis/
+  forward/news/crowd votes. Raw readings are what the next review grades.
+* `GET /api/hindsight`, snapshot key `hindsight`, `fusion.hindsight`
+  (what changed on the window on screen), vault key `hindsight`;
+  dashboard card `#hindsight-card` with the per-input table (worst first),
+  the lost windows and how many inputs were wrong in each.

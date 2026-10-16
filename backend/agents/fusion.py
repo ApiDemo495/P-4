@@ -74,6 +74,8 @@ class FusionResult:
     whole_brain: dict | None = None
     #: Round AR: the three-minds analyst (human / AI / data) and what she applied
     triune: dict | None = None
+    #: Round BI: what the last hour's hindsight review changed on this window's inputs
+    hindsight: dict | None = None
 
     # -- binary direction fields (HOLD was removed) ----------------------
     @property
@@ -119,6 +121,7 @@ class FusionResult:
             "tape_veto": self.tape_veto,
             "whole_brain": self.whole_brain,
             "triune": self.triune,
+            "hindsight": self.hindsight,
         }
         # Kept for the two clients: "lean" now always equals the decision,
         # because there is no third state to lean away from.
