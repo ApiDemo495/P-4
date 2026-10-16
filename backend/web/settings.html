@@ -183,12 +183,12 @@
     </div>
   </section>
 
-  <h2 style="font-size:15px;letter-spacing:.05em">LOCAL AI MODELS — five at the same time (models.json downloads all five on start)</h2>
+  <h2 style="font-size:15px;letter-spacing:.05em">LOCAL AI MODELS — up to 5 at the same time</h2>
   <section class="card">
     <div id="local-status" class="status-line">—</div>
     <div class="status-line" style="margin-bottom:10px">
       Every loaded model answers every cycle in parallel; their answers are merged into one local
-      opinion (confidence-weighted majority, trimmed when they disagree). All five slots are optional; the five in models.json fill them without a click. Each model gets its share of the CPU threads; one whose measured vote does not fit the 9 s budget votes every fifth window.
+      opinion (confidence-weighted majority, trimmed when they disagree). All five slots are optional; models.json fills slot 1 without a click. Each model gets its share of the CPU threads; one whose measured vote does not fit the 9 s budget votes every fifth window.
     </div>
     <div class="field" id="model-fetch">
       <label>Download a model INTO the Codespace (recommended for anything over ~200 MB — the browser upload is cut off by the Codespaces proxy and shows a 5xx)</label>

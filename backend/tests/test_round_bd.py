@@ -15,14 +15,17 @@ from backend.core.horizons import HORIZONS, HorizonBook, horizon_stats
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_the_manifest_lists_five_distinct_models_for_five_slots():
-    entries = read_manifest(ROOT / "models.json", cores=2)      # no per-core filtering any more
-    assert len(entries) == 5 and MAX_MODELS == 5
-    assert sorted(e["slot"] for e in entries) == [1, 2, 3, 4, 5]
-    assert len({e["file"] for e in entries}) == 5
-    assert all(e["file"].lower().endswith(".gguf") for e in entries)
+def test_the_manifest_is_back_to_the_one_baked_model_per_machine():
+    """Round BF: the user asked to drop the five-model set and keep the old
+    one - Qwen2.5-1.5B on 4+ cores, Qwen2.5-0.5B on 2-3 cores, slot 1.  The
+    five slots stay available for uploads."""
+    assert MAX_MODELS == 5
+    small = read_manifest(ROOT / "models.json", cores=2)
+    big = read_manifest(ROOT / "models.json", cores=4)
+    assert [e["file"] for e in small] == ["qwen2.5-0.5b-instruct-q4_k_m.gguf"]
+    assert [e["file"] for e in big] == ["qwen2.5-1.5b-instruct-q4_k_m.gguf"]
     raw = json.loads((ROOT / "models.json").read_text())
-    assert all(m.get("enabled") for m in raw["models"])
+    assert len(raw["models"]) == 2 and all(m["slot"] == 1 for m in raw["models"])
 
 
 def test_the_pool_has_five_slots_and_threads_are_shared(tmp_path):

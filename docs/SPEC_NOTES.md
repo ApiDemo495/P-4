@@ -2364,3 +2364,11 @@ tracked file is referenced; nothing was deleted on a hunch.
   slots, shared thread budget, measured-speed back-off. Stated honestly in the
   docs: this needs a 16 GB Codespace, and on four cores not all five will land
   inside the 9 s budget every window — the per-slot measured speed is shown.
+
+### BF — Back to the one baked model
+
+* The user asked to remove the five-model set and keep the old one:
+  `models.json` is the Round AY manifest again (Qwen2.5-1.5B `min_cores: 4`,
+  Qwen2.5-0.5B `max_cores: 3`, slot 1). The five-slot pool, the shared thread
+  budget and the horizon lanes from BD stay; `thread_budget()` now sees one
+  expected model and gives it the full `min(4, cores − 1)` threads as before.

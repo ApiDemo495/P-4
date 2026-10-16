@@ -118,20 +118,12 @@ window — you get nothing from it.
 
 ## 5. Models worth researching (all have ready-made GGUF files on Hugging Face)
 
-**Round BE — the five that ship (3–4B class).** `models.json` lists five
-models for the five slots, all enabled, all voting at the same time:
-Qwen3-4B-Instruct-2507 (the non-thinking Qwen3 release), Phi-4-mini-instruct
-3.8B, Gemma-3-4B-it, Llama-3.2-3B-Instruct and Qwen2.5-3B-Instruct — Q4_K_M,
-~12 GB in total, so **a 4-core / 16 GB Codespace** (on 8 GB set `"enabled":
-false` on two entries). Each model is loaded with `(cores − 1) / 5` threads
-(at least 1; `LOCAL_MODEL_THREADS` overrides) so five generations share the
-CPU instead of fighting for it; a model whose *measured* vote does not fit the
-9 s budget votes every fifth window — on 4 cores expect two or three of the
-five to answer every window and the rest every fifth, on 8+ cores all five
-every window. The measured tok/s, the token budget and who is skipping are
-printed per slot in `/settings`. Gemma 3 and Qwen3 need llama-cpp-python
-≥ 0.3.8 (the image has it); if a download link changes, edit the `url` in
-`models.json` — the Settings page shows each slot's state.
+**What ships (Round BF).** `models.json` is back to one baked model per
+machine: Qwen2.5-1.5B-Instruct on 4+ cores, Qwen2.5-0.5B-Instruct on 2–3
+cores, slot 1. The pool still has five slots: fill any of them by upload or a
+pasted link and every loaded model votes in parallel, each with
+`(cores − 1) / n` threads (`LOCAL_MODEL_THREADS` overrides); a model whose
+measured vote does not fit the 9 s budget votes every fifth window.
 
 Look for the official or **bartowski / Qwen / unsloth** GGUF repos and download
 the `*-Q4_K_M.gguf` file. Instruction-tuned ("Instruct") variants only — base

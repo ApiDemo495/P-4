@@ -802,14 +802,11 @@ tail -f server.log
   confidence on corroboration/split. `GET /api/brain/dopamine`,
   `GET /api/triune`.
 * **Offline model (local GGUF/ONNX).** Validated by magic bytes, loaded on
-  CPU, 9 s per vote, **five slots, five models voting at the same time
-  (Round BD/BE)**: Qwen3-4B-Instruct-2507, Phi-4-mini 3.8B, Gemma-3-4B-it,
-  Llama-3.2-3B and Qwen2.5-3B (all Instruct, Q4_K_M, ~12 GB together — a
-  4-core / 16 GB Codespace; on 8 GB disable two entries). Each is loaded with
-  its share of the CPU threads; their answers are merged into one local
-  opinion (confidence-weighted majority) and the agents card shows who said
-  what. A model whose measured vote does not fit the 9 s budget votes every
-  fifth window instead of stalling the rest. The models listed in `models.json` are
+  CPU, 9 s per vote, five slots. `models.json` bakes the one model per
+  machine (Qwen2.5-1.5B on 4+ cores, Qwen2.5-0.5B on 2–3 cores, slot 1);
+  any further slot is filled by upload or a pasted link, and every loaded
+  slot answers in parallel with its share of the CPU threads, merged into one
+  local opinion (confidence-weighted majority). The models listed in `models.json` are
   baked into the dev-container image together with the GGUF runtime and the
   connectome, so a new Codespace has them without uploading or downloading;
   anything missing is fetched by the engine itself (paste a Hugging Face link
