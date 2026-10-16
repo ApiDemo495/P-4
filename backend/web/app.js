@@ -2428,6 +2428,14 @@ function renderHindsight(h) {
   markPanel("hindsight");
   const card = $("hindsight-card");
   if (!card || !h) return;
+  const au = h.opening_audit || {};
+  $("hs-audit-state").textContent = au.phase === "done" ? `${au.graded} candles · ${fx(au.elapsed_s, 1)} s` : au.phase === "failed" ? `failed: ${au.error || ""}` : (au.phase || "waiting");
+  $("hs-audit-summary").textContent = au.summary || (au.phase === "failed" ? (au.detail || "the audit could not run") : "the last 60 one-minute candles are being replayed through every layer…");
+  $("hs-audit-layers").innerHTML = Object.entries(au.layers || {}).map(([key, L]) => {
+    const v = String(L.verdict || "");
+    const tag = v.startsWith("LACKING") ? "LACKING" : v.startsWith("IN FAVOUR") ? "IN" : v.startsWith("COIN") ? "COIN-FLIP" : "none";
+    return `<div class="audit-layer" data-verdict="${tag}"><b>${escapeHtml(L.label || key)}</b> ${escapeHtml(v)}</div>`;
+  }).join("");
   const groups = h.by_group || {};
   const g = (k) => groups[k] ? `${groups[k].inputs} reviewed · ${groups[k].corrected} corrected · lost ${fx(groups[k].lost_bps, 0)} bp · won ${fx(groups[k].won_bps, 0)} bp` : "—";
   $("hs-head").textContent = h.available
@@ -2439,9 +2447,9 @@ function renderHindsight(h) {
   const ap = h.applied_to_current || {};
   $("hs-applied").textContent = ap.corrected_inputs ? `${ap.corrected_inputs} inputs changed` : "none yet";
   $("hs-g-formula").textContent = g("formula");
-  const agentG = groups.agent, sysG = groups.system;
-  $("hs-g-system").textContent = (agentG || sysG)
-    ? `${(agentG?.inputs || 0) + (sysG?.inputs || 0)} reviewed · ${(agentG?.corrected || 0) + (sysG?.corrected || 0)} corrected · lost ${fx((agentG?.lost_bps || 0) + (sysG?.lost_bps || 0), 0)} bp`
+  const sysKeys = ["agent", "system", "reasoning", "physics", "hedge", "emotion", "genesis"].filter((k) => groups[k]);
+  $("hs-g-system").textContent = sysKeys.length
+    ? `${sysKeys.reduce((a, k) => a + groups[k].inputs, 0)} reviewed · ${sysKeys.reduce((a, k) => a + groups[k].corrected, 0)} corrected · lost ${fx(sysKeys.reduce((a, k) => a + groups[k].lost_bps, 0), 0)} bp`
     : "—";
   $("hs-g-feature").textContent = g("feature");
   const rows = (h.table || []);

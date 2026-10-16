@@ -187,6 +187,28 @@ def _empty_book() -> np.ndarray:
     return np.zeros((2, 20, 2))
 
 
+def snapshot_at(asset: str, b: float, window: np.ndarray, h_window: np.ndarray, bars: np.ndarray,
+                hedge_bars: np.ndarray | None, drg_hist: np.ndarray,
+                source: str = "warm-start replay (Binance 1 s klines)") -> FrozenMarketSnapshot:
+    """The frozen snapshot of the real tape as it stood at boundary ``b`` (ms)."""
+    b_candles = minute_closes(bars, b)
+    h_candles = minute_closes(hedge_bars, b) if hedge_bars is not None and hedge_bars.size else np.zeros(0)
+    payload = {
+        "timestamp": b / 1000.0,
+        "btc_ticks": window if asset == "BTC" else h_window,
+        "paxg_ticks": h_window if asset == "BTC" else window,
+        "btc_book": _empty_book(), "paxg_book": _empty_book(),
+        "btc_book_prev": _empty_book(), "paxg_book_prev": _empty_book(),
+        "btc_candles": b_candles if asset == "BTC" else h_candles,
+        "paxg_candles": h_candles if asset == "BTC" else b_candles,
+        "news_items": (), "drg_outcomes": drg_hist[-20:] if drg_hist.size else np.zeros((0, 2)),
+        "btc_tick_count": int(window.shape[0]), "paxg_tick_count": int(h_window.shape[0]),
+        "btc_spreads": None, "paxg_spreads": None, "synced": None, "warnings": (),
+        "source": source,
+    }
+    return FrozenMarketSnapshot(**payload)
+
+
 def window_boundaries(first_ms: float, last_ms: float, period_s: float) -> np.ndarray:
     period_ms = float(period_s) * 1000.0
     first_b = math.ceil(first_ms / period_ms) * period_ms
@@ -246,21 +268,7 @@ def replay(asset: str, bars: np.ndarray, hedge_bars: np.ndarray | None, ledger, 
             else:
                 h_window = np.zeros((0, 4))
             b_candles = minute_closes(bars, b)
-            h_candles = minute_closes(hedge_bars, b) if hedge_bars is not None and hedge_bars.size else np.zeros(0)
-            payload = {
-                "timestamp": b / 1000.0,
-                "btc_ticks": window if asset == "BTC" else h_window,
-                "paxg_ticks": h_window if asset == "BTC" else window,
-                "btc_book": _empty_book(), "paxg_book": _empty_book(),
-                "btc_book_prev": _empty_book(), "paxg_book_prev": _empty_book(),
-                "btc_candles": b_candles if asset == "BTC" else h_candles,
-                "paxg_candles": h_candles if asset == "BTC" else b_candles,
-                "news_items": (), "drg_outcomes": drg_hist[-20:] if drg_hist.size else np.zeros((0, 2)),
-                "btc_tick_count": int(window.shape[0]), "paxg_tick_count": int(h_window.shape[0]),
-                "btc_spreads": None, "paxg_spreads": None, "synced": None, "warnings": (),
-                "source": "warm-start replay (Binance 1 s klines)",
-            }
-            snap = FrozenMarketSnapshot(**payload)
+            snap = snapshot_at(asset, b, window, h_window, bars, hedge_bars, drg_hist)
             try:
                 result = engine.run(snap, asset)
             except Exception as exc:  # noqa: BLE001
@@ -348,7 +356,12 @@ def _verdict(rate: float, n: int) -> str:
 class WarmStarter:
     """Runs the fetch + replay on a worker thread; never blocks the engine."""
 
-    def __init__(self, ledger, *, asset: str = "BTC", hours: float | None = None, brain=None, forward=None) -> None:
+    def __init__(self, ledger, *, asset: str = "BTC", hours: float | None = None, brain=None, forward=None,
+                 hindsight=None, physics=None, genesis=None) -> None:
+        # Round BJ: the opening audit (last 60 candles through every layer)
+        from backend.core.opening_audit import AuditReport
+        self.hindsight, self.physics, self.genesis = hindsight, physics, genesis
+        self.audit = AuditReport(asset=asset)
         self.ledger = ledger
         self.forward = forward
         self.asset = asset
@@ -361,12 +374,47 @@ class WarmStarter:
                                       detail="" if self.enabled else "WARM_START=0")
         self._thread: threading.Thread | None = None
 
-    def start(self) -> bool:
-        if not self.enabled or (self._thread and self._thread.is_alive()):
+    def start(self, audit_only: bool = False) -> bool:
+        if (not self.enabled and not audit_only) or (self._thread and self._thread.is_alive()):
             return False
-        self._thread = threading.Thread(target=self.run, name="warm-start", daemon=True)
+        self._thread = threading.Thread(target=self.run_audit_only if audit_only else self.run,
+                                        name="opening-audit" if audit_only else "warm-start", daemon=True)
         self._thread.start()
         return True
+
+    def run_audit_only(self):
+        """Round BJ: the ledger replay was skipped (it learned live recently),
+        but the opening audit of the last hour always runs."""
+        from backend.core.opening_audit import HOUR_CANDLES, run_audit
+        au = self.audit
+        if self.hindsight is None:
+            au.phase, au.detail = "skipped", "no hindsight reviewer attached"
+            return au
+        try:
+            au.phase, au.detail = "running", "fetching the last hour of Binance 1 s klines"
+            end_ms = int(time.time() * 1000)
+            start_ms = end_ms - (HOUR_CANDLES + 2) * 60_000 - LOOKBACK_TICKS * 1000
+            bars = fetch_klines(SYMBOLS[self.asset], "1s", start_ms, end_ms)
+            hedge = None
+            try:
+                other = "PAXG" if self.asset == "BTC" else "BTC"
+                hedge = fetch_klines(SYMBOLS[other], "1m", start_ms, end_ms)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("hedge history skipped: %s", exc)
+            mb = None
+            for _ in range(450):
+                mb = getattr(self.brain, "mb", None) if self.brain is not None else None
+                if mb is not None or self.brain is None:
+                    break
+                time.sleep(0.2)
+            run_audit(self.asset, bars, hedge, self.hindsight, brain_mb=mb, physics=self.physics,
+                      genesis=self.genesis, forward=self.forward, report=au)
+            log.info("opening audit: %s | %s", au.detail, au.summary)
+        except Exception as exc:  # noqa: BLE001
+            au.phase, au.error = "failed", f"{type(exc).__name__}: {exc}"[:300]
+            au.detail = "the opening audit could not fetch the last hour; the hour is learned live instead"
+            log.warning("opening audit failed: %s", au.error)
+        return au
 
     def run(self) -> WarmStartReport:
         rep = self.report
@@ -397,6 +445,13 @@ class WarmStarter:
                 time.sleep(0.2)
             rep.detail = f"replaying {bars.shape[0]:,} seconds of real tape through the 31 formulas"
             replay(self.asset, bars, hedge, self.ledger, brain_mb=mb, report=rep, forward=self.forward)
+            if self.hindsight is not None:
+                from backend.core.opening_audit import HOUR_CANDLES, run_audit
+                rep.detail = "opening audit: the last 60 candles through formulas · hedge · physics · emotions · reasoning · genesis"
+                cut = end_ms - (HOUR_CANDLES + 2) * 60_000 - LOOKBACK_TICKS * 1000
+                run_audit(self.asset, bars[bars[:, 0] >= cut], hedge, self.hindsight, brain_mb=mb,
+                          physics=self.physics, genesis=self.genesis, forward=self.forward, report=self.audit)
+                log.info("opening audit: %s | %s", self.audit.detail, self.audit.summary)
             rep.detail = (f"{rep.scored} real windows scored on the NEXT window · recipe agreed with the past "
                           f"{(rep.recipe_agrees_with_past or 0) * 100:.0f} %, with the future "
                           f"{(rep.recipe_agrees_with_future or 0) * 100:.0f} %")
@@ -406,6 +461,9 @@ class WarmStarter:
             rep.error = f"{type(exc).__name__}: {exc}"[:300]
             rep.detail = "no history: the ledger starts blind and learns live (40 windows)"
             log.warning("warm start failed: %s", rep.error)
+            if self.audit.phase in ("idle", "running"):
+                self.audit.phase, self.audit.error = "failed", rep.error
+                self.audit.detail = "no history reachable for the opening audit - the hour is learned live (hindsight) instead"
         finally:
             rep.finished_at = time.time()
             rep.elapsed_s = round(rep.finished_at - rep.started_at, 1)

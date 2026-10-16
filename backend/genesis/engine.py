@@ -59,6 +59,8 @@ class GenesisEngine:
             a: {sp.fid: life.Formula(spec=sp) for sp in self.templates} for a in self.assets}
         self.active: dict[str, list[life.Formula]] = {a: [] for a in self.assets}
         self.signals: dict[str, dict[str, np.ndarray]] = {a: {} for a in self.assets}
+        self.signal_ts: dict[str, np.ndarray] = {}
+        self.signal_ret: dict[str, np.ndarray] = {}
         self.latest: dict[str, dict] = {a: self._empty_payload(a) for a in self.assets}
         self.generation: dict[str, int] = {a: 0 for a in self.assets}
         self.scored_at_len: dict[str, int] = {a: 0 for a in self.assets}
@@ -242,6 +244,8 @@ class GenesisEngine:
         with self._lock:
             self.active[asset] = [f for f in chosen if f.state == State.ACTIVE]
             self.signals[asset] = signals
+            self.signal_ts[asset] = np.asarray(frame.ts_ms, dtype=np.float64)
+            self.signal_ret[asset] = np.asarray(frame.ret, dtype=np.float64)
             self.scored_at_len[asset] = len(self.stores[asset])
             self.last_rescore[asset] = time.time()
             self.rescore_seconds[asset] = round(time.perf_counter() - t0, 1)
@@ -368,6 +372,33 @@ class GenesisEngine:
                 "agreement": 0.0, "votes_up": 0, "votes_down": 0, "firing": 0, "regime": {"regime": "low_vol"},
                 "active": 0, "gated": 0, "domains": [], "top": [], "readings": [], "generation": 0,
                 "computed_at": time.time(), "note": note}
+
+    def candle_votes(self, asset: str, last_n: int = 60) -> list[dict]:
+        """Round BJ: the active set's fitness-weighted vote at each of the last
+        ``last_n`` closed candles, with the candle that followed - what the
+        opening audit grades.  Empty until the first rescore."""
+        with self._lock:
+            signals = dict(self.signals.get(asset) or {})
+            ts = self.signal_ts.get(asset)
+            ret = self.signal_ret.get(asset)
+            active = list(self.active.get(asset) or [])
+        if ts is None or ret is None or not signals or not active:
+            return []
+        n = int(ts.size)
+        out = []
+        for i in range(max(1, n - last_n - 1), n - 1):
+            w_sum = v_sum = 0.0
+            for f in active:
+                sig = signals.get(f.fid)
+                if sig is None or sig.size != n or not np.isfinite(sig[i]):
+                    continue
+                w = max(0.02, f.fitness - 0.30)
+                w_sum += w
+                v_sum += w * float(sig[i])
+            nxt = float(ret[i + 1]) if np.isfinite(ret[i + 1]) else 0.0
+            out.append({"ts_ms": float(ts[i]), "vote": (v_sum / w_sum) if w_sum > 0 else 0.0,
+                        "next_bps": nxt * 1e4})
+        return out
 
     def vote(self, asset: str) -> dict:
         """What fusion consumes: the latest composite for ``asset``."""

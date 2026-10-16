@@ -196,7 +196,8 @@ class CycleManager:
         self._last_learned: dict = {}
         # Round BA: before the first live window the ledger is scored on the
         # last hours of REAL tape (forward, strict sign) so it never starts blind.
-        self.warm_starter = WarmStarter(self.ledger, asset="BTC", brain=self.brain, forward=self.forward)
+        self.warm_starter = WarmStarter(self.ledger, asset="BTC", brain=self.brain, forward=self.forward,
+                                        hindsight=self.hindsight, physics=PhysicsEngine(), genesis=self.genesis)
         #: (side, outcome) pairs, so the accuracy panel can say which side the
         #: engine has actually been getting right rather than only the total.
         self._side_outcomes: deque[tuple[str, float]] = deque(maxlen=40)
@@ -2153,7 +2154,8 @@ class CycleManager:
                 ccs_value=ccs_raw, physics_vote=float((self.last_physics or {}).get("measured_vote", (self.last_physics or {}).get("vote")) or 0.0),
                 genesis_vote=float((self.last_genesis or {}).get("vote") or 0.0) if (self.last_genesis or {}).get("status") == "live" else 0.0,
                 niv=niv_raw, crowd_tone=tone_raw, forward_vote=float(self._last_forward.get("value") or 0.0) if self._last_forward.get("available") else 0.0,
-                spec_score=float(spec.score), features=(crowd or {}).get("features") or {})
+                spec_score=float(spec.score), features=(crowd or {}).get("features") or {},
+                emotions=(crowd or {}).get("emotions") or [])
             self._last_hindsight = {"inputs": hs_inputs, "groups": hs_groups, "changed": hs_changed}
         except Exception as exc:  # noqa: BLE001
             log.debug("hindsight inputs skipped: %s", exc)
@@ -2249,6 +2251,7 @@ class CycleManager:
     def hindsight_payload(self) -> dict:
         payload = self.hindsight.to_dict()
         payload["applied_to_current"] = self._hindsight_applied()
+        payload["opening_audit"] = self.warm_starter.audit.to_dict()
         return payload
 
     #: the analyst's share of the score once her record is mature (30 decided windows)
@@ -3133,6 +3136,7 @@ class CycleManager:
                 self.warm_starter.report.phase = "skipped"
                 self.warm_starter.report.detail = (f"ledger already holds {rep.get('scored')} scored windows from "
                                                    f"{(time.time() - self.ledger.updated_at) / 60:.0f} min ago - no replay needed")
+                self.warm_starter.start(audit_only=True)   # Round BJ: the last hour is always audited
                 return
         except Exception as exc:  # noqa: BLE001
             log.debug("warm start check skipped: %s", exc)

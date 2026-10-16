@@ -2433,3 +2433,23 @@ tracked file is referenced; nothing was deleted on a hunch.
   (what changed on the window on screen), vault key `hindsight`;
   dashboard card `#hindsight-card` with the per-input table (worst first),
   the lost windows and how many inputs were wrong in each.
+
+### BJ — Opening audit (the last hour, candle by candle, before the first window)
+
+* `backend/core/opening_audit.py` runs inside the warm-start thread (and on
+  its own when the ledger replay is skipped): the last 60 closed one-minute
+  candles of the real Binance tape, each through the 31 formulas (incl.
+  hedge HRDD/SHRP/GCDV and brain CCSv2), the physics layer and its
+  mechanisms, the crowd emotions (nine toned intensities, crowd tone, signed
+  features), hedge outcomes, the reasoning (brain · forward · recipe) and
+  genesis (`GenesisEngine.candle_votes`: the active set's fitness-weighted
+  vote per stored candle). Every reading is graded on the candle that
+  followed and fed to the same `HindsightReviewer` the live windows use, so
+  the majority-based corrections are in force before the first lock.
+* `AuditReport` (under `/api/hindsight` → `opening_audit`): market facts of
+  the hour (net bp, up/down candles, continuation, σ, character), a verdict
+  per layer — LACKING / COIN-FLIP / IN FAVOUR with hits, bp lost, the worst
+  input and *why* (leaned against the hour's drift, followed moves in a
+  mean-reverting hour, faded a trend, silent, noise) — plus the lists of
+  lacking and in-favour inputs and the counts changed. Shown at the top of
+  the Hindsight card. Live hindsight rows now carry the same layer names.

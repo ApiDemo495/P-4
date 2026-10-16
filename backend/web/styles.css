@@ -1224,3 +1224,11 @@ body.pulse .widget-panel, body.pulse .card { animation: pulse-breath .6s var(--e
 .hindsight-table td[data-act="re-centred"] { color: #fbbf24; }
 .hindsight-table td[data-act="watching"], .hindsight-table td[data-act="kept"] { color: var(--muted, #8b9bb4); }
 .hindsight-table .hs-losses { font-size: 10px; color: var(--muted, #8b9bb4); }
+.audit-box { border: 1px solid rgba(251, 191, 36, 0.35); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; background: rgba(251, 191, 36, 0.05); }
+.audit-title { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+.audit-summary { font-size: 12px; line-height: 1.5; margin-bottom: 8px; }
+.audit-layers { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 6px 12px; font-size: 11px; }
+.audit-layer b { display: inline-block; min-width: 92px; }
+.audit-layer[data-verdict="LACKING"] b { color: #f87171; }
+.audit-layer[data-verdict="IN"] b { color: #4ade80; }
+.audit-layer[data-verdict="COIN-FLIP"] b { color: #fbbf24; }

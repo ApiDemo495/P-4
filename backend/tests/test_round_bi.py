@@ -65,7 +65,7 @@ def test_inputs_from_covers_every_group():
         genesis_vote=0.1, niv=0.05, crowd_tone=-0.3, forward_vote=0.2, spec_score=0.4,
         features={"return_1s_bps": 3.0, "tick_rate_hz": 9.0})
     assert "HSI" not in inputs and inputs["agent:gemini"] == -0.7 and "agent:github" not in inputs
-    assert set(groups.values()) == {"formula", "agent", "system", "feature"}
+    assert set(groups.values()) == {"formula", "agent", "reasoning", "physics", "genesis", "emotion", "feature"}
     assert "feature:return_1s_bps" in inputs and "feature:tick_rate_hz" not in inputs
 
 
@@ -77,3 +77,29 @@ def test_dashboard_and_routes_carry_the_hindsight_panel():
     assert 'id="hindsight-card"' in html and 'data-panel="hindsight"' in html
     assert "function renderHindsight" in js and "data.hindsight" in js
     assert '"/api/hindsight"' in routes
+
+
+def test_opening_audit_grades_sixty_candles_through_every_layer():
+    import numpy as np
+    from backend.core.forward import ForwardExpectancy
+    from backend.core.opening_audit import run_audit
+    from backend.physics.engine import PhysicsEngine
+    rng = np.random.default_rng(3)
+    n = 7200
+    end = int(time.time() * 1000) // 1000 * 1000
+    t = np.arange(end - n * 1000, end, 1000, dtype=np.float64)
+    px = 60000 * np.exp(np.cumsum(rng.normal(0, 2e-4, n)))
+    vol = rng.gamma(2, 0.3, n)
+    bars = np.column_stack([t, px, px * 1.0002, px * 0.9998, px, vol, vol * rng.uniform(0.3, 0.7, n)])
+    hs = H.HindsightReviewer()
+    rep = run_audit("BTC", bars, None, hs, physics=PhysicsEngine(), forward=ForwardExpectancy())
+    assert rep.phase == "done", rep.error
+    assert rep.graded >= 55 and rep.market["candles"] == rep.graded
+    assert {"formula", "hedge", "physics", "emotion", "feature"} <= set(rep.layers)
+    assert rep.summary.startswith("Last hour on BTC") and "Changed by majority" in rep.summary
+    # the corrections are in force for the live windows immediately
+    assert hs.reviewed_decided >= 50 and any(cr.action != "watching" for cr in hs.reviews.values())
+    out, changed = hs.apply_map({name: 0.3 for name in list(hs.reviews)[:10]})
+    assert changed
+    html = (Path(__file__).resolve().parents[2] / "backend/web/index.html").read_text(encoding="utf-8")
+    assert 'id="hs-audit"' in html and 'id="hs-audit-layers"' in html

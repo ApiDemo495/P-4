@@ -56,6 +56,8 @@ MULT_FLOOR, MULT_CEIL = 0.25, 1.5
 INVERT_Z, INVERT_MIN = -3.0, 16
 #: a reading smaller than this has no side
 EPS = 1e-9
+#: the hedge formulas that carry a side (HSI is a dampener and never votes)
+HEDGE_FORMULAS = ("HRDD", "SHRP", "GCDV")
 #: the signed features (from the crowd-emotion feature set) that are reviewed
 SIGNED_FEATURES = (
     "return_1s_bps", "return_win_bps", "z_win", "aggression_1s", "aggression_5s", "aggression_window",
@@ -163,8 +165,10 @@ class HindsightReviewer:
     @staticmethod
     def inputs_from(*, formula_values: dict, directional: dict, agents: dict, ccs_value: float,
                     physics_vote: float, genesis_vote: float, niv: float, crowd_tone: float,
-                    forward_vote: float, spec_score: float, features: dict | None) -> tuple[dict, dict]:
-        """Every signed reading that entered this window, with its group."""
+                    forward_vote: float, spec_score: float, features: dict | None,
+                    emotions: list | None = None) -> tuple[dict, dict]:
+        """Every signed reading that entered this window, with its layer
+        (formula · hedge · agent · reasoning · physics · genesis · emotion · feature)."""
         inputs: dict[str, float] = {}
         groups: dict[str, str] = {}
 
@@ -179,20 +183,28 @@ class HindsightReviewer:
 
         for name in directional:
             if name in formula_values:
-                put(name, formula_values[name], "formula")
+                put(name, formula_values[name], "hedge" if name in HEDGE_FORMULAS else "formula")
         for name, res in (agents or {}).items():
             decision = getattr(res, "decision", None)
             if decision not in ("BUY", "SELL"):
                 continue
             conf = float(getattr(res, "confidence", None) or 0.5)
             put(f"agent:{name}", conf if decision == "BUY" else -conf, "agent")
-        put("brain:CCSv2", ccs_value, "system")
-        put("physics", physics_vote, "system")
-        put("genesis", genesis_vote, "system")
-        put("news:NIV", niv, "system")
-        put("crowd:tone", crowd_tone, "system")
-        put("forward", forward_vote, "system")
-        put("fusion:recipe", spec_score, "system")
+        put("brain:CCSv2", ccs_value, "reasoning")
+        put("physics", physics_vote, "physics")
+        put("genesis", genesis_vote, "genesis")
+        put("news:NIV", niv, "reasoning")
+        put("crowd:tone", crowd_tone, "emotion")
+        put("forward", forward_vote, "reasoning")
+        put("fusion:recipe", spec_score, "reasoning")
+        for e in emotions or []:
+            try:
+                name, tone, inten = e.get("name"), str(e.get("tone") or ""), float(e.get("intensity") or 0.0)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            sign = 1.0 if tone.lower() in ("bullish", "greed", "up", "positive") else -1.0 if tone.lower() in ("bearish", "fear", "down", "negative") else 0.0
+            if name and sign:
+                put(f"emotion:{name}", sign * inten, "emotion")
         for key in SIGNED_FEATURES:
             if features and key in features:
                 put(f"feature:{key}", features.get(key), "feature")
