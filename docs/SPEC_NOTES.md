@@ -2355,3 +2355,12 @@ tracked file is referenced; nothing was deleted on a hunch.
 * **UI.** Four lanes under the forecast line of the prediction cell (issued
   at the boundary, never moved mid-window; only the measured record updates);
   click for the maths; ★ on the best measured lane (≥ 10 settlements).
+
+### BE — Stronger local models (3–4B class)
+
+* The user found the 0.5–1.7B set too weak; the chosen tier is 3–4B: Qwen3-4B-
+  Instruct-2507, Phi-4-mini-instruct 3.8B, Gemma-3-4B-it, Llama-3.2-3B-Instruct,
+  Qwen2.5-3B-Instruct (Q4_K_M, ~12 GB). Everything else from BD stands: five
+  slots, shared thread budget, measured-speed back-off. Stated honestly in the
+  docs: this needs a 16 GB Codespace, and on four cores not all five will land
+  inside the 9 s budget every window — the per-slot measured speed is shown.

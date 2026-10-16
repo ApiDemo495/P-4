@@ -118,18 +118,20 @@ window — you get nothing from it.
 
 ## 5. Models worth researching (all have ready-made GGUF files on Hugging Face)
 
-**Round BD — the five that ship.** `models.json` now lists five models for the
-five slots, all enabled on every machine, all voting at the same time:
-Qwen2.5-1.5B-Instruct, Llama-3.2-1B-Instruct (bartowski), SmolLM2-1.7B-Instruct
-(bartowski), Gemma-3-1B-it (bartowski) and Qwen2.5-0.5B-Instruct — Q4_K_M,
-~4 GB in total. Each model is loaded with `(cores − 1) / 5` threads (at least
-1; `LOCAL_MODEL_THREADS` overrides) so five generations share the CPU instead
-of fighting for it; a model whose measured vote does not fit the 9 s budget
-votes every fifth window. On a 2-core Codespace expect the 0.5B to answer
-every window and the 1B–1.7B models to answer every fifth; on 4 cores most
-answer every window; on 8+ cores all five do. Gemma 3 needs
-llama-cpp-python ≥ 0.3.8 (the image has it); if a download link changes,
-edit the `url` in `models.json` — the Settings page shows each slot's state.
+**Round BE — the five that ship (3–4B class).** `models.json` lists five
+models for the five slots, all enabled, all voting at the same time:
+Qwen3-4B-Instruct-2507 (the non-thinking Qwen3 release), Phi-4-mini-instruct
+3.8B, Gemma-3-4B-it, Llama-3.2-3B-Instruct and Qwen2.5-3B-Instruct — Q4_K_M,
+~12 GB in total, so **a 4-core / 16 GB Codespace** (on 8 GB set `"enabled":
+false` on two entries). Each model is loaded with `(cores − 1) / 5` threads
+(at least 1; `LOCAL_MODEL_THREADS` overrides) so five generations share the
+CPU instead of fighting for it; a model whose *measured* vote does not fit the
+9 s budget votes every fifth window — on 4 cores expect two or three of the
+five to answer every window and the rest every fifth, on 8+ cores all five
+every window. The measured tok/s, the token budget and who is skipping are
+printed per slot in `/settings`. Gemma 3 and Qwen3 need llama-cpp-python
+≥ 0.3.8 (the image has it); if a download link changes, edit the `url` in
+`models.json` — the Settings page shows each slot's state.
 
 Look for the official or **bartowski / Qwen / unsloth** GGUF repos and download
 the `*-Q4_K_M.gguf` file. Instruction-tuned ("Instruct") variants only — base

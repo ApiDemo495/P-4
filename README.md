@@ -803,8 +803,9 @@ tail -f server.log
   `GET /api/triune`.
 * **Offline model (local GGUF/ONNX).** Validated by magic bytes, loaded on
   CPU, 9 s per vote, **five slots, five models voting at the same time
-  (Round BD)**: Qwen2.5-1.5B, Llama-3.2-1B, SmolLM2-1.7B, Gemma-3-1B and
-  Qwen2.5-0.5B (all Instruct, Q4_K_M, ~4 GB together). Each is loaded with
+  (Round BD/BE)**: Qwen3-4B-Instruct-2507, Phi-4-mini 3.8B, Gemma-3-4B-it,
+  Llama-3.2-3B and Qwen2.5-3B (all Instruct, Q4_K_M, ~12 GB together — a
+  4-core / 16 GB Codespace; on 8 GB disable two entries). Each is loaded with
   its share of the CPU threads; their answers are merged into one local
   opinion (confidence-weighted majority) and the agents card shows who said
   what. A model whose measured vote does not fit the 9 s budget votes every

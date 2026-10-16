@@ -1,35 +1,35 @@
 {
-  "_comment": "Local models every Codespace should have WITHOUT uploading: baked into the dev-container image by .github/workflows/devcontainer-image.yml and, if missing at runtime, fetched by the engine on start (see docs/LOCAL_MODELS.md). URL forms: hf://org/repo/file.gguf or a direct https link. Round BD: five models, five slots, all voting at the same time - each one is loaded with its share of the CPU threads (see LocalModelAgent.thread_budget) and a model whose measured vote does not fit the 9 s budget votes every fifth window instead of stalling the others.",
+  "_comment": "Local models every Codespace should have WITHOUT uploading: baked into the dev-container image by .github/workflows/devcontainer-image.yml and, if missing at runtime, fetched by the engine on start (see docs/LOCAL_MODELS.md). URL forms: hf://org/repo/file.gguf or a direct https link. Round BE: five 3-4B-class instruct models (Q4_K_M, ~12 GB together) for the five slots, all voting at the same time - each is loaded with its share of the CPU threads (LocalModelAgent.thread_budget); a model whose measured vote does not fit the 9 s budget votes every fifth window instead of stalling the others. Needs a 4-core / 16 GB Codespace to run all five; on 8 GB machines disable two entries.",
   "models": [
     {
-      "url": "hf://Qwen/Qwen2.5-1.5B-Instruct-GGUF/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+      "url": "hf://Qwen/Qwen3-4B-Instruct-2507-GGUF/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
       "slot": 1,
       "enabled": true,
-      "note": "Qwen2.5 1.5B Instruct Q4_K_M (~1.0 GB) - the strongest structured-JSON voter of the five"
+      "note": "Qwen3 4B Instruct 2507 Q4_K_M (~2.5 GB) - the non-thinking Qwen3 release; strongest small instruct model on structured JSON"
     },
     {
-      "url": "hf://bartowski/Llama-3.2-1B-Instruct-GGUF/Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+      "url": "hf://bartowski/microsoft_Phi-4-mini-instruct-GGUF/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf",
       "slot": 2,
       "enabled": true,
-      "note": "Llama 3.2 1B Instruct Q4_K_M (~0.8 GB) - Meta's small instruct model, different training lineage from Qwen"
+      "note": "Phi-4-mini Instruct 3.8B Q4_K_M (~2.5 GB) - Microsoft's small model, strong numeric reasoning"
     },
     {
-      "url": "hf://bartowski/SmolLM2-1.7B-Instruct-GGUF/SmolLM2-1.7B-Instruct-Q4_K_M.gguf",
+      "url": "hf://bartowski/google_gemma-3-4b-it-GGUF/google_gemma-3-4b-it-Q4_K_M.gguf",
       "slot": 3,
       "enabled": true,
-      "note": "SmolLM2 1.7B Instruct Q4_K_M (~1.0 GB) - HuggingFace's small model, strong on short reasoning"
+      "note": "Gemma 3 4B IT Q4_K_M (~2.5 GB) - Google's 4B instruct model (needs llama-cpp-python >= 0.3.8)"
     },
     {
-      "url": "hf://bartowski/google_gemma-3-1b-it-GGUF/google_gemma-3-1b-it-Q4_K_M.gguf",
+      "url": "hf://bartowski/Llama-3.2-3B-Instruct-GGUF/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
       "slot": 4,
       "enabled": true,
-      "note": "Gemma 3 1B IT Q4_K_M (~0.8 GB) - Google's small instruct model (needs llama-cpp-python >= 0.3.8)"
+      "note": "Llama 3.2 3B Instruct Q4_K_M (~2.0 GB) - Meta's small instruct model, a different training lineage"
     },
     {
-      "url": "hf://Qwen/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+      "url": "hf://Qwen/Qwen2.5-3B-Instruct-GGUF/qwen2.5-3b-instruct-q4_k_m.gguf",
       "slot": 5,
       "enabled": true,
-      "note": "Qwen2.5 0.5B Instruct Q4_K_M (~0.4 GB) - the fastest; the one vote that always fits a 2-core budget"
+      "note": "Qwen2.5 3B Instruct Q4_K_M (~2.0 GB) - disciplined JSON, the fastest of the five"
     }
   ]
 }
