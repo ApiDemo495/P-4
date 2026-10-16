@@ -1,4 +1,4 @@
-"""Local model pool - up to three local models running at the same time.
+"""Local model pool - up to five local models running at the same time (Round BD).
 
 Each slot is a full :class:`LocalModelAgent` (upload -> validate -> load ->
 test inference -> monitor, Section 7.2).  Every slot is optional; whatever is
@@ -30,7 +30,7 @@ from backend.agents.local_model_agent import (
 )
 from backend.core import config as cfg
 
-MAX_MODELS = 3
+MAX_MODELS = 5
 
 
 class LocalModelPool:
@@ -195,7 +195,7 @@ class LocalModelPool:
         loaded = self.loaded
         status = self.status()
         if not loaded:
-            detail = "No model loaded (up to 3 slots)"
+            detail = f"No model loaded (up to {MAX_MODELS} slots)"
             if any(s.crashed for s in self.slots):
                 detail = "Crashed - reload required: " + self.last_error
         elif len(loaded) == 1:

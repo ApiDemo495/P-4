@@ -118,6 +118,19 @@ window — you get nothing from it.
 
 ## 5. Models worth researching (all have ready-made GGUF files on Hugging Face)
 
+**Round BD — the five that ship.** `models.json` now lists five models for the
+five slots, all enabled on every machine, all voting at the same time:
+Qwen2.5-1.5B-Instruct, Llama-3.2-1B-Instruct (bartowski), SmolLM2-1.7B-Instruct
+(bartowski), Gemma-3-1B-it (bartowski) and Qwen2.5-0.5B-Instruct — Q4_K_M,
+~4 GB in total. Each model is loaded with `(cores − 1) / 5` threads (at least
+1; `LOCAL_MODEL_THREADS` overrides) so five generations share the CPU instead
+of fighting for it; a model whose measured vote does not fit the 9 s budget
+votes every fifth window. On a 2-core Codespace expect the 0.5B to answer
+every window and the 1B–1.7B models to answer every fifth; on 4 cores most
+answer every window; on 8+ cores all five do. Gemma 3 needs
+llama-cpp-python ≥ 0.3.8 (the image has it); if a download link changes,
+edit the `url` in `models.json` — the Settings page shows each slot's state.
+
 Look for the official or **bartowski / Qwen / unsloth** GGUF repos and download
 the `*-Q4_K_M.gguf` file. Instruction-tuned ("Instruct") variants only — base
 models do not follow the JSON instruction.

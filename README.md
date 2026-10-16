@@ -698,6 +698,16 @@ tail -f server.log
   row prints "→ next 44 % up · n 212" and says **AGAINST the reading** when
   the measured future contradicts the present sign; the "who decides" line
   prints FROM THE FUTURE. A bin with no record says 50 % and does not vote.
+* **Four horizons at once — 55 · 60 · 70 · 120 s (Round BD).** At every
+  boundary the frozen tape is read at four horizons and a pick is issued for
+  each: the 70 s lane *is* the Signal Lock (it never disagrees with it); the
+  55 / 60 / 120 s lanes blend the lock (0.50) with the window maths re-run at
+  that horizon — WDR drift (0.35) and PRT persistence (0.15) — and print
+  P(win) = P(side) · (1 − P(tie)) with PIN's tie risk at that horizon. Every
+  lane is settled on its own clock against the last trade h seconds later,
+  strictly (tie = loss), so each horizon carries its own measured win rate,
+  streak and best streak; the lane with the best measured record over ≥ 10
+  settlements is starred. Click a lane for its maths. `GET /api/horizons`.
 * **Superposition — every source already in the future (Round BC).** The
   window is now **70 s** everywhere (`CYCLE_SECONDS=70`). Every formula,
   every physics mechanism and every emotion is carried as a state of the
@@ -792,7 +802,13 @@ tail -f server.log
   confidence on corroboration/split. `GET /api/brain/dopamine`,
   `GET /api/triune`.
 * **Offline model (local GGUF/ONNX).** Validated by magic bytes, loaded on
-  CPU, 9 s per vote, up to 3 slots. The models listed in `models.json` are
+  CPU, 9 s per vote, **five slots, five models voting at the same time
+  (Round BD)**: Qwen2.5-1.5B, Llama-3.2-1B, SmolLM2-1.7B, Gemma-3-1B and
+  Qwen2.5-0.5B (all Instruct, Q4_K_M, ~4 GB together). Each is loaded with
+  its share of the CPU threads; their answers are merged into one local
+  opinion (confidence-weighted majority) and the agents card shows who said
+  what. A model whose measured vote does not fit the 9 s budget votes every
+  fifth window instead of stalling the rest. The models listed in `models.json` are
   baked into the dev-container image together with the GGUF runtime and the
   connectome, so a new Codespace has them without uploading or downloading;
   anything missing is fetched by the engine itself (paste a Hugging Face link

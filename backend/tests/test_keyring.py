@@ -135,7 +135,7 @@ def test_github_rejected_pat_hands_over_to_the_backup(monkeypatch):
 def test_three_local_models_answer_in_parallel_and_are_merged(tmp_path):
     settings = _settings()
     pool = LocalModelPool(settings, store_dir=tmp_path)
-    assert len(pool.slots) == 3 and not pool.ready
+    assert len(pool.slots) == 5 and not pool.ready
     for agent in pool.slots:
         agent.stub = True
     asyncio.run(pool.load(tmp_path / "stub", slot=1))
@@ -148,8 +148,8 @@ def test_three_local_models_answer_in_parallel_and_are_merged(tmp_path):
     assert "3/3 models agree" in result.reasoning or "/3 models agree" in result.reasoning
     assert len(pool.last_results) == 3
     status = pool.slots_payload()
-    assert [row["slot"] for row in status] == [1, 2, 3]
-    assert all(row["ready"] for row in status)
+    assert [row["slot"] for row in status] == [1, 2, 3, 4, 5]
+    assert all(row["ready"] for row in status[:3]) and not any(row["ready"] for row in status[3:])
     # one slot can be dropped without touching the others
     pool.unload(slot=2)
     assert len(pool.loaded) == 2

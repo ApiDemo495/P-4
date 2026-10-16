@@ -1,19 +1,35 @@
 {
-  "_comment": "Local models every Codespace should have WITHOUT uploading: baked into the dev-container image by .github/workflows/devcontainer-image.yml and, if missing at runtime, fetched by the engine on start (see docs/LOCAL_MODELS.md). URL forms: hf://org/repo/file.gguf or a direct https link. min_cores / max_cores (optional) pick the model for the machine the engine runs on; the image bakes every enabled entry.",
+  "_comment": "Local models every Codespace should have WITHOUT uploading: baked into the dev-container image by .github/workflows/devcontainer-image.yml and, if missing at runtime, fetched by the engine on start (see docs/LOCAL_MODELS.md). URL forms: hf://org/repo/file.gguf or a direct https link. Round BD: five models, five slots, all voting at the same time - each one is loaded with its share of the CPU threads (see LocalModelAgent.thread_budget) and a model whose measured vote does not fit the 9 s budget votes every fifth window instead of stalling the others.",
   "models": [
     {
       "url": "hf://Qwen/Qwen2.5-1.5B-Instruct-GGUF/qwen2.5-1.5b-instruct-q4_k_m.gguf",
       "slot": 1,
       "enabled": true,
-      "min_cores": 4,
-      "note": "Qwen2.5 1.5B Instruct Q4_K_M (~1.0 GB) - fits the 9 s vote budget on a 4-core Codespace"
+      "note": "Qwen2.5 1.5B Instruct Q4_K_M (~1.0 GB) - the strongest structured-JSON voter of the five"
+    },
+    {
+      "url": "hf://bartowski/Llama-3.2-1B-Instruct-GGUF/Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+      "slot": 2,
+      "enabled": true,
+      "note": "Llama 3.2 1B Instruct Q4_K_M (~0.8 GB) - Meta's small instruct model, different training lineage from Qwen"
+    },
+    {
+      "url": "hf://bartowski/SmolLM2-1.7B-Instruct-GGUF/SmolLM2-1.7B-Instruct-Q4_K_M.gguf",
+      "slot": 3,
+      "enabled": true,
+      "note": "SmolLM2 1.7B Instruct Q4_K_M (~1.0 GB) - HuggingFace's small model, strong on short reasoning"
+    },
+    {
+      "url": "hf://bartowski/google_gemma-3-1b-it-GGUF/google_gemma-3-1b-it-Q4_K_M.gguf",
+      "slot": 4,
+      "enabled": true,
+      "note": "Gemma 3 1B IT Q4_K_M (~0.8 GB) - Google's small instruct model (needs llama-cpp-python >= 0.3.8)"
     },
     {
       "url": "hf://Qwen/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_k_m.gguf",
-      "slot": 1,
+      "slot": 5,
       "enabled": true,
-      "max_cores": 3,
-      "note": "Qwen2.5 0.5B Instruct Q4_K_M (~0.4 GB) - the one that fits the 9 s vote budget on a 2-core Codespace"
+      "note": "Qwen2.5 0.5B Instruct Q4_K_M (~0.4 GB) - the fastest; the one vote that always fits a 2-core budget"
     }
   ]
 }

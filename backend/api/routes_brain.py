@@ -66,6 +66,13 @@ async def competition() -> dict:
             "picker": manager.picker.to_dict()}
 
 
+@router.get("/api/horizons")
+async def horizons() -> dict:
+    """Round BD: the 55 / 60 / 70 / 120 s picks of the current boundary and
+    each lane's measured strict-sign record."""
+    return {"horizons": get_manager().horizons_payload()}
+
+
 @router.get("/api/triune")
 async def triune() -> dict:
     """Round AR: the three-minds analyst - human / AI / data votes, their

@@ -314,12 +314,12 @@ def _persist_env(provider: str, value: str, slot: int = 1) -> bool:
 
 @router.post("/api/agents/local/upload")
 async def upload_local_model(file: UploadFile = File(...), slot: int = 1) -> dict:
-    """Upload into model slot 1, 2 or 3 - all loaded slots answer every
+    """Upload into model slot 1-5 - all loaded slots answer every
     cycle in parallel and are merged into the single local opinion."""
     manager = get_manager()
     agent = manager.agents.local
-    if not 1 <= int(slot) <= 3:
-        raise HTTPException(status_code=400, detail="slot must be 1, 2 or 3")
+    if not 1 <= int(slot) <= 5:
+        raise HTTPException(status_code=400, detail="slot must be 1-5")
 
     # Round AU: stream to disk in 1 MB chunks - a gigabyte file no longer has
     # to fit in memory.  (The Codespaces port-forwarding proxy still caps
@@ -389,8 +389,8 @@ async def fetch_local_model(payload: FetchPayload) -> dict:
     resume, progress in ``/api/agents/local/status`` → ``fetch``, then
     validates and loads it into the slot."""
     manager = get_manager()
-    if not 1 <= int(payload.slot) <= 3:
-        raise HTTPException(status_code=400, detail="slot must be 1, 2 or 3")
+    if not 1 <= int(payload.slot) <= 5:
+        raise HTTPException(status_code=400, detail="slot must be 1-5")
     try:
         return manager.agents.local.fetcher.start(payload.url, int(payload.slot))
     except ValueError as exc:
@@ -407,8 +407,8 @@ async def load_local_path(payload: LoadPathPayload) -> dict:
     """Round AU: load a file that is already in ``backend/models/`` (dropped
     there via the VS Code explorer or downloaded earlier)."""
     manager = get_manager()
-    if not 1 <= int(payload.slot) <= 3:
-        raise HTTPException(status_code=400, detail="slot must be 1, 2 or 3")
+    if not 1 <= int(payload.slot) <= 5:
+        raise HTTPException(status_code=400, detail="slot must be 1-5")
     result = await manager.agents.local.load_path(payload.file, int(payload.slot))
     if not result.get("success"):
         raise HTTPException(status_code=422, detail=result.get("error", "Model load failed"))

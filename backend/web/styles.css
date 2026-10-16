@@ -1198,3 +1198,21 @@ body.pulse .widget-panel, body.pulse .card { animation: pulse-breath .6s var(--e
 #autoload-status .chip { display: inline-block; margin: 2px 4px 2px 0; padding: 2px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--line, #2a2f3a); }
 #autoload-status .chip.pos { border-color: rgba(53,208,127,.5); color: var(--green, #35d07f); }
 #autoload-status .chip.neg { border-color: rgba(255,92,92,.5); color: var(--red, #ff5c5c); }
+
+/* Round BD: the four horizon lanes inside the prediction cell */
+.horizon-lanes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 8px 0 4px; }
+.horizon-lane { border: 1px solid var(--border, #2a2f3a); border-radius: 8px; padding: 6px 8px; cursor: pointer; background: rgba(255,255,255,0.02); transition: border-color .2s, transform .12s; min-width: 0; }
+.horizon-lane:active { transform: scale(0.985); }
+.horizon-lane.buy { border-color: rgba(46, 204, 113, 0.45); }
+.horizon-lane.sell { border-color: rgba(231, 76, 60, 0.45); }
+.horizon-lane.contest { box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08); background: rgba(255,255,255,0.045); }
+.horizon-lane.best .lane-head b::after { content: " ★"; color: #f1c40f; }
+.horizon-lane .lane-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; letter-spacing: .04em; }
+.horizon-lane .lane-tag { font-size: 9px; text-transform: uppercase; opacity: .7; }
+.horizon-lane .lane-side { font-size: 18px; font-weight: 700; line-height: 1.2; }
+.horizon-lane.buy .lane-side { color: #2ecc71; }
+.horizon-lane.sell .lane-side { color: #e74c3c; }
+.horizon-lane .lane-side small { font-size: 11px; font-weight: 500; opacity: .8; }
+.horizon-lane .lane-meta { font-size: 10.5px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.horizon-lane .lane-logic { margin-top: 6px; font-size: 10.5px; line-height: 1.4; white-space: normal; opacity: .9; border-top: 1px dashed rgba(255,255,255,0.12); padding-top: 4px; }
+@media (max-width: 720px) { .horizon-lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

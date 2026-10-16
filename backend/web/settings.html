@@ -183,18 +183,18 @@
     </div>
   </section>
 
-  <h2 style="font-size:15px;letter-spacing:.05em">LOCAL AI MODELS — up to 3 at the same time</h2>
+  <h2 style="font-size:15px;letter-spacing:.05em">LOCAL AI MODELS — five at the same time (models.json downloads all five on start)</h2>
   <section class="card">
     <div id="local-status" class="status-line">—</div>
     <div class="status-line" style="margin-bottom:10px">
       Every loaded model answers every cycle in parallel; their answers are merged into one local
-      opinion (confidence-weighted majority, trimmed when they disagree). All three slots are optional.
+      opinion (confidence-weighted majority, trimmed when they disagree). All five slots are optional; the five in models.json fill them without a click. Each model gets its share of the CPU threads; one whose measured vote does not fit the 9 s budget votes every fifth window.
     </div>
     <div class="field" id="model-fetch">
       <label>Download a model INTO the Codespace (recommended for anything over ~200 MB — the browser upload is cut off by the Codespaces proxy and shows a 5xx)</label>
       <div class="row">
         <input type="text" id="fetch-url" placeholder="https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf   or   hf://Qwen/Qwen2.5-1.5B-Instruct-GGUF/qwen2.5-1.5b-instruct-q4_k_m.gguf" style="flex:1" />
-        <select id="fetch-slot"><option value="1">slot 1</option><option value="2">slot 2</option><option value="3">slot 3</option></select>
+        <select id="fetch-slot"><option value="1">slot 1</option><option value="2">slot 2</option><option value="3">slot 3</option><option value="4">slot 4</option><option value="5">slot 5</option></select>
         <button class="btn" id="fetch-start">Download &amp; load</button>
         <button class="btn ghost" id="fetch-cancel">Cancel</button>
       </div>
@@ -228,6 +228,24 @@
         <button class="btn ghost" data-unload="3">Unload</button>
       </div>
       <div class="status-line" id="model-status-3">empty</div>
+    </div>
+    <div class="field model-slot" id="model-slot-4">
+      <label>Model 4 (optional) — .gguf or .onnx, validated, loaded, then test-inferred</label>
+      <div class="row">
+        <input type="file" id="model-file-4" accept=".gguf,.onnx" />
+        <button class="btn" data-upload="4">Load into slot 4</button>
+        <button class="btn ghost" data-unload="4">Unload</button>
+      </div>
+      <div class="status-line" id="model-status-4">empty</div>
+    </div>
+    <div class="field model-slot" id="model-slot-5">
+      <label>Model 5 (optional) — .gguf or .onnx, validated, loaded, then test-inferred</label>
+      <div class="row">
+        <input type="file" id="model-file-5" accept=".gguf,.onnx" />
+        <button class="btn" data-upload="5">Load into slot 5</button>
+        <button class="btn ghost" data-unload="5">Unload</button>
+      </div>
+      <div class="status-line" id="model-status-5">empty</div>
     </div>
     <div class="row">
       <button class="btn ghost" id="stub-model">Load dev stub into slot 1</button>

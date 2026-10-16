@@ -1,4 +1,4 @@
-/* Settings screen: key rings (3 slots + failover), up to 3 local models, brain control, news sources. */
+/* Settings screen: key rings (3 slots + failover), up to 5 local models, brain control, news sources. */
 
 const $ = (id) => document.getElementById(id);
 
@@ -169,7 +169,7 @@ async function refreshLocal() {
   const mem = res.memory || {};
   const ready = ["ACTIVE", "STUB"].includes(res.status);
   const text =
-    `${ready ? "✅" : "❌"} ${res.models_loaded || 0}/3 models loaded` +
+    `${ready ? "✅" : "❌"} ${res.models_loaded || 0}/5 models loaded` +
     (res.model ? ` · ${res.model}` : "") +
     ` · status ${res.status}` +
     (mem.rss_human ? ` · RAM ${mem.rss_human}` : "") +

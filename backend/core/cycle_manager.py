@@ -166,6 +166,9 @@ class CycleManager:
         self.dopamine = DopamineBrain()
         # Round AS: the competition's own scoreboard and the boundary picker
         self.competition = CompetitionLedger()
+        # Round BD: 55 / 60 / 70 / 120 s picks at every boundary, each settled on its own clock
+        from backend.core.horizons import HorizonBook
+        self.horizons = HorizonBook(contest_horizon=int(round(self.settings.cycle_period_seconds)))
         self.picker = BoundaryPicker()
         #: Round AX: what each emotion has really meant for the next 70 s window
         self.emotion_outcomes = EmotionOutcomes()
@@ -625,6 +628,7 @@ class CycleManager:
             }
         )
         self.competition.enter(cycle, locked.signal, float(locked.price or 0.0))
+        self._issue_horizons(cycle, locked)
         self._schedule_outcome(locked, None)
         asyncio.create_task(self._heartbeat_loop(cycle, deadline_wall, self.window_valid_until))
         log.info(
@@ -1670,6 +1674,30 @@ class CycleManager:
         # not at shutdown (a Codespace idle-stop never calls shutdown).
         await asyncio.to_thread(self._persist_learned)
 
+    def _issue_horizons(self, cycle: int, locked: FrozenSignal) -> None:
+        """Round BD: the four horizon picks from the tape frozen at this boundary."""
+        try:
+            ticks = self.market.buffers[self.asset].ticks.view()
+            picks = self.horizons.issue(cycle, float(locked.price or 0.0), locked.signal,
+                                        float(locked.confidence or 0.0), ticks)
+            for pick in picks:
+                asyncio.create_task(self._settle_horizon(pick), name=f"horizon-{pick.horizon}-{cycle}")
+        except Exception as exc:  # noqa: BLE001
+            log.debug("horizon issue skipped: %s", exc)
+
+    async def _settle_horizon(self, pick) -> None:
+        await asyncio.sleep(max(0.0, pick.due_at - time.time()))
+        try:
+            px = self.market.last_trade(self.asset)[0] or self.market.last_price(self.asset)
+            if px > 0 and pick.entry > 0:
+                self.horizons.settle(pick, px)
+                await self.broadcast({"type": "HORIZON", "data": {"horizons": self.horizons.to_dict()}})
+        except Exception as exc:  # noqa: BLE001
+            log.debug("horizon settle skipped: %s", exc)
+
+    def horizons_payload(self) -> dict:
+        return self.horizons.to_dict()
+
     async def _price_at(self, asset: str, fallback: float) -> float:
         """Prefer live data; the CoinGecko/simulator feeds both end up here."""
         price = self.market.last_price(asset)
@@ -1834,6 +1862,7 @@ class CycleManager:
         payload["emotions"] = self.emotions_payload()
         payload["accuracy"] = self.accuracy_block()
         payload["competition"] = self.competition_payload()
+        payload["horizons"] = self.horizons_payload()
         payload["boundary_pick"] = dict(self.last_pick)
         payload["brain_explain"] = self.brain_explain_payload()
         payload["physics"] = self.physics_payload()
@@ -2840,6 +2869,7 @@ class CycleManager:
                 "emotions": dict(tracker.emotions),
                 "last_dominant": tracker.last_dominant,
             })
+        written["horizons"] = self.vault.save("horizons", self.horizons.export_state())
         try:
             written["formulas"] = self.vault.save("formulas", self.formulas.export_state())
         except Exception as exc:  # noqa: BLE001
@@ -2869,6 +2899,10 @@ class CycleManager:
             if emo.get("consensus_ema") is not None:
                 tracker.consensus_ema = float(emo["consensus_ema"])
             restored.append("emotions")
+        hz = self.vault.load("horizons", max_age=self.VAULT_MAX_AGE)
+        if hz:
+            self.horizons.import_state(hz)
+            restored.append("horizons")
         payload = self.vault.load("formulas", max_age=self.VAULT_MAX_AGE)
         if payload:
             try:

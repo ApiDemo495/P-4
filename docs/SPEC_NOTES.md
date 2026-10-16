@@ -2329,3 +2329,29 @@ tracked file is referenced; nothing was deleted on a hunch.
 * **Honesty.** A longer window is not automatically more accurate; the forward
   tables are measured, not assumed, and the only lever is still the pick at
   second 0.
+
+### BD — Five local models at once; 55 / 60 / 70 / 120 s horizons
+
+* **Five models, five slots.** `models.json` lists Qwen2.5-1.5B, Llama-3.2-1B,
+  SmolLM2-1.7B, Gemma-3-1B and Qwen2.5-0.5B (Instruct, Q4_K_M), all enabled
+  everywhere (the per-core filter is gone from the entries); `MAX_MODELS = 5`,
+  routes and the Settings page accept slots 1–5. `thread_budget()` gives each
+  model `(cores − 1) // expected_models` threads (1–4; `LOCAL_MODEL_THREADS`
+  overrides) so the five generations share the CPU; the Round AY guards
+  (`too_slow` → every fifth window, never stack inferences) keep a slow model
+  from stalling the others. The pool merge is unchanged (confidence-weighted
+  majority, trimmed on disagreement).
+* **`backend/core/horizons.py`.** `horizon_stats(ticks, h)` re-runs the
+  Category I maths at horizon h: WDR drift (recency-weighted t-stat of
+  overlapping h-windows), PRT persistence (lag-one autocorrelation of
+  non-overlapping h-returns × sign of the last), PIN tie risk, σ_h.
+  `HorizonBook.issue()` at the boundary: 70 s lane = the lock; other lanes
+  `score = 0.50·lock + 0.35·drift + 0.15·persistence`, `P(win) = (½ +
+  0.45|score|)(1 − P(tie))`, logic lines per lane. `settle()` strict sign,
+  tie = loss, per-lane wins/losses/ties/streak/best; record persisted in the
+  vault. `CycleManager._issue_horizons` after `competition.enter`, one task
+  per pick sleeping to `due_at`, `HORIZON` WS message on settle, payload key
+  `horizons`, `GET /api/horizons`.
+* **UI.** Four lanes under the forecast line of the prediction cell (issued
+  at the boundary, never moved mid-window; only the measured record updates);
+  click for the maths; ★ on the best measured lane (≥ 10 settlements).

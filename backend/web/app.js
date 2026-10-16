@@ -207,6 +207,9 @@ function handle(msg) {
       renderSignal();
       break;
     }
+    case "HORIZON":
+      if (msg.data && msg.data.horizons) renderHorizons(msg.data.horizons);
+      break;
     case "OUTCOME":
       refreshOutcomes();
       if (msg.data && msg.data.competition) {
@@ -1695,6 +1698,39 @@ const synesthesia = {
    Row 3: probability branches (Round Y)
    ======================================================================== */
 /* Round AS: the competition scoreboard - the number the user is paid on. */
+/* Round BD: 55 / 60 / 70 / 120 s lanes - issued at the boundary from the
+   same frozen tape, each settled on its own clock (strict sign, tie = loss). */
+function renderHorizons(h) {
+  const host = $("w-horizons");
+  if (!host || !h || !Array.isArray(h.lanes)) return;
+  state.horizons = h;
+  host.innerHTML = h.lanes.map((lane) => {
+    const cur = lane.current;
+    const contest = lane.horizon === h.contest_horizon;
+    const side = cur ? cur.side : "—";
+    const cls = cur ? (cur.side === "BUY" ? "buy" : "sell") : "";
+    const rate = lane.win_rate === null || lane.win_rate === undefined ? "no record yet" : `${Math.round(lane.win_rate * 100)}% of ${lane.settled}`;
+    const best = h.best_measured === lane.horizon ? " best" : "";
+    const open = state.horizonOpen === lane.horizon;
+    const logic = cur && open ? `<div class="lane-logic">${cur.logic.map((l) => `<div>${escapeHtml(l)}</div>`).join("")}</div>` : "";
+    const tag = contest ? '<span class="lane-tag">contest lock</span>' : "";
+    return `<div class="horizon-lane ${cls}${contest ? " contest" : ""}${best}" data-horizon="${lane.horizon}">` +
+      `<div class="lane-head"><b>${lane.horizon} s</b>${tag}</div>` +
+      `<div class="lane-side">${escapeHtml(side)}${cur ? `<small> ${Math.round(cur.confidence * 100)}%</small>` : ""}</div>` +
+      (cur ? `<div class="lane-meta">P(win) ${Math.round(cur.p_win * 100)}% · tie ${Math.round(cur.p_tie * 100)}%</div>` : `<div class="lane-meta">waiting for the first boundary</div>`) +
+      `<div class="lane-meta muted">measured ${rate} · streak ${lane.streak}${lane.best_streak ? ` (best ${lane.best_streak})` : ""}</div>` +
+      logic + `</div>`;
+  }).join("");
+  host.querySelectorAll(".horizon-lane").forEach((el) => {
+    el.addEventListener("click", () => {
+      const hz = Number(el.dataset.horizon);
+      state.horizonOpen = state.horizonOpen === hz ? null : hz;
+      haptic(6);
+      renderHorizons(state.horizons);
+    });
+  });
+}
+
 function renderCompetition(c, pick) {
   if (!c || !$("c-streak")) return;
   state.competition = c;
@@ -3150,6 +3186,7 @@ function applySnapshot(data, opts = {}) {
   if (data.history) renderHistory(data.history);
   if (data.outcomes) renderOutcomes(data.outcomes);
   if (data.competition) renderCompetition(data.competition, data.boundary_pick);
+  if (data.horizons) renderHorizons(data.horizons);
   if (data.accuracy && state.prediction) state.prediction.accuracy = data.accuracy;
   if (data.window) state.window = data.window;
   state.lastSnapshotAt = Date.now();

@@ -127,6 +127,11 @@
              instant in microseconds, the target instant and what is left. -->
         <div class="horizon-line" id="w-horizon-line">forecast: the next 70 seconds — waiting for the first release</div>
         <div class="micro-line" id="w-micro-line">tape resolution — waiting for the first tick</div>
+        <!-- Round BD: the same boundary read at four horizons.  Only the
+             contest lane (70 s) is the Signal Lock; the others say what the
+             frozen tape gives for a 55 / 60 / 120 s window and are settled
+             on their own clocks.  Issued at the boundary, never moved. -->
+        <div class="horizon-lanes" id="w-horizons" title="one boundary, four horizons - click a lane for its maths"></div>
         <!-- Round L: the crowd *as it was at the lock*.  Nothing inside the
              prediction cell may move during a window, so this line is the
              frozen reading; the live one is in the Crowd Emotion card. -->

@@ -34,6 +34,24 @@ log = logging.getLogger("drosophila.agents.local")
 
 NAME = "local"
 GGUF_MAGIC = b"GGUF"
+
+
+def thread_budget(expected_models: int | None = None) -> int:
+    """Threads per local model.  Round BD runs up to five models at the same
+    time: ``(cores - 1)`` are shared between the models the manifest expects
+    (``LOCAL_MODEL_THREADS`` overrides), never below 1, never above 4."""
+    forced = os.environ.get("LOCAL_MODEL_THREADS", "").strip()
+    if forced.isdigit() and int(forced) > 0:
+        return min(8, int(forced))
+    cores = max(1, (os.cpu_count() or 4) - 1)
+    if expected_models is None:
+        try:
+            from backend.agents.model_fetch import read_manifest
+            from backend.core import config as cfg
+            expected_models = len(read_manifest(cfg.REPO_ROOT / "models.json"))
+        except Exception:  # noqa: BLE001
+            expected_models = 1
+    return max(1, min(4, cores // max(1, expected_models)))
 ONNX_MAGIC = b"\x08"  # protobuf varint field 1 (ir_version) starts the ONNX header
 MIN_GGUF_BYTES = 100 * 1024 * 1024  # 100 MB - rejects truncated downloads
 MEMORY_LIMIT_FRACTION = 0.85  # unload if we are eating the machine
@@ -438,8 +456,9 @@ class LocalModelAgent:
             model_path=str(path),
             n_ctx=2048,
             n_batch=512,
-            # leave one core to the engine; more than 4 threads buys little for a 1.5B model
-            n_threads=max(1, min(4, (os.cpu_count() or 4) - 1)),
+            # Round BD: five models vote at once, so each gets its share of
+            # the cores (one is left to the engine) rather than all of them
+            n_threads=thread_budget(),
             verbose=False,
         )
 
@@ -769,7 +788,7 @@ class LocalModelAgent:
                 "overruns": self.overruns,
                 "skipped_busy": self.skipped_busy,
                 "skipped_slow": self.skipped_slow,
-                "threads": max(1, min(4, (os.cpu_count() or 4) - 1)),
+                "threads": thread_budget(),
             },
         )
 
