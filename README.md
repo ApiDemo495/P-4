@@ -121,7 +121,19 @@ https://<your-codespace>-8000.app.github.dev/readme
 reload the browser tab once (`Ctrl/Cmd+R`) and press `Ctrl/Cmd+Shift+V` on
 `README.md`.
 
-### Slow to open (10–20 minutes)? That is GitHub, not the engine — fix it with a prebuild
+### Slow to open (10–30 minutes on "Setting up remote connection")? That is GitHub, not the engine — fix it with a prebuild
+
+**Round BG — the image lost 1.4 GB.** "Setting up remote connection" is the
+phase where GitHub pulls `ghcr.io/apidemo495/p-4-dev` onto a fresh VM, before
+any hook of ours can run. The two Qwen GGUF files were baked into that image
+and GGUF does not compress, so every new Codespace downloaded and unpacked
+them before the editor could open. They are out of the image now: the engine
+fetches the one model for the machine in the background after the first
+window (the local vote is a stub until it lands, ~1–2 minutes on a
+Codespace; `/settings` shows the download). The connectome, the Python
+environment and the GGUF runtime stay in the image. The rest of this section
+is the part only you can do — a prebuild turns the remaining pull into a
+thirty-second resume.
 
 The repository's own hooks are measured: provisioning 2 s, engine answering in
 under a minute (the rehearsal transcript on PR #1). When the *window* still
@@ -167,8 +179,9 @@ bash tools/codespace_autostart.sh --status
 ```
 
 * `prebuilt image in use (/opt/venv present …) — fast path`: everything
-  (Python packages, llama runtime, connectome, both Qwen models) came from the
-  image; the engine is up within a minute of the hook.
+  (Python packages, llama runtime, connectome) came from the image; the
+  engine is up within a minute of the hook and the Qwen model downloads in
+  the background.
 * `prebuilt image NOT in use (/opt/venv missing) — slow path`: GitHub could
   not pull `ghcr.io/apidemo495/p-4-dev` and fell back to a plain container,
   so pip installs everything from scratch. Fix it once: open the package page
@@ -179,9 +192,10 @@ bash tools/codespace_autostart.sh --status
   change that setting from inside the repository.
 
 The engine does not need a 4-core machine. The only thing that scales with
-cores is the local model: `models.json` bakes **both** Qwen2.5-1.5B (picked
-on 4+ cores) and Qwen2.5-0.5B (picked on 2–3 cores) into the image, so a
-2-core Codespace votes within the 9 s budget too.
+cores is the local model: `models.json` lists **both** Qwen2.5-1.5B (picked
+on 4+ cores) and Qwen2.5-0.5B (picked on 2–3 cores); the engine downloads the
+one for the machine after start, so a 2-core Codespace votes within the 9 s
+budget too.
 
 ### API keys that survive a fresh Codespace
 

@@ -2372,3 +2372,16 @@ tracked file is referenced; nothing was deleted on a hunch.
   Qwen2.5-0.5B `max_cores: 3`, slot 1). The five-slot pool, the shared thread
   budget and the horizon lanes from BD stay; `thread_budget()` now sees one
   expected model and gives it the full `min(4, cores − 1)` threads as before.
+
+### BG — "Setting up remote connection" 10–30 min
+
+* That phase is GitHub pulling the dev-container image onto the VM; no hook
+  of ours runs yet. The only lever in the repository is the image size, so
+  the GGUF weights (~1.4 GB, incompressible) left `.devcontainer/Dockerfile`;
+  the workflow no longer rebuilds on `models.json`. The autoloader
+  (`MODEL_AUTOLOAD`, default on) fetches the one model for the machine in the
+  background after start. Connectome, venv and llama runtime stay baked.
+* The real fix is a Codespaces prebuild (repository setting, cannot be set
+  from the repo) - README says how. Also check the GHCR package is pullable
+  (public or repo-linked); a failed pull drops into the recovery container
+  and provisions from scratch.

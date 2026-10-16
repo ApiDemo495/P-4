@@ -13,8 +13,6 @@ on:
       - "requirements.txt"
       - ".devcontainer/Dockerfile"
       - ".github/workflows/devcontainer-image.yml"
-      - "models.json"
-      - "tools/fetch_models.py"
       - "backend/brain/connectome_data.py"
       - "backend/agents/model_fetch.py"
   workflow_dispatch: {}

@@ -218,13 +218,16 @@ def test_manifest_models_arrive_by_themselves(tmp_path):
     assert auto.status()["phase"] == "idle"
 
 
-def test_image_bakes_runtime_connectome_and_models():
+def test_image_bakes_runtime_and_connectome_but_not_the_weights():
     docker = (ROOT / ".devcontainer/Dockerfile").read_text()
+    # Round BG: the GGUF weights left the image (1.4 GB that does not compress
+    # kept "Setting up remote connection" busy); the autoloader fetches them.
+    assert "tools/fetch_models.py" not in docker and "COPY models.json" not in docker
     for needle in ("llama-cpp-python", "abetlen.github.io/llama-cpp-python/whl/cpu", "/opt/drosophila/connectome",
-                   "/opt/drosophila/models", "tools/fetch_models.py", "ConnectomeData"):
+                   "/opt/drosophila/models", "ConnectomeData"):
         assert needle in docker, needle
     wf = (ROOT / ".github/workflows/devcontainer-image.yml").read_text()
-    assert "models.json" in wf and "tools/fetch_models.py" in wf
+    assert "connectome_data.py" in wf
     run_sh = (ROOT / "run.sh").read_text()
     assert "adopt_image_assets()" in run_sh and "/opt/drosophila" in run_sh
     assert "abetlen.github.io/llama-cpp-python/whl/cpu" in run_sh

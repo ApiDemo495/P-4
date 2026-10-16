@@ -33,12 +33,17 @@ RUN python3 -m venv /opt/venv \
  && chown -R vscode:vscode /opt/venv
 
 # ---------------------------------------------------------------------------
-# Round AV: everything a fresh Codespace used to download or that the user
-# used to upload is baked in here, once, at image-build time:
+# Round AV: what a fresh Codespace used to download is baked in here, once,
+# at image-build time:
 #   * the GGUF runtime (prebuilt CPU wheel; compiled only if no wheel matches)
 #   * the FlyWire v783 connectome (parquet + annotations + the built .npz)
-#   * every enabled model in models.json (1 GB-class weights)
-# run.sh links /opt/drosophila/{connectome,models} into the checkout.
+# run.sh links /opt/drosophila/connectome into the checkout.
+# Round BG: the GGUF model weights are NOT in the image any more.  They made
+# the image ~1.4 GB heavier, and GGUF does not compress, so every new
+# Codespace sat on "Setting up remote connection" pulling them before the
+# editor could open.  The engine's manifest autoloader downloads the one
+# model for the machine in the background after the first window instead
+# (Hugging Face is fast from a Codespace; the vote is a stub until then).
 # ---------------------------------------------------------------------------
 RUN ( /opt/venv/bin/pip install --quiet --prefer-binary \
         --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu llama-cpp-python \
@@ -48,13 +53,10 @@ RUN ( /opt/venv/bin/pip install --quiet --prefer-binary \
  && /opt/venv/bin/python -c "import llama_cpp; print('llama_cpp', llama_cpp.__version__)"
 
 COPY backend /tmp/src/backend
-COPY tools/fetch_models.py /tmp/src/tools/fetch_models.py
-COPY models.json /tmp/src/models.json
 RUN mkdir -p /opt/drosophila/connectome /opt/drosophila/models \
  && cd /tmp/src \
  && PYTHONPATH=/tmp/src CONNECTOME_DATA_DIR=/opt/drosophila/connectome \
       /opt/venv/bin/python -c "from backend.brain.connectome_data import ConnectomeData; d = ConnectomeData(); assert d.ensure(), d.status.error; print(d.facts)" \
- && PYTHONPATH=/tmp/src /opt/venv/bin/python tools/fetch_models.py --dest /opt/drosophila/models --quiet \
  && rm -rf /tmp/src \
  && chown -R vscode:vscode /opt/drosophila \
  && du -sh /opt/drosophila/*
