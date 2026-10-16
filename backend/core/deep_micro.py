@@ -188,9 +188,14 @@ def _clip(value: float, low: float = -1.0, high: float = 1.0) -> float:
 
 
 def _ramp(value: float, low: float, high: float) -> float:
+    """Round BH: logistic ramp - ≈0.018 at ``low``, ½ midway, ≈0.982 at
+    ``high`` - so a weak pattern reads as a small score, never a dead 0.00.
+    Returns are clipped to the open interval so downstream products stay alive."""
     if high <= low:
         return 0.0
-    return _clip((value - low) / (high - low), 0.0, 1.0)
+    x = (float(value) - low) / (high - low)
+    x = max(-60.0, min(60.0, 8.0 * (x - 0.5)))
+    return 1.0 / (1.0 + math.exp(-x))
 
 
 # ---------------------------------------------------------------------------
@@ -545,8 +550,6 @@ def ignition(times_ms: np.ndarray, prices: np.ndarray, typical_1s_bps: float) ->
     move[valid] = (p[valid] / p[earlier[valid]] - 1.0) * 10_000.0
     k = int(np.argmax(np.abs(move)))
     burst = float(move[k])
-    if abs(burst) < 2.0 * typical_1s_bps:
-        return out
     after = p[k:][t[k:] <= t[k] + 5000.0]
     if after.size < 3:
         return out
@@ -559,7 +562,7 @@ def ignition(times_ms: np.ndarray, prices: np.ndarray, typical_1s_bps: float) ->
     burst_norm = _ramp(abs(burst) / typical_1s_bps, 2.0, 5.0)
     score = burst_norm * _ramp(retrace, 0.4, 0.9)
     out.update({
-        "score": round(score, 4),
+        "score": round(score, 6),
         "burst_bps": round(burst, 4),
         "retrace": round(retrace, 4),
         "age_s": round(float(now - t[k]) / 1000.0, 3),
@@ -584,7 +587,7 @@ def quote_stuffing(times_ms: np.ndarray, prices: np.ndarray, tick_rate_hz: float
     rate = recent.size / max(0.25, float(now - times_ms[start]) / 1000.0)
     surge = _ramp(rate / tick_rate_hz, 2.0, 6.0)
     changed = float(np.count_nonzero(np.diff(recent))) / max(1, recent.size - 1)
-    return round(surge * (1.0 - changed), 4)
+    return round(surge * max(0.02, 1.0 - changed), 6)   # Round BH: never a dead zero
 
 
 # ---------------------------------------------------------------------------
@@ -926,7 +929,7 @@ def analyze(
     ign = ignition(times_ms, prices, typical_1s)
     stuffing = quote_stuffing(times_ms, prices, _safe(f.get("tick_rate_hz")))
     flat = 1.0 - _ramp(abs(_safe(f.get("z_1s"))), 0.3, 1.5)
-    spoofing = round(_ramp(abs(book["pressure_top20"]), 0.25, 0.7) * (1.0 - _ramp(toxicity["vpin"], 0.3, 0.7)) * flat, 4)
+    spoofing = round(_ramp(abs(book["pressure_top20"]), 0.25, 0.7) * (1.0 - _ramp(toxicity["vpin"], 0.3, 0.7)) * flat, 6)
 
     deep = {
         "available": True,
@@ -947,8 +950,8 @@ def analyze(
             "ignition": ign["score"], "ignition_burst_bps": ign["burst_bps"],
             "ignition_retrace": ign["retrace"], "ignition_age_s": ign["age_s"],
             "stuffing": stuffing, "spoofing": spoofing,
-            "toxicity": round(_ramp(toxicity["vpin"], 0.35, 0.85), 4),
-            "pushable": round(_ramp(kyle["impact_norm"], 0.8, 2.5) * _ramp(kyle["r2"], 0.15, 0.6), 4),
+            "toxicity": round(_ramp(toxicity["vpin"], 0.35, 0.85), 6),
+            "pushable": round(_ramp(kyle["impact_norm"], 0.8, 2.5) * _ramp(kyle["r2"], 0.15, 0.6), 6),
         },
     }
     try:

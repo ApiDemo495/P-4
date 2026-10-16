@@ -88,43 +88,38 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     state.last_z = z
 
     ratio = recent_median / (mu + EPS)
-    if abs(ratio - 1.0) < MIN_SHOCK_RATIO:
-        trace(ctx, "baseline median vol", mu, "contracts")
-        trace(ctx, "recent median vol", recent_median, "contracts")
-        trace(ctx, "ratio recent / baseline", ratio, "below the materiality gate - no shock")
-        return 0.0
+    # Round BH: soft materiality gate d² / (d² + g²) with d = |ratio − 1| - a
+    # volume shock below the 0.15 line is damped, not cut to a dead 0.00
+    dev = abs(ratio - 1.0)
+    gate = (dev * dev) / (dev * dev + MIN_SHOCK_RATIO * MIN_SHOCK_RATIO)
 
     prices = ticks[:, 1]
     anchor = prices[max(0, split - 1)]
     price_sign = float(np.sign(prices[-1] - anchor))
+    net_sides = float(np.sum(sides[split:]))
     if price_sign == 0.0:
-        # A volume spike with no price move at all carries no direction: saying
-        # "up" or "down" here is exactly the "random numbers" failure mode.
-        trace(ctx, "baseline median vol", mu, "contracts")
-        trace(ctx, "recent median vol", recent_median, "contracts")
-        trace(ctx, "MAD sigma", sigma, "contracts")
-        trace(ctx, "z", z, "robust sigmas")
-        trace(ctx, "price sign", 0.0, "price did not move - no shock direction")
-        return 0.0
+        # A volume spike with no price move: the only honest side is the
+        # aggressor flow, and it only earns a quarter of the weight.
+        price_sign = float(np.sign(net_sides)) * 0.25 if net_sides != 0 else 0.0
 
     trace(ctx, "baseline median vol", mu, "contracts")
     trace(ctx, "recent median vol", recent_median, "contracts")
     trace(ctx, "MAD sigma", sigma, "contracts")
-    trace(ctx, "ratio recent / baseline", ratio, "materiality gate is 0.15")
+    trace(ctx, "ratio recent / baseline", ratio, "materiality line is 0.15 (soft)")
+    trace(ctx, "materiality gate", gate, "d² / (d² + 0.15²), d = |ratio − 1|")
     trace(ctx, "z (volume shock)", z, "robust sigmas")
     trace(ctx, "price move over the shock", float(prices[-1] - anchor), "price units")
-    trace(ctx, "price sign", price_sign, "+1 up / -1 down")
-    net_sides = float(np.sum(sides[split:]))
-    trace(ctx, "net aggressor flow", net_sides, "contracts (context only)")
+    trace(ctx, "price sign", price_sign, "+1 up / -1 down (±0.25 from aggressor flow when price did not move)")
+    trace(ctx, "net aggressor flow", net_sides, "contracts")
 
-    return finite(tanh(z / Z_DIVISOR) * price_sign)
+    return finite(tanh(z / Z_DIVISOR) * price_sign * gate)
 
 
-DOUBLE_CHECK = "value = tanh(z / 3) x price sign"
+DOUBLE_CHECK = "value = tanh(z / 3) x price sign x materiality gate"
 
 
 def double_check(t: dict, asset: str) -> float:
     """Independent re-derivation of the output from the traced intermediates."""
     if "z (volume shock)" not in t or "price sign" not in t:
         return 0.0
-    return tanh(float(t["z (volume shock)"]) / Z_DIVISOR) * float(t["price sign"])
+    return tanh(float(t["z (volume shock)"]) / Z_DIVISOR) * float(t["price sign"]) * float(t.get("materiality gate", 1.0))

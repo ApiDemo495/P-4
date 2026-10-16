@@ -31,11 +31,14 @@ temperature   realised variance of the BTC/PAXG ratio over the last minute
 """
 from __future__ import annotations
 
+from backend.core.numfmt import fx, fxs
+
 import math
 
 import numpy as np
 
 from backend.core import config as cfg
+from backend.physics.constants import sign_of, soft_gate
 
 HAWKES_BIN_S = 1.0
 HAWKES_WINDOW_S = 300.0
@@ -81,28 +84,31 @@ def hawkes(snapshot) -> dict:
     # Hawkes with exponential kernel: Var/Mean of bin counts → 1/(1-n)² for
     # bins much longer than the kernel.  Invert for n, floor at Poisson.
     vmr = var / mean
-    n = max(0.0, min(0.999, 1.0 - 1.0 / math.sqrt(max(1.0, vmr))))
+    # Round BH: a branching ratio is physically in [0, 1); under-dispersed
+    # arrivals (VMR < 1) are reported as the floor 0.001, never a dead 0.000
+    n = max(0.001, min(0.999, 1.0 - 1.0 / math.sqrt(max(1e-6, vmr))))
     W = cfg.window_seconds()
     last = _recent(win, W)
     vol = np.abs(last[:, 2])
     flow = float(np.sum(vol * np.sign(last[:, 3])) / max(1e-12, vol.sum())) if last.shape[0] else 0.0
     critical = n >= HAWKES_CRITICAL
-    if critical or n < 0.15 or abs(flow) < 0.05:
-        direction = 0
-    else:
-        direction = int(np.sign(flow))
-    edge = 0.0 if direction == 0 else min(6.0, n * abs(flow) * 8.0)
-    regime = ("critical cascade (n ≥ 0.95): the chain is about to exhaust - stand aside" if critical
-              else "Poisson arrivals: no memory to follow" if n < 0.15
-              else "balanced flow: self-excitation has no side to carry" if abs(flow) < 0.05
+    # Round BH: soft gates - memory (n vs 0.15) and side (flow vs 0.05) scale
+    # the edge continuously; a critical cascade damps it to a sliver instead
+    # of switching it off, so the mechanism always carries its side.
+    gate = soft_gate(n, 0.15) * soft_gate(flow, 0.05) * (0.1 if critical else 1.0)
+    direction = sign_of(flow)
+    edge = min(6.0, max(n, 0.02) * max(abs(flow), 1e-3) * 8.0) * gate if direction else 0.0
+    regime = ("critical cascade (n ≥ 0.95): the chain is about to exhaust - edge damped ×0.1" if critical
+              else "near-Poisson arrivals: little memory to follow (weak)" if n < 0.15
+              else "nearly balanced flow: self-excitation has a faint side" if abs(flow) < 0.05
               else f"self-excited {'buying' if flow > 0 else 'selling'} carries forward")
     return {
         "key": key, "section": sec, "name": name, "value": n, "unit": " n", "direction": direction, "edge_bps": edge,
         "active": True, "source": "tape", "branching_ratio": n, "vmr": vmr, "flow_60s": flow, "arrivals_per_s": mean / HAWKES_BIN_S,
         "critical": critical,
         "logic": (f"λ(t) = μ + Σ α·e^(−β(t−tᵢ)); {win.shape[0]} arrivals in {span:.0f} s binned at {HAWKES_BIN_S:.0f} s: "
-                  f"mean {mean:.2f}, Var/Mean = {vmr:.2f} ⇒ n = 1 − 1/√(Var/Mean) = {n:.3f}; "
-                  f"signed flow ({W:g} s) {flow:+.3f} ⇒ {regime}"),
+                  f"mean {fx(mean, 2)}, Var/Mean = {fx(vmr, 2)} ⇒ n = 1 − 1/√(Var/Mean) = {fx(n, 3)}; "
+                  f"signed flow ({W:g} s) {fxs(flow, 3)} ⇒ {regime}"),
     }
 
 
@@ -136,15 +142,15 @@ def kinetic(snapshot) -> dict:
     if scale <= 1e-18:
         return _inactive(key, sec, name, "momentum flux has no variance yet", value=0.0)
     z = p_now / scale
-    direction = int(np.sign(z)) if abs(z) >= 1.0 else 0
-    edge = min(5.0, max(0.0, abs(z) - 0.5) * 1.5) if direction else 0.0
+    direction = sign_of(z)
+    edge = min(5.0, abs(z) * 1.5) * soft_gate(z, 1.0) if direction else 0.0      # Round BH: soft |z| gate
     heat = ke_now / max(1e-18, ke_base)
     return {
         "key": key, "section": sec, "name": name, "value": z, "unit": " σ", "direction": direction, "edge_bps": edge,
         "active": True, "source": "tape", "momentum_now": p_now, "momentum_sigma": scale, "ke_ratio": heat,
-        "logic": (f"p = Σ side·v·|Δln P| over {cfg.window_seconds():g} s = {p_now:+.3e}; σ_p from {sums.size} trailing windows = {scale:.3e} ⇒ z = {z:+.2f}; "
-                  f"KE = ½Σ v·(Δln P)² = {ke_now:.3e} ({heat:.2f}× the 10-min average); "
-                  f"{'|z| ≥ 1 ⇒ follow the flux' if direction else '|z| < 1 ⇒ no net momentum'}"),
+        "logic": (f"p = Σ side·v·|Δln P| over {cfg.window_seconds():g} s = {p_now:+.3e}; σ_p from {sums.size} trailing windows = {scale:.3e} ⇒ z = {fxs(z, 2)}; "
+                  f"KE = ½Σ v·(Δln P)² = {ke_now:.3e} ({fx(heat, 2)}× the 10-min average); "
+                  f"gate z²/(z²+1) = {fx(soft_gate(z, 1.0), 2)} ⇒ {'follow the flux' if abs(z) >= 1.0 else 'faint momentum, small edge'}"),
     }
 
 
@@ -172,14 +178,16 @@ def entropy(snapshot) -> dict:
     vol = np.abs(recent[-100:, 2])
     flow = float(np.sum(vol * np.sign(recent[-100:, 3])) / max(1e-12, vol.sum()))
     informed = h_norm < ENTROPY_INFORMED
-    direction = int(np.sign(flow)) if (informed and abs(flow) > 0.05) else 0
-    edge = min(6.0, (ENTROPY_INFORMED - h_norm) / ENTROPY_INFORMED * 10.0 * abs(flow)) if direction else 0.0
+    direction = sign_of(flow)
+    # Round BH: how far below the informed line the entropy sits (soft), times the flow's side strength
+    structure = soft_gate(max(0.0, ENTROPY_INFORMED - h_norm) + 0.02, 0.1)
+    edge = min(6.0, 10.0 * abs(flow) * structure * soft_gate(flow, 0.05)) if direction else 0.0
     runs = int(np.sum(np.diff(s) != 0)) + 1
     return {
         "key": key, "section": sec, "name": name, "value": h_norm, "unit": " H", "direction": direction, "edge_bps": edge,
         "active": True, "source": "tape", "entropy_bits": h, "runs": runs, "flow_100": flow, "informed": informed,
-        "logic": (f"H = −Σ p(block)·log₂ p over {n_blocks} blocks of {ENTROPY_BLOCK} signs = {h:.3f} bits of {ENTROPY_BLOCK} "
-                  f"(normalised {h_norm:.3f}); {runs} runs in {s.size} prints; net flow (100) {flow:+.3f} ⇒ "
+        "logic": (f"H = −Σ p(block)·log₂ p over {n_blocks} blocks of {ENTROPY_BLOCK} signs = {fx(h, 3)} bits of {ENTROPY_BLOCK} "
+                  f"(normalised {fx(h_norm, 3)}); {runs} runs in {s.size} prints; net flow (100) {fxs(flow, 3)} ⇒ "
                   f"{'structured: an informed order is being worked - follow its sign' if informed else 'near-random sequence: nothing to follow'}"),
     }
 
@@ -214,26 +222,31 @@ def diffusion(snapshot) -> dict:
     thresh = 2.0 / math.sqrt(n)
     pred_b = pred_p = 0.0
     used = []
+    # Round BH: every lag contributes, weighted by its own significance
+    # (ρ² / (ρ² + thresh²)) - a significant lag counts nearly fully, an
+    # insignificant one a sliver, so the prediction is never a dead 0.00
     for k in range(1, DIFFUSION_MAX_LAG + 1):
         c_p_leads = float(np.mean(zp[:-k] * zb[k:]))       # PAXG at t−k vs BTC at t
         c_b_leads = float(np.mean(zb[:-k] * zp[k:]))       # BTC at t−k vs PAXG at t
+        w_p = c_p_leads * c_p_leads / (c_p_leads * c_p_leads + thresh * thresh)
+        w_b = c_b_leads * c_b_leads / (c_b_leads * c_b_leads + thresh * thresh)
+        pred_b += w_p * c_p_leads * (rb.std() / rp.std()) * rp[-k]
+        pred_p += w_b * c_b_leads * (rp.std() / rb.std()) * rb[-k]
         if abs(c_p_leads) > thresh:
-            pred_b += c_p_leads * (rb.std() / rp.std()) * rp[-k]
-            used.append(f"PAXG→BTC lag {k}: ρ {c_p_leads:+.2f}")
+            used.append(f"PAXG→BTC lag {k}: ρ {fxs(c_p_leads, 2)}")
         if abs(c_b_leads) > thresh:
-            pred_p += c_b_leads * (rp.std() / rb.std()) * rb[-k]
-            used.append(f"BTC→PAXG lag {k}: ρ {c_b_leads:+.2f}")
+            used.append(f"BTC→PAXG lag {k}: ρ {fxs(c_b_leads, 2)}")
     rel = pred_b - pred_p                                    # predicted next ratio move
     d_coeff = float(np.mean(zb * zp))                        # contemporaneous coupling
-    direction = int(np.sign(rel)) if abs(rel) * 1e4 >= 0.2 else 0
-    edge = min(4.0, abs(rel) * 1e4) if direction else 0.0
+    direction = sign_of(rel)
+    edge = min(4.0, abs(rel) * 1e4) * soft_gate(rel * 1e4, 0.2) if direction else 0.0   # Round BH: soft 0.2 bp gate
     return {
         "key": key, "section": sec, "name": name, "value": rel * 1e4, "unit": " bp", "direction": direction, "edge_bps": edge,
         "active": True, "source": "tape", "coupling": d_coeff, "lags_used": used, "samples": n,
-        "logic": (f"∂u/∂t = D∇²u on the two legs: {n} returns on a {DIFFUSION_GRID_S:.0f} s grid, contemporaneous ρ = {d_coeff:+.2f}, "
-                  f"significance |ρ| > 2/√n = {thresh:.2f}; "
-                  + (f"leads: {'; '.join(used)}; predicted next-step BTC {pred_b * 1e4:+.2f} bp − PAXG {pred_p * 1e4:+.2f} bp = {rel * 1e4:+.2f} bp"
-                     if used else "no lag is significant: the legs diffuse independently this window")),
+        "logic": (f"∂u/∂t = D∇²u on the two legs: {n} returns on a {DIFFUSION_GRID_S:.0f} s grid, contemporaneous ρ = {fxs(d_coeff, 2)}, "
+                  f"significance |ρ| > 2/√n = {fx(thresh, 2)}; "
+                  + (f"leads: {'; '.join(used)}; predicted next-step BTC {fxs(pred_b * 1e4, 2)} bp − PAXG {fxs(pred_p * 1e4, 2)} bp = {fxs(rel * 1e4, 2)} bp"
+                     if used else f"no lag is significant (all weighted by ρ²/(ρ²+thresh²)): faint lead {fxs(rel * 1e4, 2)} bp - the legs mostly diffuse independently")),
     }
 
 
@@ -256,12 +269,15 @@ def temperature(snapshot) -> dict:
     if var_base <= 0:
         return _inactive(key, sec, name, "no price variance in the baseline", value=1.0)
     t_rel = var_now / var_base
-    drag = max(0.0, min(0.6, (t_rel - 1.0) / (TEMPERATURE_HOT - 1.0) * 0.6)) if t_rel > 1.0 else 0.0
+    # Round BH: softplus drag - a cool tape still carries a sliver of drag that
+    # grows smoothly through T_rel = 1 instead of switching on from 0.00
+    x = (t_rel - 1.0) / (TEMPERATURE_HOT - 1.0) * 0.6
+    drag = min(0.6, 0.05 * math.log1p(math.exp(max(-40.0, min(40.0, x / 0.05)))))
     sigma60_bps = math.sqrt(var_now) * 1e4
     return {
         "key": key, "section": sec, "name": name, "value": t_rel, "unit": " T", "direction": 0, "edge_bps": 0.0,
         "active": True, "source": "tape", "drag": drag, "sigma_60s_bps": sigma60_bps, "prints_60s": int(now.size),
         "logic": (f"½k·T ≡ ½⟨v²⟩: realised variance last {W:g} s = {var_now:.3e} ({now.size} prints) vs {W:g} s share of the 10-min baseline "
-                  f"{var_base:.3e} ⇒ T_rel = {t_rel:.2f}; σ₆₀ = {sigma60_bps:.1f} bp; "
-                  f"drag on every directional vote = {drag:.2f}" + (" (shock: votes shrink)" if drag > 0 else " (cool tape)")),
+                  f"{var_base:.3e} ⇒ T_rel = {fx(t_rel, 2)}; σ₆₀ = {sigma60_bps:.1f} bp; "
+                  f"drag on every directional vote = {fx(drag, 2)}" + (" (shock: votes shrink)" if t_rel > 1.0 else " (cool tape: faint drag)")),
     }

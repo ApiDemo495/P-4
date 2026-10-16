@@ -72,8 +72,21 @@ const state = {
 };
 
 /* ------------------------------------------------------------------ utils */
-const fmtPct = (v) => (v === null || v === undefined || Number.isNaN(Number(v))) ? "—" : `${(Number(v) * 100).toFixed(0)}%`;
-const fmtSigned = (v, d = 3) => (v >= 0 ? "+" : "") + Number(v).toFixed(d);
+const fmtPct = (v) => (v === null || v === undefined || Number.isNaN(Number(v))) ? "—" : `${fx(Number(v) * 100, 0)}%`;
+/* Round BH: adaptive precision.  A value that would print as 0.00 at the
+   requested decimals is shown with as many decimals as it takes to reveal
+   its first significant digit (up to 6, then exponent form) - 0.0031, not
+   0.00; 2.1e-7, not 0.000.  A true zero prints 0 followed by the decimals. */
+const fx = (v, d = 3) => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "—";
+  if (n === 0) return (0).toFixed(d);
+  let k = d;
+  while (k < 6 && Math.abs(n) < 0.5 * Math.pow(10, -k)) k += 1;
+  if (Math.abs(n) < 0.5 * Math.pow(10, -k)) return n.toExponential(1);
+  return n.toFixed(k);
+};
+const fmtSigned = (v, d = 3) => (v >= 0 ? "+" : "") + fx(v, d);
 
 function pctClass(v) {
   if (v > 0.15) return "pos";
@@ -652,8 +665,8 @@ function renderHorizon(prediction) {
     ` · released <b>${fmtClockUs(h.released_at_precise || h.released_at)}</b>` +
     ` · targets <b>${fmtClockUs(h.target_at_precise || h.target_at)}</b>` +
     ` · <span class="muted">side, confidence and levels are frozen until then</span>`;
-  el.title = `${Number(left).toFixed(1)}s left in this window` +
-    (scored !== undefined ? ` · scored in ${Number(scored).toFixed(1)}s` : "");
+  el.title = `${fx(left, 1)}s left in this window` +
+    (scored !== undefined ? ` · scored in ${fx(scored, 1)}s` : "");
 }
 
 /* The tape itself: how fast quotes arrive and how finely the engine can see.
@@ -675,7 +688,7 @@ function renderMicro(prediction) {
   el.className = "micro-line";
   el.innerHTML =
     `tape at lock <b>${escapeHtml(micro.resolution_label || fmtUs(micro.resolution_us))}</b> per tick` +
-    ` · <b>${Number(micro.tick_rate_hz || 0).toFixed(1)}</b> Hz` +
+    ` · <b>${fx(micro.tick_rate_hz || 0, 1)}</b> Hz` +
     ` · jitter <b>${fmtUs(micro.jitter_us)}</b>` +
     ` · quote life <b>${fmtUs(micro.quote_lifetime_us)}</b>` +
     ` · aggression <b>${fmtSigned(micro.aggression || 0, 2)}</b>`;
@@ -733,14 +746,14 @@ function renderPredictionDetail(prediction) {
     (parts ? `<div><div class="logic-h">Confidence parts</div><ul class="logic-trace">${parts}</ul></div>` : "") +
     `<div><div class="logic-h">Risk levels</div><div class="detail-line">` +
     `tp ${fmtSigned(levels.tp_bps ?? 0, 1)} bps · sl ${fmtSigned(levels.sl_bps ?? 0, 1)} bps · ` +
-    `rr ${Number(levels.rr ?? 1).toFixed(2)} : 1` +
+    `rr ${fx(levels.rr ?? 1, 2)} : 1` +
     (levels.distance_price !== undefined ? ` · distance ${fmtMoney(levels.distance_price)}` : "") +
     `</div></div>` +
     `<div><div class="logic-h">Engine microsecond budget</div><div class="detail-line">` +
     `pass <b>${fmtUs(engine.compute_us)}</b> · publish latency <b>${fmtUs(engine.publish_latency_us)}</b> · ` +
     `tick interval <b>${fmtUs(engine.tick_interval_us)}</b> · tape resolution <b>${fmtUs(engine.resolution_us)}</b> · ` +
     `history <b>${engine.history_samples ?? 0}</b> samples` +
-    (micro.tick_rate_hz ? ` · <b>${Number(micro.tick_rate_hz).toFixed(1)}</b> Hz tape` : "") +
+    (micro.tick_rate_hz ? ` · <b>${fx(micro.tick_rate_hz, 1)}</b> Hz tape` : "") +
     `</div></div>` +
     (Object.keys(detail.agents || {}).length
       ? `<div class="detail-line">agents: ${Object.entries(detail.agents).map(([name, payload]) =>
@@ -774,7 +787,7 @@ function learnedDetailHtml(learned) {
   }
   const row = (v, cls) =>
     `<li><span class="trace-label">${escapeHtml(v.source)} ${(v.vote === "up" || v.vote > 0) ? "▲" : "▼"}</span>` +
-    `<b class="${cls}">${fmtPct(v.reliability)} right · n ${Number(v.n ?? 0).toFixed(0)}</b></li>`;
+    `<b class="${cls}">${fmtPct(v.reliability)} right · n ${fx(v.n ?? 0, 0)}</b></li>`;
   const rows = (learned.for || []).slice(0, 5).map((v) => row(v, "pos")).join("") +
     (learned.against || []).slice(0, 3).map((v) => row(v, "neg")).join("");
   const realised = learned.realised_at_this_confidence;
@@ -790,16 +803,16 @@ function learnedDetailHtml(learned) {
 function crowdDetailHtml(crowd) {
   if (!crowd || !crowd.available) return "";
   const bars = (crowd.emotions || []).slice(0, 8)
-    .map((e) => `${escapeHtml(e.label || e.name)} ${Number(e.percent || 0).toFixed(0)}%`)
+    .map((e) => `${escapeHtml(e.label || e.name)} ${fx(e.percent || 0, 0)}%`)
     .join(" · ");
   const parts = state.prediction?.detail?.confidence_parts || {};
   const damp = Number(parts.crowd_dampening ?? 1);
   return `<div><div class="logic-h">Crowd at lock time</div><div class="detail-line">` +
-    `dominant <b>${escapeHtml(String(crowd.dominant || "—"))}</b> ${Number(crowd.percent || 0).toFixed(0)}% ` +
+    `dominant <b>${escapeHtml(String(crowd.dominant || "—"))}</b> ${fx(crowd.percent || 0, 0)}% ` +
     `on the <b>${escapeHtml(String(crowd.timescale || "—"))}</b> timescale · ` +
     `temperature ${fmtSigned(crowd.tone_bias ?? 0, 2)} · ` +
     `manipulation <b>${fmtPct(crowd.manipulation || 0)}</b> (${escapeHtml(String(crowd.manipulation_kind || "none"))})` +
-    (damp < 0.999 ? ` · confidence <b>x${damp.toFixed(2)}</b> for the crowd` : " · no crowd dampening") +
+    (damp < 0.999 ? ` · confidence <b>x${fx(damp, 2)}</b> for the crowd` : " · no crowd dampening") +
     `</div>` +
     (bars ? `<div class="detail-line" style="font-size:10.5px">${bars}</div>` : "") +
     (crowd.read ? `<div class="muted" style="font-size:11px">${escapeHtml(String(crowd.read))}</div>` : "") +
@@ -822,7 +835,7 @@ function agreementLockedHtml(agree) {
    the filter's belief, the microstructure verdicts and the chain. */
 function deepLockedHtml(deep) {
   if (!deep || !deep.available) return "";
-  const num = (v, d = 2) => (typeof v === "number" ? v.toFixed(d) : "—");
+  const num = (v, d = 2) => (typeof v === "number" ? fx(v, d) : "—");
   const chain = (deep.chain || []).map((step) =>
     `<li><b>${escapeHtml(String(step.name))}</b> <span class="mono">${escapeHtml(String(step.value))} ${escapeHtml(String(step.unit || ""))}</span>` +
     ` — ${escapeHtml(String(step.reads || ""))}</li>`).join("");
@@ -918,18 +931,18 @@ function renderEmotions() {
   state.lastEmotionDominant = top.name || null;
 
   $("emotion-dominant-sub").textContent =
-    `${Number(top.percent || 0).toFixed(0)}% intensity · ${top.family || ""} family · ` +
+    `${fx(top.percent || 0, 0)}% intensity · ${top.family || ""} family · ` +
     `strongest on the ${emotionTimescaleLabel(top.dominant_timescale)} timescale`;
   const held = Number(e.held_seconds ?? top.held_seconds ?? 0);
   const runner = e.runner_up;
   $("emotion-held").innerHTML =
     `held for <b>${held >= 60 ? `${Math.floor(held / 60)}m ${Math.round(held % 60)}s` : `${held.toFixed(1)} s`}</b>` +
-    (runner ? ` · runner-up <b>${escapeHtml(runner.label)}</b> ${Number(runner.percent || 0).toFixed(0)}%` : "") +
+    (runner ? ` · runner-up <b>${escapeHtml(runner.label)}</b> ${fx(runner.percent || 0, 0)}%` : "") +
     (e.churn_per_minute ? ` · ${e.churn_per_minute} switch${e.churn_per_minute === 1 ? "" : "es"} this minute` : "");
   $("emotion-read").textContent = e.read || "";
   $("emotion-drivers").innerHTML = (top.drivers || []).map((d) => `<li>${escapeHtml(d)}</li>`).join("");
   $("emotion-meta").textContent =
-    `${e.asset || state.asset} · sampled every ${Number(e.interval_seconds || 0.5).toFixed(1)} s · ` +
+    `${e.asset || state.asset} · sampled every ${fx(e.interval_seconds || 0.5, 1)} s · ` +
     `tape resolution ${e.resolution_label || fmtUs(e.resolution_us)} · ${e.ticks || 0} ticks · ` +
     `${e.samples || 0} samples`;
 
@@ -942,7 +955,7 @@ function renderEmotions() {
     return `<div class="emotion-row${selected ? " selected" : ""}" data-emotion="${escapeHtml(item.name)}" title="click to print this emotion's formula">` +
       `<span class="name${isTop ? " dominant" : ""}">${escapeHtml(item.label || item.name)}<span class="fam">${escapeHtml(item.family || "")}</span></span>` +
       `<div class="bar"><div class="bar-fill ${cls}" style="width:${clamp(Number(item.percent || 0), 0, 100)}%"></div></div>` +
-      `<span class="pct">${Number(item.percent || 0).toFixed(0)}%</span>` +
+      `<span class="pct">${fx(item.percent || 0, 0)}%</span>` +
       `<span class="band">${emotionTimescaleLabel(item.dominant_timescale)}</span>` +
       `</div>`;
   });
@@ -967,7 +980,7 @@ function renderEmotions() {
   const damp = Number(state.emotionDampening?.applied ?? 1);
   $("emotion-manip").innerHTML =
     `<b>${fmtPct(score)}</b> ${escapeHtml(String(manip.kind || "none"))}` +
-    (damp < 0.999 ? ` · confidence <b>x${damp.toFixed(2)}</b>` : "");
+    (damp < 0.999 ? ` · confidence <b>x${fx(damp, 2)}</b>` : "");
   $("emotion-manip-note").textContent = manip.note || "";
 
   /* timescales of the dominant emotion */
@@ -976,14 +989,17 @@ function renderEmotions() {
   $("emotion-timescales").innerHTML = ["micro", "seconds", "window", "minutes", "news"].map((key) => {
     const value = Number(bands[key] || 0);
     const peak = key === top.dominant_timescale;
-    return `<div class="timescale-cell${peak ? ` peak ${tone}` : ""}">${emotionTimescaleLabel(key)}<b>${(value * 100).toFixed(0)}%</b></div>`;
+    // Round BH: the news band of a calm emotion is defined as "no band"
+    // (silence is not a feeling) - say so instead of printing 0%
+    const text = value === 0 && key === "news" && ["COMPLACENCY", "PARALYSIS"].includes(top.name) ? "no band" : `${fx(value * 100, 0)}%`;
+    return `<div class="timescale-cell${peak ? ` peak ${tone}` : ""}">${emotionTimescaleLabel(key)}<b>${text}</b></div>`;
   }).join("");
 
   /* at lock time */
   const locked = state.emotionsLocked;
   const lockedTop = locked?.dominant;
   $("emotion-locked").innerHTML = lockedTop
-    ? `<b>${escapeHtml(lockedTop.label || lockedTop.name)}</b> ${Number(lockedTop.percent || 0).toFixed(0)}% · ` +
+    ? `<b>${escapeHtml(lockedTop.label || lockedTop.name)}</b> ${fx(lockedTop.percent || 0, 0)}% · ` +
       `manipulation ${fmtPct(Number(locked.manipulation?.score || 0))} (${escapeHtml(String(locked.manipulation?.kind || "none"))})` +
       `<span class="muted">${escapeHtml(String(state.emotionDampening?.note || "no crowd dampening on this signal"))}</span>`
     : `<span class="muted">the first locked window will record the crowd's mood</span>`;
@@ -1033,8 +1049,8 @@ function renderLockedCrowdLine(line, dot) {
   const damp = Number(state.emotionDampening?.applied ?? 1);
   const verdict = agree.verdict ? ` · vs formulas: <b>${escapeHtml(agree.verdict)}</b>` : "";
   line.innerHTML = `crowd at lock: <b>${escapeHtml(lockedTop.label || lockedTop.name)}</b> ` +
-    `${Number(lockedTop.percent || 0).toFixed(0)}%${verdict}` +
-    (damp < 0.999 ? ` · confidence x${damp.toFixed(2)}` : " · no confidence cut") +
+    `${fx(lockedTop.percent || 0, 0)}%${verdict}` +
+    (damp < 0.999 ? ` · confidence x${fx(damp, 2)}` : " · no confidence cut") +
     ` · <span class="muted">frozen for this window</span>`;
   if (dot) dot.className = `crowd-dot ${toneClass(lockedTop.tone)}`;
 }
@@ -1050,17 +1066,17 @@ function renderEmotionFormula(e, top) {
   const item = (e.emotions || []).find((row) => row.name === name) || (e.emotions || [])[0];
   if (!item || !item.formula) { el.innerHTML = ""; return; }
   const terms = (item.terms || []).map((t) =>
-    `<tr><td class="w">${Number(t.weight).toFixed(2)}</td><td class="t">${escapeHtml(t.term)}</td>` +
-    `<td class="v">${Number(t.value).toFixed(3)}</td><td class="c">${Number(t.contribution).toFixed(3)}</td></tr>`).join("");
+    `<tr><td class="w">${fx(t.weight, 2)}</td><td class="t">${escapeHtml(t.term)}</td>` +
+    `<td class="v">${fx(t.value, 3)}</td><td class="c">${fx(t.contribution, 3)}</td></tr>`).join("");
   const raw = (item.terms || []).reduce((acc, t) => acc + Number(t.contribution || 0), 0);
   const gate = Number(item.gate ?? 1);
   el.innerHTML =
     `<div class="formula-head"><b>${escapeHtml(item.label || item.name)}</b> <span class="muted">formula · live terms</span></div>` +
     `<code class="formula-text">${escapeHtml(item.formula)}</code>` +
     `<table class="term-table"><thead><tr><th>w</th><th>term</th><th>value</th><th>w·value</th></tr></thead><tbody>${terms}</tbody></table>` +
-    `<div class="formula-foot">Σ = <b>${raw.toFixed(3)}</b> × gate <b>${gate.toFixed(3)}</b>` +
-    ` → ramp <b>${Number(item.ramp ?? 0).toFixed(3)}</b> · Bayesian belief <b>${(Number(item.belief || 0) * 100).toFixed(0)}%</b>` +
-    ` · shown <b>${Number(item.percent || 0).toFixed(0)}%</b> <span class="muted">(0.65·ramp + 0.35·min(1, 2.5·belief), band-lifted, EMA-smoothed)</span></div>`;
+    `<div class="formula-foot">Σ = <b>${fx(raw, 3)}</b> × gate <b>${fx(gate, 3)}</b>` +
+    ` → ramp <b>${fx(item.ramp ?? 0, 3)}</b> · Bayesian belief <b>${(Number(item.belief || 0) * 100).toFixed(0)}%</b>` +
+    ` · shown <b>${fx(item.percent || 0, 0)}%</b> <span class="muted">(0.65·ramp + 0.35·min(1, 2.5·belief), band-lifted, EMA-smoothed)</span></div>`;
 }
 
 /* Round L: the crowd against the 31 formulas.  The formulas carry the vote
@@ -1093,7 +1109,7 @@ function renderGeometry(geo) {
   const el = $("deep-geometry");
   if (!el) return;
   if (!geo || !geo.available) { el.innerHTML = ""; return; }
-  const g = (v, d = 2) => (v === null || v === undefined || Number.isNaN(Number(v)) ? "—" : Number(v).toFixed(d));
+  const g = (v, d = 2) => (v === null || v === undefined || Number.isNaN(Number(v)) ? "—" : fx(v, d));
   const bar = (v) => `<span class="geo-bar"><span style="width:${Math.round(Math.max(0, Math.min(1, Number(v) || 0)) * 100)}%"></span></span>`;
   const tda = geo.tda || {}, tak = geo.takens || {}, csd = geo.csd || {}, th = geo.thermo || {}, qi = geo.quantum || {};
   el.innerHTML =
@@ -1120,7 +1136,7 @@ function renderUtility(util) {
     host.parentNode.insertBefore(el, host.nextSibling);
   }
   if (!util || !util.available) { el.innerHTML = ""; return; }
-  const g = (v, d = 2) => (v === null || v === undefined || Number.isNaN(Number(v)) ? "—" : Number(v).toFixed(d));
+  const g = (v, d = 2) => (v === null || v === undefined || Number.isNaN(Number(v)) ? "—" : fx(v, d));
   const lam = util.lambda || {}, gam = util.gamma || {}, alp = util.alpha || {};
   const pos = (v, lo, hi) => Math.max(0, Math.min(1, (Number(v) - lo) / (hi - lo))).toFixed(3);
   const tile = (title, big, sub, p, tip) =>
@@ -1147,7 +1163,7 @@ function renderDeep(deep, top) {
     $("deep-detectors").innerHTML = ""; $("deep-spectrum").innerHTML = ""; $("deep-chain").innerHTML = "";
     return;
   }
-  const num = (v, d = 2) => (typeof v === "number" ? v.toFixed(d) : "—");
+  const num = (v, d = 2) => (typeof v === "number" ? fx(v, d) : "—");
   const post = deep.posterior || {};
   const agrees = top && post.argmax === top.name;
   const reg = deep.regime || {};
@@ -1508,13 +1524,13 @@ function renderSignal() {
     const parts = Object.keys(w).map((k) => {
       const row = lw[k] || {};
       const rel = Number(row.reliability);
-      const tag = Number.isFinite(rel) && Math.abs(rel - 1) >= 0.05 ? ` (x${rel.toFixed(2)} earned)` : "";
+      const tag = Number.isFinite(rel) && Math.abs(rel - 1) >= 0.05 ? ` (x${fx(rel, 2)} earned)` : "";
       const avail = Number(row.availability);
       const live = Number.isFinite(avail) && avail < 0.999 ? ` ${Math.round(avail * 100)}% live` : "";
       return `${k} ${fmtPct(w[k])}${tag}${live}`;
     });
     const crowdCut = Number(s.fusion?.crowd_adjustment ?? 1);
-    const crowd = ` · crowd: confidence x${crowdCut.toFixed(2)} (a modifier of at most 12.5%, never a vote)`;
+    const crowd = ` · crowd: confidence x${fx(crowdCut, 2)} (a modifier of at most 12.5%, never a vote)`;
     // Round BB: the forward voter's own sentence - the one number that is
     // about the NEXT window by construction.
     const fwd = s.fusion?.contributions?.forward;
@@ -1636,14 +1652,14 @@ function renderBranches() {
   ctx.fillText(fmtMoney(hi), 2, 10); ctx.fillText(fmtMoney(lo), 2, H - 4);
   [0, Math.round(T / 4), Math.round(T / 2), Math.round(3 * T / 4), Math.round(T)].forEach((t) => ctx.fillText(`${t}s`, X(t) - 6, H - 4));
   if (note) {
-    note.textContent = `drift ${Number(br.drift_bps).toFixed(1)} bps · σ ${Number(br.sigma_bps).toFixed(1)} bps · ` +
+    note.textContent = `drift ${fx(br.drift_bps, 1)} bps · σ ${fx(br.sigma_bps, 1)} bps · ` +
       `P(close ${buy ? "up" : "down"}) ${fmtPct(br.p_close_for)} · P(target before stop) ${fmtPct(br.p_tp_first)}` +
       ` · 5/25/50/75/95 % bands, realised path in white`;
   }
   if (odds) {
     odds.innerHTML = (br.branches || []).map((b) => {
       const cls = b.name === "target reached" ? "pos" : b.name === "stop hit" ? "neg" : "";
-      return `<span class="${cls}">${b.name} <b>${fmtPct(b.p)}</b> <span class="muted">(${b.move_bps > 0 ? "+" : ""}${Number(b.move_bps).toFixed(1)} bps)</span></span>`;
+      return `<span class="${cls}">${b.name} <b>${fmtPct(b.p)}</b> <span class="muted">(${b.move_bps > 0 ? "+" : ""}${fx(b.move_bps, 1)} bps)</span></span>`;
     }).join("");
   }
 }
@@ -1843,8 +1859,8 @@ function renderWidgetPanel() {
   $("w-sl").textContent = tradeable ? fmtMoney(risk.stop_loss) + pts(risk.stop_loss) : "—";
   $("w-sl").className = tradeable ? "neg" : "muted";
   $("w-tp").className = tradeable ? "pos" : "muted";
-  $("w-rr").textContent = tradeable && risk.rr ? `${Number(risk.rr).toFixed(2)} : 1` : "—";
-  $("w-vol").textContent = risk.volatility_bps ? `${Number(risk.volatility_bps).toFixed(1)} bps` : "—";
+  $("w-rr").textContent = tradeable && risk.rr ? `${fx(risk.rr, 2)} : 1` : "—";
+  $("w-vol").textContent = risk.volatility_bps ? `${fx(risk.volatility_bps, 1)} bps` : "—";
   $("w-levels").textContent = tradeable
     ? `${Math.round(risk.tp_bps)} / ${Math.round(risk.sl_bps)} bps`
     : "no position";
@@ -1889,7 +1905,7 @@ function renderWidgetPanel() {
     $("w-veto").textContent = veto.fired
       ? `⇄ ${veto.note}`
       : (veto.move_30s_bps !== undefined
-          ? `not fired · tape ${fmtSigned(veto.move_30s_bps, 1)} bp in 30 s vs ${veto.recipe_side} (needs ${Number(veto.threshold_bps).toFixed(1)} bp against, confidence < 62 %)`
+          ? `not fired · tape ${fmtSigned(veto.move_30s_bps, 1)} bp in 30 s vs ${veto.recipe_side} (needs ${fx(veto.threshold_bps, 1)} bp against, confidence < 62 %)`
           : "—");
     $("w-veto").className = veto.fired ? "neg" : "muted";
   }
@@ -2079,7 +2095,7 @@ function renderHedge(s) {
     const best = o.best || {};
     $("hedge-best").innerHTML =
       `<b>${escapeHtml(best.action || "")}</b> — ${escapeHtml(best.note || "")} · ` +
-      `E <b class="${best.expected_bps >= 0 ? "sig-BUY" : "sig-SELL"}">${fmtSigned(best.expected_bps, 2)} bp</b> ± ${Number(best.sigma_bps).toFixed(2)} · ` +
+      `E <b class="${best.expected_bps >= 0 ? "sig-BUY" : "sig-SELL"}">${fmtSigned(best.expected_bps, 2)} bp</b> ± ${fx(best.sigma_bps, 2)} · ` +
       `P(profit) <b>${fmtPct(best.p_profit)}</b> · hedging removes ${fmtPct(o.variance_reduction)} of variance` +
       (o.basis ? ` <span class="muted">· from ${escapeHtml(o.basis)}</span>` : "");
     const j = o.joint || {};
@@ -2088,13 +2104,13 @@ function renderHedge(s) {
       $(id + "-bar").style.width = `${Math.round((v || 0) * 100)}%`;
     });
     $("hk-beta").textContent = `ρ ${fmtSigned(o.rho, 3)} · β ${fmtSigned(o.beta_paxg_on_btc, 3)}`;
-    $("hk-sigma").textContent = `${Number(o.sigma_btc_bps).toFixed(1)} · ${Number(o.sigma_paxg_bps).toFixed(1)} bp`;
+    $("hk-sigma").textContent = `${fx(o.sigma_btc_bps, 1)} · ${fx(o.sigma_paxg_bps, 1)} bp`;
     $("hk-spread").textContent = `${fmtSigned((o.spread || {}).z, 2)} — ${(o.spread || {}).read || ""}`;
     $("hk-rotation").textContent = regime.rotation || "—";
     $("hedge-actions").innerHTML = (o.actions || []).map((a) =>
       `<tr class="${a.action === best.action ? "best" : ""}"><td>${escapeHtml(a.action)}<div class="muted">${escapeHtml(a.note || "")}</div></td>` +
       `<td class="mono ${a.expected_bps >= 0 ? "sig-BUY" : "sig-SELL"}">${fmtSigned(a.expected_bps, 2)}</td>` +
-      `<td class="mono">${Number(a.sigma_bps).toFixed(2)}</td><td class="mono">${fmtPct(a.p_profit)}</td></tr>`).join("");
+      `<td class="mono">${fx(a.sigma_bps, 2)}</td><td class="mono">${fmtPct(a.p_profit)}</td></tr>`).join("");
     $("hedge-scenarios").innerHTML = (o.scenarios || []).map((sc) =>
       `<span class="scenario">if ${escapeHtml(sc.if)} → ${escapeHtml(sc.then)} · best action ${fmtSigned(sc.best_action_pnl_bps, 1)} bp</span>`).join("");
     $("hedge-logic").innerHTML = (o.logic || []).map((l) => `<div>${escapeHtml(l)}</div>`).join("");
@@ -2237,13 +2253,13 @@ function renderBrainPipeline() {
   const real = !!(e && e.kenyon_cells && e.kenyon_cells.connectome);
   const kcOf = e?.kenyon_cells?.of ?? 50;
   const live = real ? [
-    `${Object.keys(e.all_inputs || {}).length}/20 formulas → 40 glomerular ALPN groups (ON/OFF channels, 685 real projection neurons)`,
+    `${Object.keys(e.all_inputs || {}).length}/20 formulas → 40 glomerular ALPN groups (ON/OFF channels, 685 real projection neurons)${e.modulators ? ` · HSI ${fx(e.modulators.HSI?.value, 3)} → octopamine OA · ERC ${fmtSigned(e.modulators.ERC?.value, 3)} regime context` : ""}`,
     `${(e.kenyon_cells?.active ?? 0).toLocaleString()} of ${kcOf.toLocaleString()} real Kenyon cells fired (APL top-5 % sparsity)`,
-    `DRG ${fmtSigned(e.dopamine?.drg ?? 0)} → PAM ×${(e.dopamine?.pam_gain ?? 1).toFixed(2)} / PPL1 ×${(e.dopamine?.ppl1_gain ?? 1).toFixed(2)} on the real DANs · HSI ${fmtSigned(e.dopamine?.hsi ?? 0)} → octopamine gain`,
+    `DRG ${fmtSigned(e.dopamine?.drg ?? 0)} → PAM ×${fx(e.dopamine?.pam_gain ?? 1, 2)} / PPL1 ×${fx(e.dopamine?.ppl1_gain ?? 1, 2)} on the real DANs · HSI ${fmtSigned(e.dopamine?.hsi ?? 0)} → octopamine gain`,
     `96 real MBONs: approach (ACh+GABA) ${fmtSigned(e.mbons?.approach ?? 0, 3)} · avoid (Glu) ${fmtSigned(e.mbons?.avoid ?? 0, 3)} · decisiveness ${fmtPct(e.mbons?.confidence ?? 0)}`,
     `CCSv2 ${fmtSigned(e.ccs_value)} @ ${fmtPct(e.ccs_confidence)}` + (e.whole_brain ? ` · whole brain ${fmtSigned(e.whole_brain.balance)} → blended ${fmtSigned(e.whole_brain.ccs_blended)}` : "") + ` → 40% of fusion`,
   ] : [
-    e ? `${Object.keys(e.all_inputs || {}).length}/20 formulas written onto PNs` : "20 formulas → PNs 0-19",
+    e ? `${Object.keys(e.all_inputs || {}).length}/20 formulas written onto PNs${e.modulators ? ` (+ HSI ${fx(e.modulators.HSI?.value, 3)} via OA, ERC ${fmtSigned(e.modulators.ERC?.value, 3)} as context)` : ""}` : "20 formulas → PNs 0-19",
     e ? `${e.kenyon_cells?.active ?? 0}/${kcOf} KC clusters active (top 10%)` : "50 KC clusters, ReLU + top-10 % sparsity",
     e ? `DRG ${fmtSigned(e.dopamine?.drg ?? 0)} → PAM · HSI ${fmtSigned(e.dopamine?.hsi ?? 0)} → OA` : "DRG → PAM/PPL1 · HSI → OA",
     e ? `approach ${fmtSigned(e.mbons?.approach ?? 0)} · avoid ${fmtSigned(e.mbons?.avoid ?? 0)} · conf ${fmtPct(e.mbons?.confidence ?? 0)}` : "4 MBONs, 3 conv layers, gain 3.2802",
@@ -2355,7 +2371,7 @@ function renderPhysics(payload) {
   $("ph-head").textContent =
     `${payload.locked ? "🔒 locked with this window" : "live"} · weight ${fmtPct(payload.weight)} of fusion · ${r.elapsed_us} µs`;
   $("ph-verdict").innerHTML =
-    `<span class="sig-${side}">${side} ${r.asset}</span> vote <b>${Number(r.vote).toFixed(3)}</b> at ${fmtPct(r.confidence)} · ` +
+    `<span class="sig-${side}">${side} ${r.asset}</span> vote <b>${fx(r.vote, 3)}</b> at ${fmtPct(r.confidence)} · ` +
     `Kelly BTC weight <b>${fmtPct(w.w_micro)}</b> from ${comp.voting ?? 0} voting of ${comp.active ?? 0} active mechanisms` +
     `${w.drag > 0 ? ` · temperature drag ${fmtPct(w.drag)}` : ""}${w.below_cost ? " · <span class=\"sig-SELL\">edge below spread cost — vote halved</span>" : ""}`;
   $("ph-bar-fill").style.width = `${Math.round(Number(w.w_micro) * 100)}%`;
@@ -2363,11 +2379,11 @@ function renderPhysics(payload) {
   $("ph-bar-text").textContent = `Kelly ${fmtPct(w.w_micro)} · agreement ${fmtPct(comp.agreement)}`;
   const T = byKey.temperature || {}, H = byKey.hawkes || {}, E = byKey.entropy || {}, Kn = byKey.kinetic || {};
   const act = (m, txt) => (m && m.active ? txt : `inactive — ${String((m && m.logic) || "").split(" - ")[0].replace(/^inactive: /, "")}`);
-  $("ph-temp").textContent = act(T, `${Number(T.value).toFixed(2)} · σ₆₀ ${Number(T.sigma_60s_bps).toFixed(1)} bp · drag ${fmtPct(T.drag)}`);
-  $("ph-hawkes").textContent = act(H, `${Number(H.value).toFixed(3)} · ${Number(H.arrivals_per_s).toFixed(2)} prints/s${H.critical ? " · CRITICAL" : ""}`);
-  $("ph-entropy").textContent = act(E, `${Number(E.value).toFixed(3)} (${Number(E.entropy_bits).toFixed(2)} bits) · ${E.informed ? "informed flow" : "noise"}`);
-  $("ph-kinetic").textContent = act(Kn, `${Number(Kn.value).toFixed(2)} σ · KE ${Number(Kn.ke_ratio).toFixed(2)}× baseline`);
-  $("ph-edge").textContent = `${Number(comp.gross_edge_bps).toFixed(2)} − ${Number(comp.cost_bps).toFixed(2)} = ${Number(comp.net_edge_bps).toFixed(2)} bp`;
+  $("ph-temp").textContent = act(T, `${fx(T.value, 2)} · σ₆₀ ${fx(T.sigma_60s_bps, 1)} bp · drag ${fmtPct(T.drag)}`);
+  $("ph-hawkes").textContent = act(H, `${fx(H.value, 3)} · ${fx(H.arrivals_per_s, 2)} prints/s${H.critical ? " · CRITICAL" : ""}`);
+  $("ph-entropy").textContent = act(E, `${fx(E.value, 3)} (${fx(E.entropy_bits, 2)} bits) · ${E.informed ? "informed flow" : "noise"}`);
+  $("ph-kinetic").textContent = act(Kn, `${fx(Kn.value, 2)} σ · KE ${fx(Kn.ke_ratio, 2)}× baseline`);
+  $("ph-edge").textContent = `${fx(comp.gross_edge_bps, 2)} − ${fx(comp.cost_bps, 2)} = ${fx(comp.net_edge_bps, 2)} bp`;
   const tele = r.telemetry || {};
   $("ph-live").textContent = `${(r.active || []).length} active · ${Object.keys(r.inactive || {}).length} inactive · gold spot ${tele.xau_usd?.source || "—"} · venues ${tele.venues?.source || "—"}`;
   const body = $("ph-mechanisms");
@@ -2378,10 +2394,10 @@ function renderPhysics(payload) {
     const dir = !m.active ? '<span class="muted">inactive</span>'
       : m.direction > 0 ? '<span class="sig-BUY">BTC +</span>' : m.direction < 0 ? '<span class="sig-SELL">PAXG +</span>' : '<span class="muted">regime</span>';
     const unit = m.unit || (m.key === "vpin" ? "" : m.key === "pendulum" ? " REI" : m.key === "ou" ? " dev" : " bp");
-    const reading = m.active ? `${Number(m.value).toFixed(3)}${escapeHtml(unit)}` : "—";
+    const reading = m.active ? `${fx(m.value, 3)}${escapeHtml(unit)}` : "—";
     tr.innerHTML = `<td class="muted">${escapeHtml(m.section)}</td><td>${escapeHtml(m.name)}</td>` +
       `<td class="mono">${reading}</td><td>${dir}</td>` +
-      `<td class="mono">${m.active ? Number(m.edge_bps || 0).toFixed(2) + " bp" : ""}</td><td class="muted">${escapeHtml(m.active ? String(m.source || "") : String(m.logic || "").replace(/^inactive: /, "").split(";")[0])}</td>`;
+      `<td class="mono">${m.active ? fx(m.edge_bps || 0, 2) + " bp" : ""}</td><td class="muted">${escapeHtml(m.active ? String(m.source || "") : String(m.logic || "").replace(/^inactive: /, "").split(";")[0])}</td>`;
     body.appendChild(tr);
   });
   const logic = [
@@ -2436,16 +2452,16 @@ function renderGenesis(payload) {
   const reg = r.regime || {};
   $("gn-head").textContent = `${payload.locked ? "🔒 locked with this window" : "live"} · weight ${fmtPct(payload.weight)} of fusion · ¶gn minute ${r.candle_ts_ms ? new Date(r.candle_ts_ms).toISOString().slice(11, 16) : "—"}`;
   $("gn-verdict").innerHTML =
-    `<span class="sig-${side}">${side} ${escapeHtml(r.asset)}</span> composite <b>${Number(r.vote).toFixed(3)}</b> at ${fmtPct(r.confidence)} · ` +
+    `<span class="sig-${side}">${side} ${escapeHtml(r.asset)}</span> composite <b>${fx(r.vote, 3)}</b> at ${fmtPct(r.confidence)} · ` +
     `${r.votes_up} formulas up / ${r.votes_down} down · regime <b>${escapeHtml(reg.regime || "")}</b>`;
   $("gn-bar-marker").style.left = `${Math.round((Number(r.vote) + 1) * 50)}%`;
-  $("gn-bar-text").textContent = `vote ${Number(r.vote).toFixed(3)} · agreement ${fmtPct(r.agreement)}`;
+  $("gn-bar-text").textContent = `vote ${fx(r.vote, 3)} · agreement ${fmtPct(r.agreement)}`;
   $("gn-regime").textContent = `${reg.regime || "—"} · ${reg.note || ""}`;
   $("gn-firing").textContent = `${r.firing} / ${r.gated} / ${r.active}`;
   $("gn-agree").textContent = `${fmtPct(r.agreement)} · confidence ${fmtPct(r.confidence)}`;
   $("gn-domains").innerHTML = (r.domains || []).map((d) => {
     const cls = d.mean > 0.05 ? "sig-BUY" : d.mean < -0.05 ? "sig-SELL" : "muted";
-    return `<span class="pill gn-dom" title="${escapeHtml(d.name)}: ${d.firing}/${d.count} firing, mean signal ${Number(d.mean).toFixed(3)}">` +
+    return `<span class="pill gn-dom" title="${escapeHtml(d.name)}: ${d.firing}/${d.count} firing, mean signal ${fx(d.mean, 3)}">` +
       `D${d.domain} ${escapeHtml(d.name.split(" ")[0])} <b class="${cls}">${fmtSigned(d.mean, 2)}</b> <span class="muted">×${d.count}</span></span>`;
   }).join("");
   const body = $("gn-top");
@@ -2455,7 +2471,7 @@ function renderGenesis(payload) {
     const cls = f.signal > 0 ? "sig-BUY" : f.signal < 0 ? "sig-SELL" : "muted";
     tr.innerHTML = `<td class="mono muted">${escapeHtml(f.id)}</td><td>${escapeHtml(f.name)}</td>` +
       `<td class="muted">${f.domain ? "D" + f.domain : "bred"}</td><td class="mono ${cls}">${fmtSigned(f.signal, 3)}</td>` +
-      `<td class="mono">${Number(f.raw).toPrecision(3)}</td><td class="mono">${Number(f.fitness).toFixed(3)}</td><td class="muted">${escapeHtml(f.state)}</td>`;
+      `<td class="mono">${Number(f.raw).toPrecision(3)}</td><td class="mono">${fx(f.fitness, 3)}</td><td class="muted">${escapeHtml(f.state)}</td>`;
     body.appendChild(tr);
   });
   const prov = payload.providers || {};
@@ -2535,16 +2551,16 @@ function renderTimings(data) {
   // milliseconds turns most of the 23 into the same number.
   const source = data.timings_us && Object.keys(data.timings_us).length
     ? Object.entries(data.timings_us).map(([k, v]) => `${k} ${fmtUs(v)}`)
-    : Object.entries(data.timings_ms).map(([k, v]) => `${k} ${Number(v).toFixed(3)}ms`);
+    : Object.entries(data.timings_ms).map(([k, v]) => `${k} ${fx(v, 3)}ms`);
   const top = source.slice(0, 5).join(" · ");
   const total = data.total_us ? fmtUs(data.total_us)
-    : (data.total_ms !== undefined ? `${Number(data.total_ms).toFixed(2)}ms` : "?");
+    : (data.total_ms !== undefined ? `${fx(data.total_ms, 2)}ms` : "?");
   const resolution = data.resolution_us ? ` · tape resolution ${fmtUs(data.resolution_us)}` : "";
   // The live tape (rate, jitter, quote life, aggression) belongs here, with
   // the live formulas - not inside the locked prediction cell.
   const m = state.liveMicro || {};
   const tape = m.resolution_us
-    ? ` · live tape ${Number(m.tick_rate_hz || 0).toFixed(1)} Hz · jitter ${fmtUs(m.jitter_us)}` +
+    ? ` · live tape ${fx(m.tick_rate_hz || 0, 1)} Hz · jitter ${fmtUs(m.jitter_us)}` +
       ` · quote life ${fmtUs(m.quote_lifetime_us)} · aggression ${fmtSigned(m.aggression || 0, 2)}`
     : "";
   $("timings").textContent =
@@ -2651,7 +2667,7 @@ function renderLiveCalc(data, deltas) {
     const color = v > 0 ? "#35d07f" : v < 0 ? "#ff5d5d" : "#9aa4b2";
     sparkline(cell.querySelector("canvas"), arr, color);
     const valEl = cell.querySelector(".lc-val");
-    valEl.textContent = Number.isFinite(v) ? v.toFixed(Math.abs(v) >= 100 ? 1 : 4) : "—";
+    valEl.textContent = Number.isFinite(v) ? fx(v, Math.abs(v) >= 100 ? 1 : 4) : "—";
     valEl.className = `lc-val ${v > 0 ? "pos" : v < 0 ? "neg" : "muted"}`;
     cell.classList.toggle("moved", Math.abs(v - prev) > 1e-9);
     cell.classList.toggle("zero", Math.abs(v) < 1e-12);
@@ -2669,7 +2685,7 @@ function renderLiveCalc(data, deltas) {
     const line = document.createElement("div");
     line.className = "lc-line";
     line.innerHTML = `<span class="muted">${new Date().toISOString().substr(11, 8)}Z</span> ` +
-      (top.length ? top.map((d) => `<b>${escapeHtml(d[0])}</b> ${fmtSigned(d[1], 4)} → ${Number(d[2]).toFixed(4)}`).join(" · ") : "<span class=\"muted\">no formula moved on this pass</span>");
+      (top.length ? top.map((d) => `<b>${escapeHtml(d[0])}</b> ${fmtSigned(d[1], 4)} → ${fx(d[2], 4)}`).join(" · ") : "<span class=\"muted\">no formula moved on this pass</span>");
     ticker.prepend(line);
     while (ticker.childElementCount > 8) ticker.removeChild(ticker.lastChild);
   }
@@ -2892,7 +2908,7 @@ function logicBlock(name, logic, verdict, trace) {
       const value = typeof item.value === "number"
         ? Math.abs(item.value) < 1e-4 && item.value !== 0
           ? item.value.toExponential(3)
-          : item.value.toFixed(4)
+          : fx(item.value, 4)
         : escapeHtml(String(item.value));
       return `<li><span class="trace-label">${escapeHtml(item.label)}</span>` +
         `<b>${value}</b><span class="trace-unit">${escapeHtml(item.unit || "")}</span></li>`;

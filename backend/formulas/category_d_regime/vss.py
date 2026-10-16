@@ -109,14 +109,16 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     surprise = (sigma_real - sigma_exp) / (sigma_exp + EPS)
     drift = float(np.mean(long))
     t_stat = abs(drift) * float(np.sqrt(long.size)) / (sigma_exp + EPS)
-    direction = float(np.sign(drift)) if t_stat >= MIN_T_STAT else 0.0
+    # Round BH: soft direction - sign(drift) x t²/(t²+T²) - a weak drift gives a
+    # small signed value instead of a dead zero (½ strength at the old threshold)
+    direction = float(np.sign(drift)) * (t_stat * t_stat / (t_stat * t_stat + MIN_T_STAT * MIN_T_STAT))
 
     trace(ctx, "realised vol (window)", sigma_real, "per tick")
     trace(ctx, "baseline vol (5 windows)", sigma_exp, "per tick")
     trace(ctx, "vol surprise", surprise, "sigma_short / sigma_long - 1")
     trace(ctx, "drift (baseline window)", drift, "mean log return per tick")
     trace(ctx, "drift t-statistic", t_stat, "|mean| / (sigma / sqrt(n))")
-    trace(ctx, "direction used", direction, "+1 / 0 / -1")
+    trace(ctx, "direction used", direction, "sign(drift) x t²/(t²+T²), -1..1")
 
     if direction == 0.0:
         return 0.0

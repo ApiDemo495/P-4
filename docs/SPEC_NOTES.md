@@ -2385,3 +2385,29 @@ tracked file is referenced; nothing was deleted on a hunch.
   from the repo) - README says how. Also check the GHCR package is pullable
   (public or repo-linked); a failed pull drops into the recovery container
   and provisions from scratch.
+
+### BH — No dead zeros anywhere
+
+* Every hard gate that used to return exactly `0.0` became a continuous one,
+  so a weak reading prints as a small signed number with its reason instead
+  of `0.00`: physics mechanisms (Hawkes/kinetic/entropy/diffusion/temperature
+  drag/VPIN/O-U/pendulum — `soft_gate`/`sign_of` in `physics/constants.py`),
+  RSV/VSS direction, HRDD noise gate and warm-up (mean of the first betas),
+  PRT shrinkage `ρ²n/(ρ²n+1)`, TWRS logistic significance gate, VSD soft
+  materiality gate with aggressor-flow fallback sign, DRG seeded from the
+  warm-start replay, Genesis out-of-regime damping ×0.2 and vote-weight
+  floor 0.02, PAM/PPL1 dopamine via softplus with a 2 % tonic floor,
+  logistic ramps in emotions / deep_micro / dopamine (hot-hand, tilt,
+  manipulation components), soft `flat_share` and stop-hunt proximity.
+* Non-directional brain inputs (HSI via the octopamine node, ERC as regime
+  context) are reported as `modulators` with their real values instead of
+  `0.000` projection neurons.
+* Display: `backend/core/numfmt.py` (`fx`/`fxs`) and `fx()` in `app.js`
+  print with adaptive precision — a value that would round to 0.00 shows its
+  first significant digit (up to 6 decimals, then exponent form). Counters
+  (streaks, passes), explicit "no band" entries and inactive mechanisms keep
+  their honest zeros and say why.
+* Win rate: 47 % over 32 scored windows has a 95 % interval of roughly
+  ±17 pp — statistically a coin flip, neither evidence of edge nor of its
+  absence. 77 % on a 70 s BTC sign is not a target any honest pipeline can
+  promise; `/api/horizons` reports the best *measured* lane instead.

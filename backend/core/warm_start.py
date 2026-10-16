@@ -96,6 +96,9 @@ class WarmStartReport:
     # per-source forward hit rates in the replay (not decayed)
     sources: dict = field(default_factory=dict)
     replayed_sources: list = field(default_factory=list)
+    # Round BH: the last replayed (outcome, pnl_bps) rows, so DRG and the
+    # dopamine stage start from measured history instead of a dead 0.00
+    drg_seed: list = field(default_factory=list)
     not_replayed: list = field(default_factory=lambda: ["agents (Gemini / GitHub / local)", "news (NIV, themes)",
                                                          "crowd emotions", "physics", "genesis", "order book (L2) formulas"])
 
@@ -327,6 +330,7 @@ def replay(asset: str, bars: np.ndarray, hedge_bars: np.ndarray | None, ledger, 
                           "verdict": _verdict(float(np.mean(v)), len(v))}
                    for name, v in hits.items() if len(v) >= 10}
     rep.replayed_sources = sorted(hits)
+    rep.drg_seed = [[float(a), float(b)] for a, b in drg_hist[-20:].tolist()]
     rep.phase = "done"
     return rep
 

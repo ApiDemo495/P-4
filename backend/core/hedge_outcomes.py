@@ -26,6 +26,8 @@ written out instead of hidden.
 """
 from __future__ import annotations
 
+from backend.core.numfmt import fx, fxs
+
 import math
 
 import numpy as np
@@ -175,7 +177,7 @@ def build(snapshot, formulas: dict, side: str, confidence: float, asset: str = "
 
     hedge = abs(beta_b_on_p) if abs(beta_b_on_p) < 5 else 5.0
     action("outright BTC", b_leg, 0.0, f"{'long' if b_leg > 0 else 'short'} BTC, no hedge")
-    action("BTC hedged with PAXG at β", b_leg, -b_leg * beta_p_on_b, f"PAXG leg sized β = {beta_p_on_b:+.3f} per $1 of BTC")
+    action("BTC hedged with PAXG at β", b_leg, -b_leg * beta_p_on_b, f"PAXG leg sized β = {fxs(beta_p_on_b, 3)} per $1 of BTC")
     action("pair-neutral BTC vs PAXG", b_leg, -b_leg, "equal dollars, opposite sides")
     action("outright PAXG", 0.0, -b_leg, f"{'long' if -b_leg > 0 else 'short'} PAXG alone (the mirror leg)")
     best = max(actions, key=lambda a: a["ratio"])
@@ -203,20 +205,20 @@ def build(snapshot, formulas: dict, side: str, confidence: float, asset: str = "
     spread = np.log(bp[okp] / pp[okp]) if okp.sum() >= 5 else np.zeros(0)
     spread_z = float((spread[-1] - spread.mean()) / spread.std()) if spread.size >= 5 and spread.std() > 0 else 0.0
     logic = [
-        f"{basis}; σ_BTC({horizon_s:.0f} s) = {s_b * 1e4:.1f} bp, σ_PAXG = {s_p * 1e4:.1f} bp, ρ = {rho:+.3f}",
-        f"β(BTC on PAXG) = ρ·σ_B/σ_P = {beta_b_on_p:+.3f}; β(PAXG on BTC) = {beta_p_on_b:+.3f}; hedging removes ρ² = {rho * rho:.0%} of variance",
-        f"lock {side} {asset}, conviction {float(confidence):.0%} ⇒ P(side) = ½ + 0.45·conviction = {p_side:.0%} ⇒ μ_{asset} = Φ⁻¹({p_side:.2f})·σ = {(mu_b if asset.upper() == 'BTC' else mu_p) * 1e4:+.1f} bp; "
-        f"other leg = β·μ + ¼·rotation(SHRP {shrp:+.2f})·σ",
+        f"{basis}; σ_BTC({horizon_s:.0f} s) = {s_b * 1e4:.1f} bp, σ_PAXG = {s_p * 1e4:.1f} bp, ρ = {fxs(rho, 3)}",
+        f"β(BTC on PAXG) = ρ·σ_B/σ_P = {fxs(beta_b_on_p, 3)}; β(PAXG on BTC) = {fxs(beta_p_on_b, 3)}; hedging removes ρ² = {rho * rho:.0%} of variance",
+        f"lock {side} {asset}, conviction {float(confidence):.0%} ⇒ P(side) = ½ + 0.45·conviction = {p_side:.0%} ⇒ μ_{asset} = Φ⁻¹({fx(p_side, 2)})·σ = {(mu_b if asset.upper() == 'BTC' else mu_p) * 1e4:+.1f} bp; "
+        f"other leg = β·μ + ¼·rotation(SHRP {fxs(shrp, 2)})·σ",
         f"P(BTC↑,PAXG↑) = {joint['btc_up_paxg_up']:.0%}, P(BTC↑,PAXG↓) = {joint['btc_up_paxg_down']:.0%}, "
         f"P(BTC↓,PAXG↑) = {joint['btc_down_paxg_up']:.0%}, P(BTC↓,PAXG↓) = {joint['btc_down_paxg_down']:.0%} (bivariate normal, Drezner quadrature)",
-        f"best action by μ/σ: {best['action']} ({best['expected_bps']:+.2f} bp ± {best['sigma_bps']:.2f}, P(profit) {best['p_profit']:.0%})",
+        f"best action by μ/σ: {best['action']} ({fxs(best['expected_bps'], 2)} bp ± {fx(best['sigma_bps'], 2)}, P(profit) {best['p_profit']:.0%})",
         f"regime: {regime['label']} - {regime['detail']}",
     ]
     base.update({
         "valid": True, "window_seconds": window, "samples": n,
         "sigma_btc_bps": round(s_b * 1e4, 2), "sigma_paxg_bps": round(s_p * 1e4, 2), "rho": round(rho, 4),
         "beta_btc_on_paxg": round(beta_b_on_p, 4), "beta_paxg_on_btc": round(beta_p_on_b, 4),
-        "variance_reduction": round(rho * rho, 4), "hedge_ratio": round(hedge, 4),
+        "variance_reduction": round(rho * rho, 6), "hedge_ratio": round(hedge, 6),
         "mu_btc_bps": round(mu_b * 1e4, 2), "mu_paxg_bps": round(mu_p * 1e4, 2),
         "joint": {k: round(v, 4) for k, v in joint.items()},
         "actions": actions, "best": best, "scenarios": scenarios,
@@ -230,15 +232,15 @@ def build(snapshot, formulas: dict, side: str, confidence: float, asset: str = "
 
 def _regime(hsi: float, hrdd: float, gcdv: float, rot: float) -> dict:
     if hsi > 0.8:
-        label, detail = "hedge breaking", f"HSI {hsi:.2f} > 0.80: the pair moves as one risk asset - PAXG is not a hedge right now"
+        label, detail = "hedge breaking", f"HSI {fx(hsi, 2)} > 0.80: the pair moves as one risk asset - PAXG is not a hedge right now"
     elif hsi > 0.5:
-        label, detail = "hedge weakening", f"HSI {hsi:.2f}: correlation rising, hedge only partly effective"
+        label, detail = "hedge weakening", f"HSI {fx(hsi, 2)}: correlation rising, hedge only partly effective"
     elif abs(hrdd) > 0.5:
-        label, detail = "hedge ratio drifting", f"HRDD {hrdd:+.2f}: β has moved from its hour baseline - re-size the hedge"
+        label, detail = "hedge ratio drifting", f"HRDD {fxs(hrdd, 2)}: β has moved from its hour baseline - re-size the hedge"
     elif abs(gcdv) > 0.5:
-        label, detail = "paths diverging", f"GCDV {gcdv:+.2f}: the two legs are separating fast - pair trade, not hedge"
+        label, detail = "paths diverging", f"GCDV {fxs(gcdv, 2)}: the two legs are separating fast - pair trade, not hedge"
     else:
-        label, detail = "hedge working", f"HSI {hsi:.2f}, HRDD {hrdd:+.2f}, GCDV {gcdv:+.2f}: PAXG offsets BTC as expected"
+        label, detail = "hedge working", f"HSI {fx(hsi, 2)}, HRDD {fxs(hrdd, 2)}, GCDV {fxs(gcdv, 2)}: PAXG offsets BTC as expected"
     rotation = ("flow rotating into PAXG" if rot > 0.15 else "flow rotating into BTC" if rot < -0.15 else "no rotation")
     return {"label": label, "detail": detail, "rotation": rotation, "hsi": round(hsi, 4), "hrdd": round(hrdd, 4),
             "gcdv": round(gcdv, 4), "rotation_value": round(rot, 4)}

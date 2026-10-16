@@ -326,7 +326,7 @@ class GenesisEngine:
         by_domain: dict[int, list] = defaultdict(list)
         rows = []
         for f, s, r in readings:
-            w = max(0.0, f.fitness - 0.30)
+            w = max(0.02, f.fitness - 0.30)       # Round BH: a floor weight - every gated formula is heard
             if s != 0.0:
                 w_sum += w
                 v_sum += w * s

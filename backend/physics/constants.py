@@ -12,6 +12,23 @@ import math
 K_B = 1.380649e-23          # J/K   Boltzmann constant (2019 SI, exact)
 LN2 = math.log(2.0)
 
+# ------------------------------------------------------- soft gates (Round BH)
+def soft_gate(x: float, threshold: float) -> float:
+    """Continuous replacement for ``1 if |x| >= threshold else 0``:
+    ``x² / (x² + θ²)`` - ½ at the threshold, → 1 above it, → 0 below it but
+    never exactly 0 while x ≠ 0.  A mechanism below its threshold now says
+    "weak" with a small edge instead of a dead 0.00 (the user's report:
+    half the app read 0.00; an honest small number carries information, a
+    hard zero carries none)."""
+    x = abs(float(x))
+    th = max(1e-12, abs(float(threshold)))
+    return x * x / (x * x + th * th)
+
+
+def sign_of(x: float) -> int:
+    return 1 if x > 0 else -1 if x < 0 else 0
+
+
 # ------------------------------------------------ microstructure (Section 8)
 VPIN_BUCKETS = 50
 VPIN_CRIT = 0.40

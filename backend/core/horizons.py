@@ -29,6 +29,8 @@ P(side) · (1 − P(tie)) with P(side) = ½ + 0.45·|score|.
 
 from __future__ import annotations
 
+from backend.core.numfmt import fx, fxs
+
 import math
 import time
 from dataclasses import dataclass, field
@@ -178,13 +180,13 @@ class HorizonBook:
             p_side = 0.5 + 0.45 * conf
             p_win = p_side * (1.0 - st["p_tie"])
             logic = [
-                f"locked contest pick {lock_side} at {abs(lock):.0%} (weight {W_LOCK:.2f})",
-                (f"WDR@{h}s: t = {st['t']:+.2f} over {st['n']} overlapping windows -> drift {st['drift']:+.3f} (weight {W_DRIFT:.2f})"
+                f"locked contest pick {lock_side} at {abs(lock):.0%} (weight {fx(W_LOCK, 2)})",
+                (f"WDR@{h}s: t = {fxs(st['t'], 2)} over {st['n']} overlapping windows -> drift {fxs(st['drift'], 3)} (weight {fx(W_DRIFT, 2)})"
                  if st["covered"] else f"tape shorter than 2 x {h}s - horizon maths abstains, the lock carries"),
-                (f"PRT@{h}s: rho1 = {st['rho']:+.2f}, last {h}s return {st['last_bps']:+.1f} bp -> persistence {st['persistence']:+.3f} (weight {W_PERSIST:.2f})"
+                (f"PRT@{h}s: rho1 = {fxs(st['rho'], 2)}, last {h}s return {st['last_bps']:+.1f} bp -> persistence {fxs(st['persistence'], 3)} (weight {fx(W_PERSIST, 2)})"
                  if st["covered"] else ""),
                 f"PIN@{h}s: P(tie) = {st['p_tie']:.1%}, sigma_{h}s = {st['sigma_bps']:.1f} bp",
-                (f"score {score:+.3f} -> {side}; P(win) = ({p_side:.0%} side) x (1 - {st['p_tie']:.0%} tie) = {p_win:.0%}"
+                (f"score {fxs(score, 3)} -> {side}; P(win) = ({p_side:.0%} side) x (1 - {st['p_tie']:.0%} tie) = {p_win:.0%}"
                  if h != self.contest_horizon else
                  f"the contest horizon: the pick IS the Signal Lock ({lock_side}); P(win) = {p_win:.0%}"),
             ]

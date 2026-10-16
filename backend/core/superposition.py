@@ -30,6 +30,8 @@ measured value with coherence 0 - it is never invented.
 """
 from __future__ import annotations
 
+from backend.core.numfmt import fx, fxs
+
 import math
 from collections import deque
 from dataclasses import dataclass
@@ -63,11 +65,11 @@ class FutureState:
             "phi": round(self.phi, 3), "p_up": round(self.p_up, 4), "p_down": round(self.p_down, 4),
             "p_tie": round(self.p_tie, 4), "n": round(self.n, 1), "collapsed": round(self.collapsed, 4),
             "coherence": round(self.coherence, 4), "context": self.context, "covered": self.covered,
-            "reads": (f"measured {self.measured:+.3f} → projected {self.projected:+.3f} at the boundary · "
+            "reads": (f"measured {fxs(self.measured, 3)} → projected {fxs(self.projected, 3)} at the boundary · "
                       f"next window |up⟩ {self.p_up:.0%} |down⟩ {self.p_down:.0%} |tie⟩ {self.p_tie:.0%} "
-                      f"(n {self.n:.0f}, {self.context}) → collapses to {self.collapsed:+.3f}, coherence {self.coherence:.2f}"
+                      f"(n {self.n:.0f}, {self.context}) → collapses to {fxs(self.collapsed, 3)}, coherence {fx(self.coherence, 2)}"
                       if self.covered else
-                      f"measured {self.measured:+.3f} → projected {self.projected:+.3f} · no forward record for this reading yet"),
+                      f"measured {fxs(self.measured, 3)} → projected {fxs(self.projected, 3)} · no forward record for this reading yet"),
         }
 
 

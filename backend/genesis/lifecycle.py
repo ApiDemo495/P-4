@@ -167,5 +167,8 @@ def gated_signal(f: Formula, value: float, regime: str) -> float:
     """Apply an autopsy-derived regime gate to a live reading."""
     allowed = f.spec.gates.get("regimes")
     if allowed and regime not in allowed:
-        return 0.0
+        # Round BH: out of its regime the formula is damped to a fifth, not
+        # silenced - a dead 0.0000 told the vote nothing, a small reading
+        # still says which way the formula leans
+        return 0.2 * value
     return value

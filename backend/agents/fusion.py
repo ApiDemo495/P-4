@@ -24,6 +24,8 @@ Two v2.0 additions:
 
 from __future__ import annotations
 
+from backend.core.numfmt import fx, fxs
+
 import logging
 from dataclasses import dataclass, field
 
@@ -313,7 +315,7 @@ def fuse(
             "weight": news_weight,
             "status": "LIVE",
             "weighted_value": round(news_weight * n_value, 4),
-            "source": "news impact: " + "; ".join(f"{d['theme']} ({d['impact']:+.2f})" for d in top[:2]),
+            "source": "news impact: " + "; ".join(f"{d['theme']} ({fxs(d['impact'])})" for d in top[:2]),
             "drivers": top[:3],
         }
 
@@ -384,10 +386,10 @@ def fuse(
         alignment = side_value * float(formula_consensus)
         if alignment >= 0:
             confirmation = 0.90 + 0.10 * min(1.0, alignment)
-            consensus_note = f"formulas agree ({formula_consensus:+.2f})"
+            consensus_note = f"formulas agree ({fxs(formula_consensus)})"
         else:
             confirmation = 1.0 - 0.35 * min(1.0, abs(alignment))
-            consensus_note = f"formulas disagree ({formula_consensus:+.2f})"
+            consensus_note = f"formulas disagree ({fxs(formula_consensus)})"
     raw_confidence *= confirmation
 
     # --- realised-form calibration --------------------------------------
@@ -421,7 +423,7 @@ def fuse(
         kind = (crowd.get("manipulation") or {}).get("kind") or "crowding"
         crowd_note = (
             f"{dominant.lower()} tape ({manipulation:.0%} {kind}) - "
-            f"confidence x{crowd_adjustment:.2f}"
+            f"confidence x{fx(crowd_adjustment)}"
         )
     raw_confidence *= crowd_adjustment
 
@@ -468,7 +470,7 @@ def fuse(
             f"prediction history weighs {lam:.0%} of this call ({scored} of {min_samples} windows scored): "
             f"P({learned['side']}) {p_side:.0%}"
             + (f", realised {float(realised):.0%} at this confidence" if realised is not None else "")
-            + (f"; it overrides the spec recipe ({spec_score:+.2f})" if flipped else "")
+            + (f"; it overrides the spec recipe ({fxs(spec_score)})" if flipped else "")
             + (f"; most reliable: {top}" if top else "")
         )
 
@@ -586,29 +588,29 @@ def _explain(
 
     if hsi_adjustment < 1.0:
         parts.append(
-            f"HSI={hsi:.2f} above the {settings.hsi_dampen_threshold:.2f} stress threshold - "
-            f"confidence multiplied by {hsi_adjustment:.2f}"
+            f"HSI={fx(hsi)} above the {fx(settings.hsi_dampen_threshold)} stress threshold - "
+            f"confidence multiplied by {fx(hsi_adjustment)}"
         )
     else:
-        parts.append(f"Hedge stress low (HSI={hsi:.2f})")
+        parts.append(f"Hedge stress low (HSI={fx(hsi)})")
 
-    parts.append(f"brain CCSv2={ccs_value:+.2f} at {ccs_confidence:.0%} confidence")
+    parts.append(f"brain CCSv2={fxs(ccs_value)} at {ccs_confidence:.0%} confidence")
     physics = contributions.get("physics")
     if physics:
         parts.append(
-            f"physics layer {physics['decision']} ({physics['value']:+.2f}, "
+            f"physics layer {physics['decision']} ({fxs(physics['value'])}, "
             f"Kelly BTC weight {float(physics.get('w_final') or 0.5):.0%})"
         )
     genesis = contributions.get("genesis")
     if genesis:
         parts.append(
-            f"genesis engine {genesis['decision']} ({genesis['value']:+.2f}, "
+            f"genesis engine {genesis['decision']} ({fxs(genesis['value'])}, "
             f"{float(genesis.get('agreement') or 0.0):.0%} of firing formulas agree, regime {genesis.get('regime')})"
         )
     news = contributions.get("news")
     if news:
         parts.append(
-            f"news impact {news['decision']} ({news['value']:+.2f} on this asset: "
+            f"news impact {news['decision']} ({fxs(news['value'])} on this asset: "
             + "; ".join(f"{d['theme']}" for d in (news.get("drivers") or [])[:2]) + ")"
         )
     if consensus_note:

@@ -46,6 +46,8 @@ not just the verdict.
 """
 from __future__ import annotations
 
+from backend.core.numfmt import fx, fxs
+
 import math
 from typing import Any
 
@@ -334,13 +336,13 @@ def _read(tda: dict, tak: dict, csd: dict, ent: dict, qi: dict) -> str:
         bits.append(f"book manifold {'tearing' if tda['tearing'] > 0.25 else 'intact'} "
                     f"({tda['cavities']} cavities, max persistence {tda['max_persistence']:.1f})")
     if tak.get("available"):
-        bits.append(f"attractor {'spiralling' if tak['lyapunov'] > 0.2 else 'stable'} (λ {tak['lyapunov']:+.2f}/s)")
+        bits.append(f"attractor {'spiralling' if tak['lyapunov'] > 0.2 else 'stable'} (λ {fxs(tak['lyapunov'], 2)}/s)")
     if csd.get("available"):
         bits.append(f"critical slowing {'rising' if csd['csd'] > 0.3 else 'absent'} "
-                    f"(a1 {csd['a1_now']:+.2f}, var×{csd['variance_ratio']:.2f})")
+                    f"(a1 {fxs(csd['a1_now'], 2)}, var×{fx(csd['variance_ratio'], 2)})")
     if ent.get("available"):
-        bits.append(f"heat {ent['heat_direction']} (σ {ent['sigma_raw']:+.3f})")
+        bits.append(f"heat {ent['heat_direction']} (σ {fxs(ent['sigma_raw'], 3)})")
     if qi.get("available"):
         bits.append(f"decision logic {'non-classical' if qi['polarisation'] > 0.3 else 'classical'} "
-                    f"(I {qi['interference']:+.3f})")
+                    f"(I {fxs(qi['interference'], 3)})")
     return "; ".join(bits) or "no geometry yet"

@@ -171,7 +171,7 @@ def test_quote_stuffing_needs_a_surge_with_no_price() -> None:
     flat = np.full(times.size, 100.0)
     assert D.quote_stuffing(times, flat, tick_rate_hz=10.0) > 0.9
     moving = flat + np.arange(times.size) * 0.001
-    assert D.quote_stuffing(times, moving, tick_rate_hz=10.0) == 0.0
+    assert D.quote_stuffing(times, moving, tick_rate_hz=10.0) <= 0.02   # Round BH floor, not a dead zero
 
 
 # ---------------------------------------------------------------------------
@@ -353,9 +353,10 @@ def test_formula_consensus_pulls_the_filter_toward_the_formulas_side():
     bull = D.analyze(tape, "BTC", f, formula_consensus=0.6, formula_voters=12)
     bear = D.analyze(tape, "BTC", f, formula_consensus=-0.6, formula_voters=12)
     silent = D.analyze(tape, "BTC", f, formula_consensus=0.9, formula_voters=2)
-    assert bull["evidence"]["formula_up"] == 1.0 and bull["evidence"]["formula_down"] == 0.0
-    assert bear["evidence"]["formula_down"] == 1.0
-    assert silent["evidence"]["formula_up"] == 0.0 and silent["evidence"]["formula_conviction"] == 0.0
+    # Round BH: logistic ramps - saturate near 1 / near 0, never dead values
+    assert bull["evidence"]["formula_up"] > 0.98 and bull["evidence"]["formula_down"] < 0.02
+    assert bear["evidence"]["formula_down"] > 0.98
+    assert silent["evidence"]["formula_up"] < 0.05 and silent["evidence"]["formula_conviction"] < 0.05
     ll_bull = bull["posterior"]["log_likelihood"]
     ll_bear = bear["posterior"]["log_likelihood"]
     assert ll_bull["HOPE"] > ll_bear["HOPE"] and ll_bull["EUPHORIA"] > ll_bear["EUPHORIA"]

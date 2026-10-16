@@ -28,6 +28,8 @@ The chain, once per window:
 
 from __future__ import annotations
 
+from backend.core.numfmt import fx, fxs
+
 from backend.brain import graph_convolution as gc
 from backend.formulas.engine import ALL_FORMULAS
 
@@ -178,19 +180,19 @@ def explain(manager) -> dict:
     if diag.get("connectome"):
         verdict = (
             f"Real mushroom body ({int(diag.get('neurons', 0)):,} neurons, {int(diag.get('connections', 0)):,} connections): "
-            f"approach MBONs {lh.get('approach', 0):+.3f} vs avoid MBONs {lh.get('avoid', 0):+.3f} → {lean}; "
-            f"{kcs.get('active', 0):,} of {kcs.get('of', 0):,} Kenyon cells fired (KCAE {trace.get('kcae', 0):.2f}) "
-            f"in {int(diag.get('elapsed_us', 0)) / 1000:.1f} ms → CCSv2 {trace.get('ccs', 0):+.3f}"
-            + (f"; whole brain ({whole.get('balance', 0):+.3f}, {whole.get('elapsed_us', 0) / 1000:.0f} ms) blended → {whole.get('ccs_blended', 0):+.3f}"
+            f"approach MBONs {fxs(lh.get('approach', 0), 3)} vs avoid MBONs {fxs(lh.get('avoid', 0), 3)} → {lean}; "
+            f"{kcs.get('active', 0):,} of {kcs.get('of', 0):,} Kenyon cells fired (KCAE {fx(trace.get('kcae', 0), 2)}) "
+            f"in {int(diag.get('elapsed_us', 0)) / 1000:.1f} ms → CCSv2 {fxs(trace.get('ccs', 0), 3)}"
+            + (f"; whole brain ({fxs(whole.get('balance', 0), 3)}, {whole.get('elapsed_us', 0) / 1000:.0f} ms) blended → {fxs(whole.get('ccs_blended', 0), 3)}"
                if whole else "")
             + f" at {trace.get('confidence', 0) * 100:.0f}% confidence."
         )
     else:
         verdict = (
-            f"LH approach {lh.get('approach', 0):+.3f} vs avoid {lh.get('avoid', 0):+.3f} "
+            f"LH approach {fxs(lh.get('approach', 0), 3)} vs avoid {fxs(lh.get('avoid', 0), 3)} "
             f"→ {lean}; the sparse KC code was {kcs.get('active', 0)}/{kcs.get('of', 50)} "
-            f"clusters (KCAE {trace.get('kcae', 0):.2f}) → CCSv2 "
-            f"{trace.get('ccs', 0):+.3f} at {trace.get('confidence', 0) * 100:.0f}% confidence (80x80 fallback)."
+            f"clusters (KCAE {fx(trace.get('kcae', 0), 2)}) → CCSv2 "
+            f"{fxs(trace.get('ccs', 0), 3)} at {trace.get('confidence', 0) * 100:.0f}% confidence (80x80 fallback)."
         )
 
     status = manager.brain.status_dict()
@@ -206,7 +208,13 @@ def explain(manager) -> dict:
         "ccs_confidence": round(float(values.get("KCAE", 0.0)), 4),
         "stage": trace,
         "dominant_inputs": dominant,
-        "all_inputs": trace.get("pn") or {},
+        # Round BH: non-directional formulas are routed, not zeroed - HSI
+        # drives the octopamine node, ERC is regime context for the fusion
+        "all_inputs": {k: v for k, v in (trace.get("pn") or {}).items() if k not in ("HSI", "ERC")},
+        "modulators": {
+            "HSI": {"value": round(float(values.get("HSI", 0.0)), 4), "route": "octopamine node OA (arousal gain), not a projection neuron"},
+            "ERC": {"value": round(float(values.get("ERC", 0.0)), 4), "route": "regime context in the fusion, not a projection neuron"},
+        },
         "kenyon_cells": kcs,
         "mbons": mbons,
         "lateral_horn": lh,

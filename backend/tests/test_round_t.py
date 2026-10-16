@@ -54,7 +54,8 @@ def test_vpin_and_ou_read_the_tape():
     assert 0.0 <= v["value"] <= 1.0 and v["buckets"] == 50
     ou = micro.ornstein_uhlenbeck(bull)
     assert ou["kappa_per_min"] > 0 and ou["samples"] >= 30
-    assert (ou["direction"] != 0) == ou["execute"]
+    # Round BH: direction is always a side (soft gates); execute still needs the edge
+    assert ou["direction"] != 0 and (not ou["execute"] or ou["edge_bps"] > 0 if "edge_bps" in ou else True)
     pend = micro.pendulum(bull)
     assert 0.0 <= pend["value"] <= 1.0
     spread = micro.avellaneda_stoikov(bull, 60.0)

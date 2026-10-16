@@ -58,7 +58,9 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     if not np.isfinite(rho):
         rho = 0.0
     n = rets.size
-    shrink = max(0.0, 1.0 - 1.0 / np.sqrt(n) / max(abs(rho), EPS)) if rho != 0 else 0.0
+    # Round BH: soft shrinkage ρ²n / (ρ²n + 1) - a weak ρ₁ shrinks towards
+    # zero continuously instead of being cut to a dead 0.00
+    shrink = (rho * rho * n) / (rho * rho * n + 1.0)
     rho_shrunk = rho * shrink
     last = float(rets[-1])
     strength = min(1.0, abs(last) / sd)
@@ -66,7 +68,7 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     state.last = value
     trace(ctx, "consecutive windows", n, f"non-overlapping {horizon:.0f} s windows")
     trace(ctx, "lag-1 autocorrelation", rho, "ρ₁ of window returns")
-    trace(ctx, "shrunk ρ₁", rho_shrunk, "ρ₁ × max(0, 1 − 1/(√n·|ρ₁|))")
+    trace(ctx, "shrunk ρ₁", rho_shrunk, "ρ₁ × ρ₁²n / (ρ₁²n + 1)")
     trace(ctx, "last window", last * 1e4, "bps")
     trace(ctx, "last window strength", np.sign(last) * strength, "sign × min(1, |last| / σ)")
     return finite(float(value))

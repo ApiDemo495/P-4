@@ -800,6 +800,7 @@ class CycleManager:
 
     async def _prefetch(self, publish_deadline_wall: float) -> None:
         """Compute the signal for the next window - during this one."""
+        self._seed_outcomes_from_replay()
         started = time.perf_counter()
         snapshot = self.market.freeze(
             news_items=self.news.cache.latest(30),
@@ -2991,6 +2992,21 @@ class CycleManager:
         except Exception:  # noqa: BLE001
             pass
         return 0
+
+    def _seed_outcomes_from_replay(self) -> None:
+        """Round BH: until the first live window settles, DRG (and the PAM/PPL1
+        dopamine stage that reads it) ran on an empty outcome buffer and read
+        0.00.  The warm start replays the last 24 h of real tape under the
+        same rule, so its last 20 (outcome, pnl) rows seed the buffer once."""
+        if getattr(self, "_drg_seeded", False) or len(self.outcomes) > 0:
+            return
+        seed = list(getattr(self.warm_starter.report, "drg_seed", []) or [])
+        if not seed:
+            return
+        for outcome, pnl in seed:
+            self.outcomes.append(float(outcome), float(pnl))
+        self._drg_seeded = True
+        log.info("DRG seeded with %d replayed outcomes from the warm start", len(seed))
 
     def _maybe_warm_start(self) -> None:
         """Round BA: replay the last hours of real tape unless this very

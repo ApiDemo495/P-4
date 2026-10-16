@@ -96,10 +96,14 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
 
     baseline = state.beta_baseline.value
     if not state.beta_baseline.ready:
-        # Warm the baseline before allowing a drift score to be produced.
-        state.beta_baseline.update(beta_w)
-        state.beta_history.append(beta_w)
-        return 0.0
+        # Round BH: while the EMA baseline warms, the mean of the betas seen so
+        # far stands in for it (after two observations) - the formula used to
+        # read a dead 0.000 for the whole warm-up.
+        if len(state.beta_history) < 2:
+            state.beta_baseline.update(beta_w)
+            state.beta_history.append(beta_w)
+            return 0.0
+        baseline = float(np.mean(state.beta_history))
 
     # Scale by the *prior* dispersion of beta so the current observation does
     # not shrink its own z-score.
@@ -126,14 +130,15 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     d_beta = beta_w - baseline
     scale = max(hist_std, se_beta, 1e-6)
     snr = abs(d_beta) / (se_beta + EPS)
-    gate = float(np.clip((snr - 1.0) / max(1e-6, NOISE_SIGMA - 1.0), 0.0, 1.0))
+    # Round BH: soft gate snr²/(snr²+σ²) - ½ at NOISE_SIGMA, never a dead 0.000
+    gate = float(snr * snr / (snr * snr + NOISE_SIGMA * NOISE_SIGMA))
     score = tanh(d_beta / (scale + EPS)) * gate
     trace(ctx, "beta this window", beta_w, "PAXG on BTC OLS slope")
     trace(ctx, "beta baseline", baseline, "running mean")
     trace(ctx, "beta deviation", d_beta, "window - baseline")
     trace(ctx, "scale used", scale, "max(history sigma, estimator SE)")
     trace(ctx, "signal-to-noise", snr, "|deviation| / estimator SE")
-    trace(ctx, "noise gate", gate, "0 at 1 sigma, 1 at 3 sigma")
+    trace(ctx, "noise gate", gate, "snr²/(snr²+σ_noise²), ½ at the noise sigma")
 
     state.beta_baseline.update(beta_w)
     state.beta_history.append(beta_w)

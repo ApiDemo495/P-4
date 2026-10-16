@@ -8,6 +8,8 @@ edge estimate in basis points.
 """
 from __future__ import annotations
 
+from backend.core.numfmt import fx, fxs
+
 import math
 
 import numpy as np
@@ -15,6 +17,7 @@ import numpy as np
 from backend.core import config as cfg
 
 from backend.physics import constants as K
+from backend.physics.constants import sign_of, soft_gate
 
 
 def _ratio_series(snapshot, max_points: int = 600) -> tuple[np.ndarray, np.ndarray]:
@@ -59,15 +62,17 @@ def vpin(snapshot) -> dict:
     v = float(np.abs(buys - sells).sum() / max(1e-12, (buys + sells).sum()))
     imbalance = float((buys.sum() - sells.sum()) / total)
     toxic = v > K.VPIN_CRIT
-    direction = int(np.sign(imbalance)) if toxic else 0
-    edge = (v - K.VPIN_CRIT) / (1.0 - K.VPIN_CRIT) * 8.0 if toxic else 0.0   # ≤ 8 bp momentum impulse
+    direction = sign_of(imbalance)
+    # Round BH: ≤ 8 bp impulse scaled by a soft toxicity gate - below VPIN_CRIT
+    # the flow still leans a side, weakly, instead of reading 0.00
+    edge = 8.0 * v * soft_gate(v, K.VPIN_CRIT) * min(1.0, abs(imbalance) * 4.0) if direction else 0.0
     return {
         "key": "vpin", "section": "8.1", "name": "VPIN flow toxicity",
         "value": v, "direction": direction, "edge_bps": edge, "imbalance": imbalance, "active": True,
         "buckets": K.VPIN_BUCKETS, "bucket_volume": bucket, "toxic": toxic, "source": "tape",
-        "logic": (f"{K.VPIN_BUCKETS} equal-volume buckets of {bucket:.4f}; VPIN = Σ|V_buy−V_sell| / ΣV = {v:.3f} "
+        "logic": (f"{K.VPIN_BUCKETS} equal-volume buckets of {bucket:.4f}; VPIN = Σ|V_buy−V_sell| / ΣV = {fx(v, 3)} "
                   f"{'>' if toxic else '≤'} {K.VPIN_CRIT} ⇒ {'toxic: follow dominant flow' if toxic else 'balanced: mean reversion regime'}; "
-                  f"net flow {imbalance:+.3f}"),
+                  f"net flow {fxs(imbalance, 3)}"),
     }
 
 
@@ -95,7 +100,7 @@ def fragmentation(snapshot, venues: dict, pools: list[dict]) -> dict:
         return {"key": "fragmentation", "section": "8.2", "name": "Multi-venue fragmentation", "value": 0.0,
                 "direction": 0, "edge_bps": 0.0, "venues": len(quotes), "source": "tape (one venue visible)", "active": False,
                 "logic": f"inactive: only {len(quotes)} venue visible (needs 2+ live venue quotes); "
-                         f"own spread {spread / max(mid, 1e-9) * 1e4:.2f} bp; α_frag undefined"}
+                         f"own spread {fx(spread / max(mid, 1e-9) * 1e4, 2)} bp; α_frag undefined"}
     bids = {k: v[0] for k, v in quotes.items()}
     asks = {k: v[1] for k, v in quotes.items()}
     composite = max(asks.values()) - min(bids.values())
@@ -111,9 +116,9 @@ def fragmentation(snapshot, venues: dict, pools: list[dict]) -> dict:
         "composite_spread": composite, "mean_internal_spread": mean_internal,
         "best_bid_venue": max(bids, key=bids.get), "best_ask_venue": min(asks, key=asks.get),
         "venues": len(quotes), "source": "live" if len(quotes) > 1 else "tape", "active": True,
-        "logic": (f"{len(quotes)} venues; S_composite = max ask − min bid = {composite:.2f}; "
-                  f"mean S_k = {mean_internal:.2f}; α_frag = {alpha_bps:.2f} bp; "
-                  f"crossed by {cross_bps:+.2f} bp (buy {min(asks, key=asks.get)}, sell {max(bids, key=bids.get)})"),
+        "logic": (f"{len(quotes)} venues; S_composite = max ask − min bid = {fx(composite, 2)}; "
+                  f"mean S_k = {fx(mean_internal, 2)}; α_frag = {fx(alpha_bps, 2)} bp; "
+                  f"crossed by {fxs(cross_bps, 2)} bp (buy {min(asks, key=asks.get)}, sell {max(bids, key=bids.get)})"),
     }
 
 
@@ -160,11 +165,15 @@ def ornstein_uhlenbeck(snapshot) -> dict:
     expected_bps = abs(expected) / p0 * 1e4 if p0 > 0 else 0.0
     sigma60_bps = math.sqrt(var60) / p0 * 1e4 if (var60 > 0 and p0 > 0) else 0.0
     execute = sharpe > K.OU_MIN_SHARPE and tradeable and expected_bps > cost_bps
-    direction = int(np.sign(gap)) if execute else 0
-    edge_bps = min(expected_bps - cost_bps, max(1.0, sigma60_bps)) if execute else 0.0
+    direction = sign_of(gap)
+    # Round BH: the edge is continuous - Sharpe gate × cost gate × half-life
+    # gate - so a weak reversion reads as a small number, not 0.00
+    gate = (soft_gate(sharpe, K.OU_MIN_SHARPE) * soft_gate(expected_bps, cost_bps)
+            * (1.0 if tradeable else 0.25))
+    edge_bps = min(max(expected_bps, 0.05), max(1.0, sigma60_bps)) * gate if direction else 0.0
     why = ("execute" if execute else
            f"half-life {half_life_s:.0f} s outside 5-600 s" if not tradeable else
-           f"E[ΔP] {expected_bps:.2f} bp ≤ spread cost {cost_bps:.2f} bp" if expected_bps <= cost_bps else
+           f"E[ΔP] {fx(expected_bps, 2)} bp ≤ spread cost {fx(cost_bps, 2)} bp" if expected_bps <= cost_bps else
            "stand aside")
     return {
         **base, "value": gap / p0 if p0 > 0 else 0.0, "direction": direction, "edge_bps": edge_bps, "active": True,
@@ -172,9 +181,9 @@ def ornstein_uhlenbeck(snapshot) -> dict:
         "p0": p0, "p_bar": p_bar, "kappa_per_min": kappa_s * 60.0, "sigma_per_s": sigma_s,
         "expected_move": expected, "sharpe": sharpe, "execute": execute, "samples": int(p.size),
         "logic": (f"dP = κ(P̄−P)dt + σdW on {p.size} prints; P̄ (VWAP-300 s) = {p_bar:.4f}, P₀ = {p0:.4f}; "
-                  f"κ = −ln φ/Δt = {kappa_s * 60:.3f}/min, σ = {sigma_s:.5f}/√s; "
-                  f"half-life {half_life_s:.0f} s; E[ΔP_W] = (P̄−P₀)(1−e^(−{W:g}κ)) = {expected:+.5f} = {expected_bps:.2f} bp vs cost {cost_bps:.2f} bp; "
-                  f"SR₆₀ = {sharpe:.2f} {'>' if sharpe > K.OU_MIN_SHARPE else '≤'} {K.OU_MIN_SHARPE} ⇒ {why}"),
+                  f"κ = −ln φ/Δt = {fx(kappa_s * 60, 3)}/min, σ = {sigma_s:.5f}/√s; "
+                  f"half-life {half_life_s:.0f} s; E[ΔP_W] = (P̄−P₀)(1−e^(−{W:g}κ)) = {expected:+.5f} = {fx(expected_bps, 2)} bp vs cost {fx(cost_bps, 2)} bp; "
+                  f"SR₆₀ = {fx(sharpe, 2)} {'>' if sharpe > K.OU_MIN_SHARPE else '≤'} {K.OU_MIN_SHARPE} ⇒ {why}"),
     }
 
 
@@ -224,14 +233,15 @@ def pendulum(snapshot) -> dict:
         yy += vv
     rei_now, rei_next = 0.5 + y0, max(0.0, min(1.0, 0.5 + yy))
     delta = rei_next - rei_now
-    direction = int(np.sign(delta)) if abs(delta) > 0.01 else 0
+    direction = sign_of(delta)
     return {
-        **base, "value": rei_now, "direction": direction, "edge_bps": min(6.0, abs(delta) * 100.0), "active": True,
+        **base, "value": rei_now, "direction": direction,
+        "edge_bps": min(6.0, abs(delta) * 100.0) * soft_gate(delta, 0.01), "active": True,   # Round BH: soft gate
         "rei_next": rei_next, "omega0": math.sqrt(omega0_sq), "beta": beta, "fitted": fitted,
         "bins": int(rei.size),
-        "logic": (f"REI = V_BTC/(V_BTC+V_PAXG) over {rei.size} bins of {dt:.0f} s = {rei_now:.3f}; "
+        "logic": (f"REI = V_BTC/(V_BTC+V_PAXG) over {rei.size} bins of {dt:.0f} s = {fx(rei_now, 3)}; "
                   f"R̈EI + 2β·ṘEI + ω₀²(REI−½) = F, {'AR(2) fit' if fitted else 'prior'} ω₀ = {math.sqrt(omega0_sq):.5f} rad/s, β = {beta:.5f}; "
-                  f"REI(t+{cfg.window_seconds():g}) = {rei_next:.3f} ⇒ {'expansion: BTC' if direction > 0 else 'compression: PAXG' if direction < 0 else 'flat'}"),
+                  f"REI(t+{cfg.window_seconds():g}) = {fx(rei_next, 3)} ⇒ {'expansion: BTC' if direction > 0 else 'compression: PAXG' if direction < 0 else 'flat'}"),
     }
 
 
@@ -267,6 +277,6 @@ def avellaneda_stoikov(snapshot, seconds_left: float | None = None) -> dict:
         **base, "value": half_bps, "edge_bps": min(income_bps, 3.0), "active": True, "cost_bps": half_bps,
         "sigma_per_sqrt_s": sigma, "kappa_arrival": kappa_arrival, "gamma": gamma, "seconds_left": seconds_left,
         "logic": (f"δ = σ²(T−t)/2 + (1/γ)·ln(1+γ/κ) with σ = {sigma:.2e}/√s, T−t = {seconds_left:.0f} s, "
-                  f"γ = {gamma}, κ_book = 1/half-spread = {kappa_book:.0f}, arrivals {kappa_arrival:.2f}/s ⇒ half-spread {half_bps:.3f} bp; "
+                  f"γ = {gamma}, κ_book = 1/half-spread = {kappa_book:.0f}, arrivals {fx(kappa_arrival, 2)}/s ⇒ half-spread {fx(half_bps, 3)} bp; "
                   f"inventory flattened at t = 59 s so the quote carries no direction"),
     }

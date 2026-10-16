@@ -47,6 +47,8 @@ that shaped a signal cannot change afterwards.
 
 from __future__ import annotations
 
+from backend.core.numfmt import fx, fxs
+
 import math
 import time
 from dataclasses import dataclass, field
@@ -132,10 +134,19 @@ def _num(value: Any, fallback: float = 0.0) -> float:
 
 
 def _ramp(value: float, low: float, high: float) -> float:
-    """0 at ``low``, 1 at ``high``, linear between - the unit of every score."""
+    """≈0 at ``low``, ≈1 at ``high`` - the unit of every score.
+
+    Round BH: a logistic ramp (k = 8 over the low→high span: 0.018 at ``low``,
+    0.982 at ``high``, ½ at the midpoint) instead of a clipped line.  The hard
+    clip made every term below its ``low`` read exactly 0.00, and a crowd
+    emotion built from five such terms read 0.00 for whole windows; the
+    logistic keeps the ordering and the scale but a quiet tape now reads as a
+    small number that still moves."""
     if high <= low:
         return 0.0
-    return float(min(1.0, max(0.0, (value - low) / (high - low))))
+    x = (float(value) - low) / (high - low)
+    x = min(6.0, max(-6.0, 8.0 * (x - 0.5)))
+    return float(1.0 / (1.0 + math.exp(-x)))
 
 
 def _weighted(parts: list[tuple[float, float]]) -> float:
@@ -1143,7 +1154,9 @@ def _pin_statistics(times_ms: np.ndarray, prices: np.ndarray) -> dict[str, float
     idx_close = np.clip(idx_close, 0, prices.size - 1)
     moves = (prices[idx_close] - prices[idx_open]) / tick
     out["pin_windows"] = float(moves.size)
-    out["flat_share"] = float(np.mean(np.abs(moves) < 0.5)) if moves.size else 0.0
+    # Round BH: soft indicator exp(-(move/0.5 tick)²) - a tape whose windows all
+    # moved still reports how close they came to pinning instead of a dead 0.00
+    out["flat_share"] = float(np.mean(np.exp(-np.square(moves / 0.5)))) if moves.size else 0.0
     sigma = float(np.std(moves)) if moves.size > 1 else float(abs(moves[0])) if moves.size else 0.0
     out["window_sigma_ticks"] = sigma
     if sigma <= 1e-9:
@@ -1169,9 +1182,10 @@ def _stop_hunt(prices: np.ndarray, lookback: int = 90) -> float:
     if body.size < 5:
         return 0.0
     high, low = float(np.max(body)), float(np.min(body))
+    # Round BH: measure how close the tail came to the extreme (negative when
+    # it stayed inside) - the logistic ramp then reads "no hunt" as a small
+    # number that grows as price approaches the stops, never a dead 0.00
     overshoot = max(float(np.max(tail)) - high, low - float(np.min(tail)))
-    if overshoot <= 0:
-        return 0.0
     span = (high - low) or (abs(high) * 1e-4) or 1e-9
     return _ramp(overshoot / span, 0.25, 1.5)
 
@@ -1249,7 +1263,7 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
     pos = f.get("range_position", 0.5)
     top = _ramp(pos, 0.70, 0.98)
     bottom = 1.0 - _ramp(pos, 0.05, 0.35)
-    middle = max(0.0, 1.0 - abs(pos - 0.5) * 4.0)
+    middle = _ramp(1.0 - abs(pos - 0.5) * 4.0, 0.0, 1.0)      # Round BH: soft, never a dead 0
     drawdown_extreme = _ramp(f.get("z_drawdown", 0.0), 2.0, 5.0)
     run_up = _ramp(f.get("z_run_up", 0.0), 1.5, 4.0)
 
@@ -1424,8 +1438,8 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
 
     drivers = {
         "FEAR": [
-            f"sell aggression {f.get('aggression_5s', 0.0):+.2f}",
-            f"volatility x{f.get('vol_ratio', 1.0):.2f} its own baseline",
+            f"sell aggression {fxs(f.get('aggression_5s', 0.0), 2)}",
+            f"volatility x{fx(f.get('vol_ratio', 1.0), 2)} its own baseline",
             f"the 5 s move is {f.get('z_5s', 0.0):+.1f}x a typical one",
         ],
         "PANIC": [
@@ -1440,38 +1454,38 @@ def score_emotions(f: dict[str, float]) -> list[EmotionScore]:
         ],
         "DENIAL": [
             f"buys absorbing a {f.get('z_5s', 0.0):+.1f}x move",
-            f"news sentiment {f.get('news_sentiment', 0.0):+.2f}",
+            f"news sentiment {fxs(f.get('news_sentiment', 0.0), 2)}",
             f"range position {f.get('range_position', 0.5) * 100:.0f}%",
         ],
         "HOPE": [
             f"5 s move {f.get('z_5s', 0.0):+.1f}x typical, off the low",
-            f"buy aggression {f.get('aggression_5s', 0.0):+.2f}",
+            f"buy aggression {fxs(f.get('aggression_5s', 0.0), 2)}",
             f"still at {f.get('range_position', 0.5) * 100:.0f}% of the range",
         ],
         "EUPHORIA": [
             f"price at {f.get('range_position', 0.5) * 100:.0f}% of the range",
-            f"buy aggression {f.get('aggression_5s', 0.0):+.2f}",
-            f"volatility x{f.get('vol_ratio', 1.0):.2f} - a calm melt-up",
+            f"buy aggression {fxs(f.get('aggression_5s', 0.0), 2)}",
+            f"volatility x{fx(f.get('vol_ratio', 1.0), 2)} - a calm melt-up",
         ],
         "FOMO": [
             f"5 s move {f.get('z_5s', 0.0):+.1f}x typical",
             f"volume {f.get('volume_climax', 0.0):.1f}x the tape's pace",
-            f"ask side {'thin' if f.get('depth_imbalance', 0.0) < 0 else 'heavy'} ({f.get('depth_imbalance', 0.0):+.2f})",
-            (f"social: {int(f.get('social_posts', 0))} posts, mood {f.get('social_sentiment', 0.0):+.2f}"
+            f"ask side {'thin' if f.get('depth_imbalance', 0.0) < 0 else 'heavy'} ({fxs(f.get('depth_imbalance', 0.0), 2)})",
+            (f"social: {int(f.get('social_posts', 0))} posts, mood {fxs(f.get('social_sentiment', 0.0), 2)}"
              if f.get('social_posts', 0) else "social: no posts on the wire (X needs a paid token; Reddit/StockTwits keyless)"),
         ],
         "COMPLACENCY": [
-            f"volatility x{f.get('vol_ratio', 1.0):.2f}",
-            f"last window moved x{f.get('turbulence', 1.0):.2f} its hourly norm",
-            f"spread x{f.get('spread_blowout', 1.0):.2f} of normal",
+            f"volatility x{fx(f.get('vol_ratio', 1.0), 2)}",
+            f"last window moved x{fx(f.get('turbulence', 1.0), 2)} its hourly norm",
+            f"spread x{fx(f.get('spread_blowout', 1.0), 2)} of normal",
             f"{f.get('tick_rate_hz', 0.0):.1f} ticks/s",
         ],
         "PARALYSIS": [
             f"tie probability {f.get('pin_prob', 0.0) * 100:.0f}% (flat windows {f.get('flat_share', 0.0) * 100:.0f}%"
             f" of {int(f.get('pin_windows', 0))})",
             f"window sigma {f.get('window_sigma_ticks', 0.0):.1f} ticks",
-            f"prints at x{f.get('tick_surge', 0.0):.2f} their own pace",
-            f"aggression {f.get('aggression_5s', 0.0):+.2f}",
+            f"prints at x{fx(f.get('tick_surge', 0.0), 2)} their own pace",
+            f"aggression {fxs(f.get('aggression_5s', 0.0), 2)}",
         ],
     }
     if f.get("turbulence", 1.0) >= 1.3:
@@ -1556,11 +1570,11 @@ def manipulation_read(f: dict[str, float]) -> dict:
     evidence = [
         f"herding {herding * 100:.0f}% (side skew and same-side runs)",
         f"{int(_num(f.get('reversals')))} direction flips in the last ~120 ticks",
-        f"depth imbalance {_num(f.get('depth_imbalance')):+.2f}",
+        f"depth imbalance {fxs(_num(f.get('depth_imbalance')), 2)}",
         f"stop-hunt wick score {hunt * 100:.0f}%",
         f"volume {_num(f.get('volume_climax')):.1f}x the tape's pace",
-        f"ignition {ignition * 100:.0f}% (burst-then-fade), toxicity {toxicity * 100:.0f}% (VPIN)",
-        f"stuffing {stuffing * 100:.0f}%, spoofing {spoofing * 100:.0f}%, pushable {pushable * 100:.0f}% (Kyle)",
+        f"ignition {fx(ignition * 100, 0)}% (burst-then-fade), toxicity {fx(toxicity * 100, 0)}% (VPIN)",
+        f"stuffing {fx(stuffing * 100, 0)}%, spoofing {fx(spoofing * 100, 0)}%, pushable {fx(pushable * 100, 0)}% (Kyle)",
     ]
     return {
         "score": round(float(score), 4),
@@ -1572,11 +1586,11 @@ def manipulation_read(f: dict[str, float]) -> dict:
             "stop_hunt": round(hunt, 4),
             "thin_book": round(spoof, 4),
             "volume_climax": round(volume, 4),
-            "ignition": round(ignition, 4),
-            "toxicity": round(toxicity, 4),
-            "stuffing": round(stuffing, 4),
-            "spoofing": round(spoofing, 4),
-            "pushable": round(pushable, 4),
+            "ignition": round(ignition, 6),
+            "toxicity": round(toxicity, 6),
+            "stuffing": round(stuffing, 6),
+            "spoofing": round(spoofing, 6),
+            "pushable": round(pushable, 6),
         },
         "evidence": evidence,
         "note": (

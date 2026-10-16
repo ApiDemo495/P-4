@@ -189,7 +189,8 @@ def test_lifecycle_birth_to_active_to_decay_to_death_and_autopsy_resurrection():
     report = life.autopsy(f, sig, ret, labels)
     assert report["verdict"].startswith("resurrected")
     assert f.state == State.CANDIDATE and f.spec.gates == {"regimes": ["trending"]}
-    assert life.gated_signal(f, 0.8, "mean_reverting") == 0.0
+    # Round BH: out-of-regime signal is damped (x0.2), never a dead zero
+    assert abs(life.gated_signal(f, 0.8, "mean_reverting") - 0.16) < 1e-9
     assert life.gated_signal(f, 0.8, "trending") == 0.8
 
 

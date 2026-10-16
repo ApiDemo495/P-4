@@ -145,14 +145,16 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     drift = float(np.mean(returns))
     sigma = float(np.sqrt(np.mean(returns**2)))
     t_stat = abs(drift) * float(np.sqrt(returns.size)) / (sigma + EPS)
-    direction = float(np.sign(drift)) if t_stat >= MIN_T_STAT else 0.0
+    # Round BH: soft direction - sign(drift) x t²/(t²+T²) - a weak drift gives a
+    # small signed value instead of a dead zero (½ strength at the old threshold)
+    direction = float(np.sign(drift)) * (t_stat * t_stat / (t_stat * t_stat + MIN_T_STAT * MIN_T_STAT))
 
     trace(ctx, "Hurst (DFA, this window)", hurst, "0..1")
     trace(ctx, "window estimates in the series", series.size, "windows")
     trace(ctx, "velocity (slope of H)", velocity, "Hurst per window")
     trace(ctx, "scale used", denom, "Hurst per window")
     trace(ctx, "drift t-statistic", t_stat, "|mean| / (sigma / sqrt(n))")
-    trace(ctx, "direction used", direction, "+1 / 0 / -1")
+    trace(ctx, "direction used", direction, "sign(drift) x t²/(t²+T²), -1..1")
 
     if direction == 0.0:
         return 0.0

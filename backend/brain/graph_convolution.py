@@ -88,6 +88,8 @@ class ActivationTrace:
         if self.pn_activations is None:
             return []
         order = np.argsort(-np.abs(self.pn_activations))[:limit]
+        # Round BH: PNs that are not driven (HSI enters through the octopamine
+        # node, ERC is regime context) are not "0.000 inputs" - leave them out
         return [
             {
                 "pn": int(i),
@@ -95,6 +97,7 @@ class ActivationTrace:
                 "value": round(float(self.pn_activations[i]), 4),
             }
             for i in order
+            if self.pn_activations[i] != 0.0
         ]
 
     def top_kcs(self, limit: int = 30) -> list[dict]:
@@ -295,8 +298,12 @@ class GraphConvolution:
         drive = matrix @ a0
         kc_drive = drive[KC_START:KC_END].copy()
         a1 = np.maximum(drive, 0.0)  # ReLU on the PN -> KC fan-in only
-        a1[PAM] = gain * max(0.0, float(drg))
-        a1[PPL1] = gain * max(0.0, -float(drg))
+        # Round BH: reward (PAM) and punishment (PPL1) dopamine neurons fire
+        # tonically and split the prediction error smoothly - softplus with a
+        # 2 % tonic floor instead of a rectifier, so neither reads a dead 0.00
+        # (the rectified side used to be exactly 0 every window by construction)
+        a1[PAM] = gain * (0.02 + _softplus(6.0 * float(drg)) / 6.0)
+        a1[PPL1] = gain * (0.02 + _softplus(-6.0 * float(drg)) / 6.0)
         a1[OA] = gain * float(np.clip(hsi, 0.0, 1.0))
         a1 = sparsify_kc(a1)
 
@@ -332,6 +339,11 @@ class GraphConvolution:
                 "hsi": float(hsi),
             },
         )
+
+
+def _softplus(x: float) -> float:
+    """log(1 + eˣ), numerically safe."""
+    return float(np.logaddexp(0.0, x))
 
 
 def graph_convolution(test_input: np.ndarray, adjacency: np.ndarray) -> np.ndarray:

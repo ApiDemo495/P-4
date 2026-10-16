@@ -34,6 +34,7 @@ bias indices are shown on the emotion card as the brain's own feeling.
 
 from __future__ import annotations
 
+import math
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -57,9 +58,14 @@ MOODS = {
 
 
 def _ramp(x: float, lo: float, hi: float) -> float:
+    """Round BH: logistic ramp (≈0.018 at lo, ½ midway, ≈0.982 at hi) - the
+    hot-hand and loss-chasing indices are tiny-but-alive instead of a dead 0.00
+    until a streak crosses the line."""
     if hi <= lo:
         return 1.0 if x >= hi else 0.0
-    return float(min(1.0, max(0.0, (x - lo) / (hi - lo))))
+    z = 8.0 * ((float(x) - lo) / (hi - lo) - 0.5)
+    z = max(-60.0, min(60.0, z))
+    return float(1.0 / (1.0 + math.exp(-z)))
 
 
 @dataclass
@@ -120,9 +126,7 @@ class DopamineBrain:
 
     def tick_window(self) -> None:
         """A window passed without a new outcome: the transient fades."""
-        self.phasic *= PHASIC_DECAY
-        if abs(self.phasic) < 1e-4:
-            self.phasic = 0.0
+        self.phasic *= PHASIC_DECAY        # Round BH: decays geometrically, never snapped to 0.0
 
     # ------------------------------------------------------------------
     @property
@@ -177,7 +181,7 @@ class DopamineBrain:
                      "delta_bps": round(self.last_delta, 2), "alpha": round(self.last_alpha, 3),
                      "confidence": round(self.last_confidence, 3), "at": self.last_outcome_at},
             "win_streak": self.win_streak, "loss_streak": self.loss_streak, "outcomes": self.outcomes_seen,
-            "overconfidence": round(oc, 3), "tilt": round(tilt, 3), "appetite": round(self.appetite, 3),
+            "overconfidence": round(oc, 6), "tilt": round(tilt, 6), "appetite": round(self.appetite, 3),
             "brain_gain": round(self.brain_gain(), 4),
             "guard": guard,
             "reading": self._reading(),

@@ -19,6 +19,8 @@ dictionaries, so it can be unit-tested without an engine.
 
 from __future__ import annotations
 
+from backend.core.numfmt import fx, fxs
+
 import math
 import time
 
@@ -153,8 +155,8 @@ def _age_label(age_seconds: float) -> str:
     if micro < 1000:
         return f"{micro:.0f} µs"
     if micro < 1_000_000:
-        return f"{micro / 1000:.2f} ms"
-    return f"{age_seconds:.3f} s"
+        return f"{fx(micro / 1000, 2)} ms"
+    return f"{fx(age_seconds, 3)} s"
 
 
 def _fmt(value: float, digits: int = 2) -> str:
@@ -289,7 +291,7 @@ def build_reasoning(
                 "weight": None,
                 "supports": working,
                 "text": (
-                    f"Hedge stress (HSI) {hsi_value:.2f} — the BTC/PAXG hedge is "
+                    f"Hedge stress (HSI) {fx(hsi_value, 2)} — the BTC/PAXG hedge is "
                     f"{'working' if working else 'breaking down'}"
                     + ("" if working else "; position size is dampened for it") + "."
                 ),
@@ -377,7 +379,7 @@ def build_reasoning(
                 f"; deep read: Bayesian filter {float(deep.get('argmax_probability') or 0.0):.0%} "
                 f"{str(deep.get('argmax')).capitalize()}"
                 + (f", {regime} regime" if regime else "")
-                + (f", VPIN {float(flow.get('vpin')):.2f}" if flow.get("vpin") is not None else "")
+                + (f", VPIN {fx(float(flow.get('vpin')), 2)}" if flow.get("vpin") is not None else "")
             )
         bullets.append({
             "kind": "crowd",
@@ -402,8 +404,8 @@ def build_reasoning(
             "supports": supports,
             "text": (
                 f"Physics layer {p_contrib.get('decision')} ({_fmt(p_vote, 2)}): "
-                f"tape temperature {float(comp.get('temperature') or 1.0):.2f}, Hawkes n {float(comp.get('hawkes_n') or 0.0):.2f}, "
-                f"Kelly weight {float(wts.get('w_micro') or 0.5):.0%}, net edge {float(comp.get('net_edge_bps') or 0.0):+.2f} bp after spread"
+                f"tape temperature {fx(float(comp.get('temperature') or 1.0), 2)}, Hawkes n {fx(float(comp.get('hawkes_n') or 0.0), 2)}, "
+                f"Kelly weight {float(wts.get('w_micro') or 0.5):.0%}, net edge {fxs(float(comp.get('net_edge_bps') or 0.0), 2)} bp after spread"
                 + (f"; voting: {names}" if names else "; no mechanism fired")
                 + f"; {int(comp.get('active') or 0)} active mechanisms — "
                 + ("leans with" if supports else "leans against") + f" the {side} side."

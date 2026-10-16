@@ -40,6 +40,17 @@ HORIZON = 3000
 WINSOR_SIGMA = 4.0
 SKEW_SCALE = 1.5
 GATE_T_LOW, GATE_T_HIGH = 2.0, 5.0
+
+
+def _gate(t_stat: float) -> float:
+    """Round BH: logistic significance gate - ≈0.02 at GATE_T_LOW, ½ midway,
+    ≈0.98 at GATE_T_HIGH - so an insignificant skew reads as a small number
+    with its sign instead of a dead 0.00."""
+    mid = 0.5 * (GATE_T_LOW + GATE_T_HIGH)
+    width = (GATE_T_HIGH - GATE_T_LOW) / 8.0
+    x = (abs(float(t_stat)) - mid) / width
+    x = max(-60.0, min(60.0, x))
+    return 1.0 / (1.0 + np.exp(-x))
 #: The engine hands the formula one window per cycle, so the state has to stitch
 #: the windows into a single continuous return series.  v2.0.0 appended only the
 #: trailing 60 prices per window: the deque filled with *disjoint* snippets and
@@ -137,16 +148,16 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     n_eff = (w_sum ** 2) / (float(np.sum(weights**2)) + EPS)
     se = float(np.sqrt(6.0 / max(n_eff, 1.0)))
     t_stat = skew / (se + EPS)
-    gate = float(np.clip((abs(t_stat) - GATE_T_LOW) / (GATE_T_HIGH - GATE_T_LOW), 0.0, 1.0))
+    gate = _gate(t_stat)
     trace(ctx, "returns in the horizon", n, "ticks (5 minutes)")
     trace(ctx, "new returns this window", fresh_n, "ticks")
     trace(ctx, "weighted skew", skew, "m3 / m2^1.5 (returns winsorised at ±4σ)")
     trace(ctx, "skew t-stat", t_stat, "skew / sqrt(6 / n_eff)")
-    trace(ctx, "significance gate", gate, f"0 below {GATE_T_LOW:g} SE, 1 above {GATE_T_HIGH:g} SE")
+    trace(ctx, "significance gate", gate, f"logistic: ½ at {(GATE_T_LOW + GATE_T_HIGH) / 2:g} SE, ≈0.02 at {GATE_T_LOW:g}, ≈0.98 at {GATE_T_HIGH:g} (never a dead zero)")
     return finite(tanh(skew / SKEW_SCALE) * gate)
 
 
-DOUBLE_CHECK = "value = tanh(skew / 1.5) x gate, gate = clip((|t| - 2) / 3, 0, 1), t = skew / sqrt(6 / n_eff)"
+DOUBLE_CHECK = "value = tanh(skew / 1.5) x gate, gate = logistic(|t|; centre 3.5 SE, width 1.5 SE), t = skew / sqrt(6 / n_eff)"
 
 
 def double_check(t: dict, asset: str) -> float:
@@ -154,5 +165,5 @@ def double_check(t: dict, asset: str) -> float:
     if "skew t-stat" not in t or "weighted skew" not in t:
         return 0.0
     t_stat = float(t["skew t-stat"])
-    gate = max(0.0, min(1.0, (abs(t_stat) - GATE_T_LOW) / (GATE_T_HIGH - GATE_T_LOW)))
+    gate = _gate(t_stat)
     return tanh(float(t["weighted skew"]) / SKEW_SCALE) * gate

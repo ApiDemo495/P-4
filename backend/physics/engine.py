@@ -25,6 +25,8 @@ live except the telemetry cache (venue quotes, gold spot) and that only to
 """
 from __future__ import annotations
 
+from backend.core.numfmt import fx, fxs
+
 import time
 
 from backend.core import config as cfg
@@ -100,8 +102,8 @@ class PhysicsEngine:
 
         self.passes += 1
         w_logic = (f"w_micro = ½ + ½·tanh(Σf/0.6) = {w_micro:.4f} from {len(directional)} voting of {len(active)} active mechanisms; "
-                   f"vote = 2(w_micro − ½)·(1 − drag {drag:.2f}) = {raw_vote:+.4f}; gross edge {gross_edge:.2f} bp − spread cost "
-                   f"{cost_bps:.2f} bp = {net_edge:+.2f} bp" + (" ≤ 0 ⇒ vote halved" if below_cost else "") + f" ⇒ {vote_btc:+.4f}")
+                   f"vote = 2(w_micro − ½)·(1 − drag {fx(drag, 2)}) = {raw_vote:+.4f}; gross edge {fx(gross_edge, 2)} bp − spread cost "
+                   f"{fx(cost_bps, 2)} bp = {fxs(net_edge, 2)} bp" + (" ≤ 0 ⇒ vote halved" if below_cost else "") + f" ⇒ {vote_btc:+.4f}")
         report = {
             "asset": asset.upper(), "pair": "BTC/PAXG", "vote": round(vote, 4), "vote_btc": round(vote_btc, 4),
             "side": ("BUY" if vote >= 0 else "SELL"), "confidence": round(confidence, 4),
