@@ -1247,3 +1247,27 @@ body.pulse .widget-panel, body.pulse .card { animation: pulse-breath .6s var(--e
 .twin-ledger b { font-variant-numeric: tabular-nums; }
 .twin-verdict { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
 @media (max-width: 720px) { .twin-grid { grid-template-columns: 1fr; } }
+
+/* Round BM: win-rate ring + streak flame */
+.comp-top { display: flex; align-items: center; gap: 14px; margin: 4px 0 8px; }
+.comp-ring { position: relative; width: 84px; height: 84px; flex: none; }
+.comp-ring svg { width: 84px; height: 84px; transform: rotate(-90deg); }
+.comp-ring .ring-bg { fill: none; stroke: rgba(148, 163, 184, 0.18); stroke-width: 10; }
+.comp-ring .ring-fg { fill: none; stroke: #60a5fa; stroke-width: 10; stroke-linecap: round; stroke-dasharray: 326.7; stroke-dashoffset: 326.7; transition: stroke-dashoffset 900ms cubic-bezier(.2,.8,.2,1), stroke 600ms; filter: drop-shadow(0 0 6px rgba(96, 165, 250, 0.45)); }
+.comp-ring.good .ring-fg { stroke: #4ade80; filter: drop-shadow(0 0 8px rgba(74, 222, 128, 0.55)); }
+.comp-ring.bad .ring-fg { stroke: #f87171; filter: drop-shadow(0 0 6px rgba(248, 113, 113, 0.45)); }
+.ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.1; }
+.ring-center b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.ring-center span { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; }
+.streak-flame { font-size: 22px; opacity: 0; transition: opacity 400ms, transform 400ms; transform: scale(0.6); }
+.streak-flame.on { opacity: 1; transform: scale(1); animation: flame 1.2s ease-in-out infinite alternate; }
+@keyframes flame { from { filter: drop-shadow(0 0 2px rgba(251, 146, 60, 0.5)); transform: scale(1) rotate(-3deg); } to { filter: drop-shadow(0 0 10px rgba(251, 146, 60, 0.9)); transform: scale(1.12) rotate(3deg); } }
+/* Round BM: Hawkes cascade line */
+.hawkes-line { margin: 6px 0 4px; }
+.hawkes-bars { display: flex; height: 8px; border-radius: 6px; overflow: hidden; background: rgba(148, 163, 184, 0.12); }
+.hawkes-bar { height: 100%; width: 50%; transition: width 700ms cubic-bezier(.2,.8,.2,1); }
+.hawkes-bar.buy { background: linear-gradient(90deg, rgba(74, 222, 128, 0.35), #4ade80); }
+.hawkes-bar.sell { background: linear-gradient(90deg, #f87171, rgba(248, 113, 113, 0.35)); }
+.hawkes-line.exciting .hawkes-bar { animation: cascade 0.9s ease-in-out infinite alternate; }
+@keyframes cascade { from { filter: brightness(0.85); } to { filter: brightness(1.35); } }
+.hawkes-text { font-size: 11px; margin-top: 3px; }

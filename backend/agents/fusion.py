@@ -78,6 +78,8 @@ class FusionResult:
     hindsight: dict | None = None
     #: Round BK: the meta-combiner's call for this window and whether it decided the side
     meta: dict | None = None
+    #: Round BM: the Hawkes order-flow cascade measured at the boundary
+    hawkes: dict | None = None
 
     # -- binary direction fields (HOLD was removed) ----------------------
     @property
@@ -125,6 +127,7 @@ class FusionResult:
             "triune": self.triune,
             "hindsight": self.hindsight,
             "meta": self.meta,
+            "hawkes": self.hawkes,
         }
         # Kept for the two clients: "lean" now always equals the decision,
         # because there is no third state to lean away from.

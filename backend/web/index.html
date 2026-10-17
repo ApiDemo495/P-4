@@ -132,6 +132,13 @@
              frozen tape gives for a 55 / 60 / 120 s window and are settled
              on their own clocks.  Issued at the boundary, never moved. -->
         <div class="horizon-lanes" id="w-horizons" title="one boundary, four horizons - click a lane for its maths"></div>
+        <!-- Round BM: the Hawkes cascade at the boundary - buy and sell
+             intensity, how self-exciting the tape is and the flow still to
+             come out of it.  Measured on the frozen tape; one learned input. -->
+        <div class="hawkes-line" id="w-hawkes" title="Hawkes order-flow intensity at the lock: lambda_buy vs lambda_sell, branching ratio n, projected excess flow over the window">
+          <div class="hawkes-bars"><div class="hawkes-bar buy" id="w-hawkes-buy"></div><div class="hawkes-bar sell" id="w-hawkes-sell"></div></div>
+          <div class="hawkes-text muted" id="w-hawkes-text">cascade — waiting for the first lock</div>
+        </div>
         <!-- Round L: the crowd *as it was at the lock*.  Nothing inside the
              prediction cell may move during a window, so this line is the
              frozen reading; the live one is in the Crowd Emotion card. -->
@@ -189,7 +196,15 @@
     <div class="widget-row row-bottom">
       <div class="widget-cell competition-cell" id="competition-cell">
         <div class="cell-label">THE COMPETITION <span class="muted">last trade at the open → at the close of the 70 s window · tie = loss · every window called</span></div>
-        <div class="comp-streak"><b id="c-streak">—</b><span id="c-streak-label" class="muted">consecutive wins</span></div>
+        <!-- Round BM: the win-rate ring and the streak flame - the two numbers
+             the user is paid on, drawn so they can be read from across the room. -->
+        <div class="comp-top">
+          <div class="comp-ring" id="c-ring" title="strict-sign win rate over the last 100 windows">
+            <svg viewBox="0 0 120 120"><circle class="ring-bg" cx="60" cy="60" r="52"/><circle class="ring-fg" id="c-ring-fg" cx="60" cy="60" r="52"/></svg>
+            <div class="ring-center"><b id="c-ring-pct">—</b><span class="muted">win rate</span></div>
+          </div>
+          <div class="comp-streak"><b id="c-streak">—</b><span id="c-streak-label" class="muted">consecutive wins</span><span class="streak-flame" id="c-flame"></span></div>
+        </div>
         <div class="comp-ladder" id="c-ladder"></div>
         <div class="kv-grid">
           <div class="kv-item"><span>Per-pick win rate (last 100)</span><b id="c-winrate">—</b></div>

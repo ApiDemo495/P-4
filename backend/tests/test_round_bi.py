@@ -190,3 +190,39 @@ def test_temporal_arbitrage_prices_rolls_and_settles_the_twin():
     js = open("backend/web/app.js", encoding="utf-8").read()
     assert 'id="twin-card"' in html and 'data-panel="twin"' in html
     assert "function renderTemporalArb" in js and 'case "TWIN"' in js
+
+
+def test_hawkes_cascade_and_watchdog_guards():
+    """Round BM: the Hawkes cascade is measured on the tape (buy cascade ->
+    positive projected flow, calm Poisson tape -> branching near 0), and the
+    watchdog / stage budgets exist in the cycle loop."""
+    import numpy as np
+    from backend.core.hawkes import hawkes_flow
+
+    rng = np.random.default_rng(3)
+    # a clustered buy cascade at the end of 4 minutes of calm tape
+    n = 4 * 60 * 5
+    t = np.sort(rng.uniform(0, 240_000, n))
+    q = rng.exponential(0.05, n)
+    side = rng.choice([-1.0, 1.0], n)
+    burst_t = 240_000 - rng.exponential(1500, 120)
+    burst = np.c_[burst_t, np.full(120, 60000.0), rng.exponential(0.3, 120), np.ones(120)]
+    base = np.c_[t, np.full(n, 60000.0), q, side]
+    ticks = np.vstack([base, burst])
+    ticks = ticks[np.argsort(ticks[:, 0])]
+    h = hawkes_flow(ticks, 70.0, now_ms=240_000.0)
+    assert h["covered"] and h["lambda_buy"] > h["lambda_sell"] and h["score"] > 0.3
+    assert 0.0 <= h["branching"] <= 0.9 and len(h["logic"]) == 4
+    calm = hawkes_flow(base, 70.0, now_ms=240_000.0)
+    assert calm["covered"] and abs(calm["score"]) < 0.6 and calm["branching"] < h["branching"] + 0.3
+    assert hawkes_flow(base[:20], 70.0)["covered"] is False
+    src = open("backend/core/cycle_manager.py", encoding="utf-8").read()
+    assert "async def _watchdog_loop" in src and "_dump_stacks" in src and "os._exit(75)" in src
+    assert "asyncio.wait_for(self._prefetch(deadline)" in src
+    assert "asyncio.wait_for(self._open_window(deadline)" in src
+    assert "set_default_executor" in src
+    assert 'feature:hawkes' in src and 'feature:twin_edge' in src
+    html = open("backend/web/index.html", encoding="utf-8").read()
+    js = open("backend/web/app.js", encoding="utf-8").read()
+    assert 'id="w-hawkes"' in html and 'id="c-ring-fg"' in html
+    assert "function renderHawkes" in js and "function renderWinRing" in js

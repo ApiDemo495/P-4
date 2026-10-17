@@ -1793,6 +1793,43 @@ function renderTemporalArb(t) {
   $("tw-logic").innerHTML = (pr.logic || []).map((l) => `<div>${escapeHtml(l)}</div>`).join("") + (cur && cur.roll_note ? `<div>roll: ${escapeHtml(cur.roll_note)}</div>` : "");
 }
 
+/* Round BM: the win-rate ring (SVG arc, animated) and the streak flame. */
+function renderWinRing(rate, streak) {
+  const fg = $("c-ring-fg");
+  if (!fg) return;
+  const has = rate !== null && rate !== undefined;
+  const r = has ? Math.max(0, Math.min(1, Number(rate))) : 0;
+  const circ = 2 * Math.PI * 52;
+  fg.style.strokeDashoffset = String(circ * (1 - r));
+  $("c-ring-pct").textContent = has ? `${Math.round(r * 100)}%` : "—";
+  $("c-ring").className = `comp-ring${has ? (r >= 0.6 ? " good" : r < 0.5 ? " bad" : "") : ""}`;
+  const flame = $("c-flame");
+  if (flame) {
+    const n = Number(streak || 0);
+    flame.textContent = n >= 20 ? "🔥🔥🔥" : n >= 5 ? "🔥🔥" : n >= 3 ? "🔥" : "";
+    flame.classList.toggle("on", n >= 3);
+  }
+}
+
+/* Round BM: the Hawkes cascade measured at the lock. */
+function renderHawkes(h) {
+  const line = $("w-hawkes");
+  if (!line) return;
+  if (!h || !h.covered) {
+    $("w-hawkes-text").textContent = h && h.logic && h.logic[0] ? `cascade — ${h.logic[0]}` : "cascade — waiting for the first lock";
+    line.classList.remove("exciting");
+    return;
+  }
+  const b = Number(h.lambda_buy || 0), s = Number(h.lambda_sell || 0), tot = b + s;
+  const share = tot > 0 ? b / tot : 0.5;
+  $("w-hawkes-buy").style.width = `${(share * 100).toFixed(1)}%`;
+  $("w-hawkes-sell").style.width = `${((1 - share) * 100).toFixed(1)}%`;
+  const n = Number(h.branching || 0);
+  line.classList.toggle("exciting", n >= 0.5);
+  const sc = Number(h.score || 0);
+  $("w-hawkes-text").innerHTML = `Hawkes cascade at the lock · λ<sub>buy</sub> ${b.toFixed(3)} vs λ<sub>sell</sub> ${s.toFixed(3)} · branching n = <b>${n.toFixed(2)}</b> ${n >= 0.5 ? "(self-exciting)" : "(calm)"} · flow still to come <b class="${sc > 0 ? "pos" : sc < 0 ? "neg" : ""}">${sc >= 0 ? "+" : ""}${sc.toFixed(3)}</b>`;
+}
+
 function renderCompetition(c, pick) {
   if (!c || !$("c-streak")) return;
   state.competition = c;
@@ -1808,6 +1845,7 @@ function renderCompetition(c, pick) {
     return `<div class="comp-rung ${cls}" title="${escapeHtml(r.prize)}"><b>${r.streak}</b>${escapeHtml(r.prize.split(" (")[0].split(" -")[0])}<br><span class="muted">${(r.probability_per_attempt * 100).toPrecision(2)}% per run · ${eta}${r.hit ? ` · hit ×${r.hit}` : ""}</span><div class="bar"><i style="width:${pct}%"></i></div></div>`;
   }).join("");
   $("c-winrate").textContent = c.win_rate_100 === null || c.win_rate_100 === undefined ? `— (${c.scored} scored)` : `${(c.win_rate_100 * 100).toFixed(1)}% · ${c.scored} scored`;
+  renderWinRing(c.win_rate_100, streak);
   $("c-winrate").className = c.win_rate_100 >= 0.7 ? "pos" : c.win_rate_100 !== null && c.win_rate_100 < 0.5 ? "neg" : "";
   $("c-best").textContent = `${c.best_streak} · ${c.ties} tie${c.ties === 1 ? "" : "s"} (lost)`;
   if ($("c-tie")) {
@@ -3316,6 +3354,7 @@ function applySnapshot(data, opts = {}) {
   if (data.competition) renderCompetition(data.competition, data.boundary_pick);
   if (data.horizons) renderHorizons(data.horizons);
   if (data.temporal_arb) renderTemporalArb(data.temporal_arb);
+  if (data.hawkes) renderHawkes(data.hawkes);
   if (data.accuracy && state.prediction) state.prediction.accuracy = data.accuracy;
   if (data.window) state.window = data.window;
   state.lastSnapshotAt = Date.now();

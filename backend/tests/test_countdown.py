@@ -343,8 +343,9 @@ async def test_the_final_freeze_rebuilds_the_fast_half_on_fresh_data(manager: Cy
 def test_the_loop_freezes_again_right_before_the_boundary():
     src = CYCLE_PY.read_text(encoding="utf-8")
     loop = src[src.index("async def _pipelined_loop"):src.index("async def _open_window")]
-    assert "await self._prefetch(deadline)" in loop
-    assert "await self._refreeze(deadline)" in loop
+    # Round BM: every stage is bounded by wait_for - the awaits are still there
+    assert "await asyncio.wait_for(self._prefetch(deadline)" in loop
+    assert "await asyncio.wait_for(self._refreeze(deadline)" in loop
     assert loop.index("_prefetch(deadline)") < loop.index("_refreeze(deadline)")
     assert loop.index("_refreeze(deadline)") < loop.index("await self._sleep_until(deadline)\n")
     assert cfg.Settings().final_lock_lead_seconds < cfg.Settings().lock_deadline_seconds

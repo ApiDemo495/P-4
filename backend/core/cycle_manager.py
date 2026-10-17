@@ -224,6 +224,12 @@ class CycleManager:
         self.ws_dropped = 0
         self.loop_lag_ms = 0.0
         self.loop_lag_max_ms = 0.0
+        # Round BM: the cycle watchdog - when the last window opened, how
+        # many stalls were caught and what was done about them.
+        self.last_window_opened_at = 0.0
+        self.stalls: list[dict] = []
+        self._last_hawkes: dict = {}
+        self._last_twin_pricing: dict = {}
         self.last_errors: dict[str, str] = {}
         self.loop_stats: dict[str, dict] = {}
         self.degradation = DegradationLevel.FULL
@@ -362,7 +368,18 @@ class CycleManager:
             asyncio.create_task(self._flash_watch(), name="flash-watch"),
             asyncio.create_task(self._emotion_loop(), name="emotions"),
             asyncio.create_task(self._loop_lag_monitor(), name="loop-lag"),
+            asyncio.create_task(self._watchdog_loop(), name="watchdog"),
         ]
+        # Round BM: the default executor is min(32, cores + 4) threads - six
+        # on a 2-core Codespace.  Model loads, connectome passes, persistence
+        # and the meta refit all share it; a few slow threads used to be able
+        # to queue every later ``to_thread`` behind them.  Give the engine
+        # a wider pool so one slow job can never starve the boundary.
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=24, thread_name_prefix="engine"))
+        except Exception as exc:  # noqa: BLE001
+            log.debug("executor resize skipped: %s", exc)
         log.info(
             "Cycle manager running: period=%.1fs, world_clock=%s",
             self.settings.cycle_period_seconds,
@@ -513,7 +530,10 @@ class CycleManager:
                 await self._sleep_until(deadline - lead)
                 if self._stop.is_set():
                     break
-                await self._prefetch(deadline)
+                # Round BM: every stage is bounded.  A stage that hangs (a
+                # stuck socket, an exhausted thread pool) used to hold the
+                # loop forever - the countdown ran, the panel never changed.
+                await asyncio.wait_for(self._prefetch(deadline), timeout=max(2.0, lead + period * 0.5))
 
                 # --- the final freeze: the fast half of the pipeline again, on
                 # a snapshot taken a fraction of a second before the boundary.
@@ -525,7 +545,7 @@ class CycleManager:
                 if self._stop.is_set():
                     break
                 try:
-                    await self._refreeze(deadline)
+                    await asyncio.wait_for(self._refreeze(deadline), timeout=max(1.0, final_lead + 5.0))
                 except Exception as exc:  # noqa: BLE001 - the prefetch draft still stands
                     log.exception("final freeze failed - publishing the prefetch draft: %s", exc)
 
@@ -533,12 +553,14 @@ class CycleManager:
                 await self._sleep_until(deadline)
                 if self._stop.is_set():
                     break
-                await self._open_window(deadline)
+                await asyncio.wait_for(self._open_window(deadline), timeout=max(5.0, period * 0.5))
                 index += 1
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
                 log.exception("window failed: %s", exc)
+                if isinstance(exc, asyncio.TimeoutError):
+                    self._note_stall("stage timeout", f"window {index + 1} stage exceeded its budget", recovered="skipped to the next boundary")
                 self.last_error = f"window {index + 1}: {type(exc).__name__}: {exc}"
                 self.warnings.append(f"window failed: {type(exc).__name__}: {exc}")
                 del self.warnings[:-20]
@@ -598,6 +620,7 @@ class CycleManager:
         self.lock.new_cycle(cycle)
         self.window_valid_from = deadline_wall
         self.window_valid_until = deadline_wall + self.settings.cycle_period_seconds
+        self.last_window_opened_at = time.time()
 
         pending = self._pending_signal
         self._pending_signal = None
@@ -1396,6 +1419,93 @@ class CycleManager:
             self.loop_lag_ms = round(0.7 * self.loop_lag_ms + 0.3 * lag, 1)
             self.loop_lag_max_ms = round(max(self.loop_lag_max_ms * 0.995, lag), 1)
 
+    # Round BM: the cycle watchdog --------------------------------------
+    def _note_stall(self, kind: str, detail: str, recovered: str) -> None:
+        self.stalls.append({"at": time.time(), "kind": kind, "detail": detail[:300], "recovered": recovered})
+        del self.stalls[:-20]
+        self.warnings.append(f"watchdog: {kind} - {recovered}")
+        del self.warnings[:-20]
+
+    def _dump_stacks(self, reason: str) -> str:
+        """Every task and thread, to the log and to a file next to the
+        vault, so a stall is never a mystery again."""
+        import faulthandler
+        import io
+        import sys
+        import traceback
+        buf = io.StringIO()
+        buf.write(f"=== watchdog: {reason} at {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+        try:
+            for task in asyncio.all_tasks():
+                buf.write(f"--- task {task.get_name()} done={task.done()}\n")
+                for line in task.get_stack(limit=12):
+                    buf.write("".join(traceback.format_stack(line, limit=1)))
+        except Exception as exc:  # noqa: BLE001
+            buf.write(f"(task stacks unavailable: {exc})\n")
+        try:
+            for tid, frame in sys._current_frames().items():
+                buf.write(f"--- thread {tid}\n" + "".join(traceback.format_stack(frame, limit=8)))
+        except Exception as exc:  # noqa: BLE001
+            buf.write(f"(thread stacks unavailable: {exc})\n")
+        text = buf.getvalue()
+        log.error("%s", text[:20000])
+        try:
+            root = Path(os.environ.get("STATE_VAULT_DIR") or (Path.home() / ".drosophila"))
+            root.mkdir(parents=True, exist_ok=True)
+            path = root / f"stall-{int(time.time())}.txt"
+            path.write_text(text, encoding="utf-8")
+            faulthandler.dump_traceback(file=open(path, "a", encoding="utf-8"), all_threads=True)
+            return str(path)
+        except Exception:  # noqa: BLE001
+            return ""
+
+    async def _watchdog_loop(self) -> None:
+        """A window must open every period.  When none has opened for 2.5
+        periods the watchdog dumps every stack, restarts the cycle loop,
+        and - if that does not bring the next boundary either - exits so the
+        run.sh supervisor restarts the whole process with its vault intact.
+        The app was once found frozen after 38 windows with the countdown
+        still running; this makes that state impossible to stay in."""
+        period = float(self.settings.cycle_period_seconds)
+        restarted_at = 0.0
+        while not self._stop.is_set():
+            try:
+                await asyncio.sleep(max(5.0, period / 4.0))
+            except asyncio.CancelledError:
+                raise
+            try:
+                if not self.ready or not self.last_window_opened_at:
+                    continue
+                silent = time.time() - self.last_window_opened_at
+                if silent < 2.5 * period:
+                    continue
+                path = self._dump_stacks(f"no window opened for {silent:.0f} s")
+                if time.time() - restarted_at > 10.0 * period:
+                    # first strike: restart the cycle loop in-process
+                    restarted_at = time.time()
+                    self._note_stall("cycle stall", f"no window for {silent:.0f} s (stacks: {path or 'log'})",
+                                     recovered="cycle loop restarted in-process")
+                    for task in list(self._tasks):
+                        if task.get_name() == "cycle-loop" and not task.done():
+                            task.cancel()
+                    self._pending_signal = None
+                    self.prefetch_ready = False
+                    self.last_window_opened_at = time.time()
+                    new = asyncio.create_task(self._cycle_loop(), name="cycle-loop")
+                    self._tasks.append(new)
+                    continue
+                # second strike inside ten periods: let the supervisor restart us
+                self._note_stall("cycle stall", f"no window for {silent:.0f} s after an in-process restart",
+                                 recovered="process exit 75 - the supervisor restarts the engine")
+                try:
+                    await asyncio.to_thread(self._persist_learned)
+                except Exception:  # noqa: BLE001
+                    pass
+                log.critical("watchdog: engine stalled twice - exiting for the supervisor to restart")
+                os._exit(75)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("watchdog pass skipped: %s", exc)
+
     def health_payload(self) -> dict:
         """Round AP: one honest table of every subsystem - running / idle /
         failing - with the reason.  This is what `/api/system/health` and
@@ -1444,6 +1554,12 @@ class CycleManager:
             f"{self.ws_dropped} messages dropped (coalesced) since start")
         row("event loop", self.loop_lag_ms < 250, f"lag {self.loop_lag_ms} ms",
             f"peak {self.loop_lag_max_ms} ms · >250 ms means the CPU is saturated (genesis scoring / formula passes)")
+        since = (now - self.last_window_opened_at) if self.last_window_opened_at else None
+        row("watchdog", not self.stalls or (now - self.stalls[-1]["at"]) > 1800,
+            f"{len(self.stalls)} stall(s) caught" if self.stalls else "no stalls",
+            (f"last window opened {since:.0f} s ago" if since is not None else "no window yet") +
+            (f" · last: {self.stalls[-1]['kind']} -> {self.stalls[-1]['recovered']}" if self.stalls else
+             " · restarts the cycle loop after 2.5 silent periods, exits for the supervisor after two"))
         for name, err in self.last_errors.items():
             if name not in ("emotions", "physics", "formulas"):
                 row(name, False, "error", err)
@@ -1920,6 +2036,7 @@ class CycleManager:
         payload["competition"] = self.competition_payload()
         payload["horizons"] = self.horizons_payload()
         payload["temporal_arb"] = self.temporal_arb_payload()
+        payload["hawkes"] = dict(self._last_hawkes or {})
         payload["boundary_pick"] = dict(self.last_pick)
         payload["brain_explain"] = self.brain_explain_payload()
         payload["physics"] = self.physics_payload()
@@ -2189,6 +2306,26 @@ class CycleManager:
             hs_changed["news:NIV"] = {"before": round(niv_raw, 6), "after": round(niv, 6), "action": self.hindsight.reviews["news:NIV"].action}
         if crowd_tone != tone_raw:
             hs_changed["crowd:tone"] = {"before": round(tone_raw, 6), "after": round(crowd_tone, 6), "action": self.hindsight.reviews["crowd:tone"].action}
+        # Round BM: the Hawkes cascade at the boundary and the twin's pricing
+        # are learned inputs too - the meta-combiner weighs them walk-forward.
+        extras: dict[str, float] = {}
+        try:
+            from backend.core.hawkes import hawkes_flow
+            from backend.core.temporal_arb import price_structures
+            tk = snapshot.ticks(self.asset) if snapshot is not None else None
+            hk = hawkes_flow(tk, float(self.settings.cycle_period_seconds))
+            self._last_hawkes = hk
+            if hk.get("covered"):
+                extras["feature:hawkes"] = float(hk["score"])
+                extras["feature:branching"] = float(hk["branching"]) * (1.0 if hk["score"] >= 0 else -1.0)
+            tw = price_structures(tk, "BUY" if float(spec.score) >= 0 else "SELL", min(1.0, abs(float(spec.score))))
+            self._last_twin_pricing = tw
+            if tw.get("covered"):
+                sgn = 1.0 if float(spec.score) >= 0 else -1.0
+                extras["feature:twin_edge"] = float(tw["twin_edge"]) * sgn
+                extras["feature:rho_roll"] = float(tw["rho_roll"]) * (1.0 if last_dir == "BUY" else -1.0 if last_dir == "SELL" else 0.0)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("hawkes/twin inputs skipped: %s", exc)
         # the RAW readings are what the next hour's review will grade
         try:
             hs_inputs, hs_groups = HindsightReviewer.inputs_from(
@@ -2198,6 +2335,8 @@ class CycleManager:
                 niv=niv_raw, crowd_tone=tone_raw, forward_vote=float(self._last_forward.get("value") or 0.0) if self._last_forward.get("available") else 0.0,
                 spec_score=float(spec.score), features=(crowd or {}).get("features") or {},
                 emotions=(crowd or {}).get("emotions") or [])
+            for k, v in extras.items():
+                hs_inputs[k], hs_groups[k] = v, "feature"
             self._last_hindsight = {"inputs": hs_inputs, "groups": hs_groups, "changed": hs_changed}
             self._last_meta = self.meta.predict(hs_inputs)
         except Exception as exc:  # noqa: BLE001
@@ -2276,6 +2415,7 @@ class CycleManager:
                                     f"{' — overrides recipe ' + str(before) if before != pred['side'] else ' — agrees with the recipe'} | "
                                     + (fusion.reasoning or ""))[:900]
             fusion.meta = {**pred, "applied": applied}
+            fusion.hawkes = dict(self._last_hawkes or {})
             self.meta.last = fusion.meta
         except Exception as exc:  # noqa: BLE001
             log.debug("meta apply skipped: %s", exc)

@@ -2498,3 +2498,30 @@ tracked file is referenced; nothing was deleted on a hunch.
 * The Signal Lock is untouched - leg A inherits it; this is pricing and a
   ledger.  `GET /api/temporal-arb`, WS `TWIN`, snapshot `temporal_arb`,
   vault key `temporal_arb`, dashboard card `#twin-card`.
+
+### BM — Watchdog, Hawkes cascade, learned twin inputs, ring + flame
+
+* **The stall after 38 windows.** The pipelined loop had unbounded awaits:
+  a stage that hung (a stuck socket, an exhausted default thread pool - six
+  workers on a 2-core Codespace shared by model loads, connectome passes,
+  persistence and the meta refit) held the loop forever while the countdown
+  kept running.  Now: every stage is bounded (`wait_for` around
+  `_prefetch` / `_refreeze` / `_open_window`), the engine has a 24-thread
+  executor, and a **watchdog** task checks that a window opened within 2.5
+  periods - if not it dumps every task and thread stack to the log and to
+  `stall-<ts>.txt` next to the vault, restarts the cycle loop in-process,
+  and if the next boundary still does not come it persists the learned
+  state and exits 75 so the run.sh supervisor restarts the engine.
+  `/api/system/health` has a `watchdog` row (stalls caught, last window).
+* `backend/core/hawkes.py`: self-exciting order flow at the boundary -
+  `λ_buy / λ_sell` kernel sums (β = 1/5 s), branching ratio from the Fano
+  factor of 1 s counts (`n = 1 − 1/√F`), projected excess net flow over the
+  window `F_H = (λ_b − λ_s)(1 − e^{−β(1−n)H}) / (β(1−n))`, score
+  `tanh(F_H / rms signed 70 s volume)`.  Learned input `feature:hawkes`
+  (+ `feature:branching`), shown on the prediction cell as the two
+  intensity bars (pulsing when self-exciting) and in `fusion.hawkes`.
+* The twin's pricing enters the learning too: `feature:twin_edge`,
+  `feature:rho_roll` (signed by the recipe / last direction) are hindsight
+  rows and meta-combiner inputs, graded walk-forward like everything else.
+* UI: win-rate ring (animated SVG arc, green ≥ 60 %, red < 50 %) and the
+  streak flame (🔥 at 3, 🔥🔥 at 5, 🔥🔥🔥 at 20) in the competition cell.
