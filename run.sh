@@ -438,7 +438,7 @@ if [ "$MODE" = "check" ]; then
   fi
   say ""
   say ".env present     : $([ -f "$REPO_ROOT/.env" ] && echo yes || echo 'no - the web UI can create the keys instead')"
-  for key in GEMINI_API_KEY CRYPTOPANIC_API_KEY NEWSAPI_API_KEY GITHUB_MODELS_TOKEN NEUPRINT_APPLICATION_CREDENTIALS; do
+  for key in GEMINI_API_KEY CRYPTOPANIC_API_KEY NEWSAPI_API_KEY NEUPRINT_APPLICATION_CREDENTIALS; do
     if [ -f "$REPO_ROOT/.env" ]; then
       value="$(grep -E "^${key}=" "$REPO_ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2-)"
       if [ -n "${value:-}" ]; then ok "$key is set in .env"; else warn "$key is empty in .env (add it in the UI instead)"; fi

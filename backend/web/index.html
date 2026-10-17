@@ -67,7 +67,7 @@
   </p>
   <div class="keys-grid">
     <div class="key-row">
-      <div class="key-label"><b>Gemini</b><span class="muted">AI agent · 25% of the fusion</span></div>
+      <div class="key-label"><b>Gemini</b><span class="muted">AI agent · 30% of the fusion</span></div>
       <span class="key-state" id="state-gemini">not set</span>
     </div>
     <div class="key-row">
@@ -77,10 +77,6 @@
     <div class="key-row">
       <div class="key-label"><b>NewsAPI</b><span class="muted">news backup</span></div>
       <span class="key-state" id="state-newsapi">not set</span>
-    </div>
-    <div class="key-row">
-      <div class="key-label"><b>GitHub PAT</b><span class="muted">GitHub Models agent · 15%</span></div>
-      <span class="key-state" id="state-github">not set</span>
     </div>
     <div class="key-row">
       <div class="key-label"><b>neuPrint</b><span class="muted">live hemibrain connectome</span></div>
@@ -395,6 +391,14 @@
       <span class="pill" id="news-coverage">coverage —</span>
     </div>
     <div class="news-impact" id="news-impact" title="net impact of the live wire on each asset — the number the fusion votes with">impact — waiting for the wire…</div>
+    <!-- Round BP: the crowd pulse - Reddit, StockTwits, Bluesky, Mastodon,
+         Hacker News, Fear & Greed (and X with a token), fetched together.
+         How loud the crowd is and which way it leans, per network. -->
+    <div class="crowd-pulse" id="crowd-pulse">
+      <div class="pulse-meter"><div class="pulse-fill" id="pulse-fill"></div></div>
+      <div class="pulse-text muted" id="pulse-text">crowd pulse — waiting for the first social poll</div>
+      <div class="pulse-networks" id="pulse-networks"></div>
+    </div>
     <div class="news-list" id="news-list"></div>
   </section>
 
@@ -666,16 +670,6 @@
         <button class="btn" data-test="newsapi" data-input="k-newsapi">Test</button>
       </div>
       <div class="key-result" id="r-newsapi"></div>
-    </div>
-
-    <div class="key-field">
-      <label for="k-github">GitHub PAT <span class="muted">— optional, GitHub Models agent</span></label>
-      <div class="row">
-        <input type="text" id="k-github" class="key-input" placeholder="github_pat_…" autocomplete="off" spellcheck="false" />
-        <button class="btn tiny ghost" data-reveal="k-github">👁</button>
-        <button class="btn" data-test="github" data-input="k-github">Test</button>
-      </div>
-      <div class="key-result" id="r-github"></div>
     </div>
 
     <div class="key-field">

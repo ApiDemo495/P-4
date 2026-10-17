@@ -76,7 +76,7 @@ and every new Codespace boots with them already active:
 
 1. GitHub → your avatar → **Settings** → **Codespaces** → **Secrets** → *New secret*.
 2. Name exactly: `GEMINI_API_KEY`, `NEWSAPI_API_KEY`, `CRYPTOPANIC_API_KEY`,
-   `GITHUB_MODELS_TOKEN`, `NEUPRINT_APPLICATION_CREDENTIALS`, `CAVE_TOKEN`,
+   `NEUPRINT_APPLICATION_CREDENTIALS`, `CAVE_TOKEN`,
    `GLASSNODE_API_KEY`, `TWELVEDATA_API_KEY`, `LUNARCRUSH_API_KEY` (only the ones you have).
 3. *Repository access*: tick `ApiDemo495/P-4`. Save.
 4. Create the next Codespace. `/settings` → "What each key is doing right now"
@@ -107,7 +107,7 @@ errors, the engine switches to slot 2, then slot 3, *for that same call*, and
 goes back to the primary the moment its cooldown ends (rate limit: 10 s
 doubling to 5 min; rejected key: 10 min; other errors: 60 s). In `.env` the
 slots are `GEMINI_API_KEY`, `GEMINI_API_KEY_2`, `GEMINI_API_KEY_3` (same
-pattern for `GITHUB_MODELS_TOKEN`, `CRYPTOPANIC_API_KEY`, `NEWSAPI_API_KEY`).
+pattern for `CRYPTOPANIC_API_KEY`, `NEWSAPI_API_KEY`).
 `GET /api/settings/keys` shows, masked, which slot is in use and why the
 others are resting.
 
@@ -171,55 +171,9 @@ GEMINI_MODEL=gemini-3.8-flash
 
 ---
 
-## 2. GitHub Models token — `GITHUB_MODELS_TOKEN` (free)
+## 2. GitHub Models token — removed (Round BP)
 
-**What it powers:** the *GitHub agent* (the second AI vote). It calls the
-free **GitHub Models** inference endpoint with the model in
-`GITHUB_MODELS_MODEL` (default `gpt-4o-mini`).
-
-**Cost:** free for every GitHub account, with rate limits (per minute / per
-day) that comfortably cover one call per window. No card.
-
-**Steps (fine-grained token — recommended)**
-
-1. Sign in at **https://github.com** and go to
-   **https://github.com/settings/personal-access-tokens** (Settings → Developer
-   settings → Personal access tokens → **Fine-grained tokens**).
-2. Click **Generate new token**.
-3. **Token name:** anything, e.g. `drosophila-models`.
-4. **Expiration:** 90 days is fine (you will get an email before it expires;
-   just make a new one and paste it again).
-5. **Repository access:** *Public repositories (read-only)* is enough — this
-   token is not used for git at all.
-6. Scroll to **Permissions → Account permissions** and set
-   **Models → Read-only**. This is the only permission the token needs.
-7. Click **Generate token**, copy the `github_pat_…` string (shown once).
-8. Paste into **Settings → GitHub Models Token → Test**, or
-   `GITHUB_MODELS_TOKEN=` in `.env`.
-
-**Steps (classic token — also works)**
-
-1. **https://github.com/settings/tokens** → **Generate new token (classic)**.
-2. Give it a name and an expiry; you can leave **all scopes unticked** —
-   GitHub Models only needs a valid token that identifies you.
-3. Generate, copy the `ghp_…` string, paste as above.
-
-**Which model?** Default `gpt-4o-mini` (fast, small). Other free choices you
-can put in `GITHUB_MODELS_MODEL`: `gpt-4o`, `Meta-Llama-3.1-8B-Instruct`,
-`Mistral-small`, `Phi-3.5-mini-instruct`. The full list with the exact names
-is at **https://github.com/marketplace/models**.
-
-**Common errors**
-
-| Test says | Meaning | Fix |
-|---|---|---|
-| `401 Unauthorized` | token typo, or expired | regenerate |
-| `403 ... models` | fine-grained token without the *Models: read* permission | edit the token → Account permissions → Models → Read |
-| `429` | rate limit | normal on the free tier during bursts; the agent times out gracefully and votes next window |
-
-**Revoke:** same page as creation → **Delete**.
-
----
+The GitHub Models agent was removed; the two remaining agents carry 0.30 each beside the fly brain's 0.40.
 
 ## 3. CryptoPanic API key — `CRYPTOPANIC_API_KEY` (free)
 
@@ -415,8 +369,6 @@ If you are not approved yet, leave it empty: the row shows
 |---|---|---|---|
 | `GEMINI_API_KEY` | aistudio.google.com/app/apikey | free | AI agent 1 |
 | `GEMINI_MODEL` | (name, not a key) | — | default `auto` = the best model your key can call (discovered via ListModels) |
-| `GITHUB_MODELS_TOKEN` | github.com/settings/personal-access-tokens | free | AI agent 2 |
-| `GITHUB_MODELS_MODEL` | github.com/marketplace/models | — | default `gpt-4o-mini` |
 | `CRYPTOPANIC_API_KEY` | cryptopanic.com/developers/api | free | crypto news |
 | `NEWSAPI_API_KEY` | newsapi.org/account | free (100/day) | general news |
 | `RSS_FEEDS` | any RSS URL | free | news, no key |
@@ -437,8 +389,7 @@ The app has **three agent slots**:
 | Agent | Needs | Runs where | Latency |
 |---|---|---|---|
 | Gemini | `GEMINI_API_KEY` | Google's servers | ~0.5–2 s |
-| GitHub Models | `GITHUB_MODELS_TOKEN` | GitHub/Azure servers | ~0.5–3 s |
-| **Local model** | a `.gguf` (or `.onnx`) file you upload | **your machine / the Codespace CPU** | 2–20 s depending on size |
+| GitHub Models | **Local model** | a `.gguf` (or `.onnx`) file you upload | **your machine / the Codespace CPU** | 2–20 s depending on size |
 
 Each agent gets the same prompt (asset, last prices, formula summary, news
 sentiment) and returns a direction and a confidence; the orchestrator gives
@@ -638,7 +589,7 @@ curl -s -X POST localhost:8000/api/agents/local/unload
 
 ### 11.7 A note on "downloading AI" for the two cloud agents
 
-Gemini and GitHub Models run on their providers' servers — **there is nothing
+Gemini runs on its provider's servers — **there is nothing
 to download** for them; the key *is* the setup. Only the local slot needs a
 file. If you want a fully offline machine: skip both keys, load a local GGUF,
 set `MARKET_DATA_MODE=simulator` and `NEWS_ENABLED=0`, and the whole app runs
@@ -650,7 +601,6 @@ without any network at all (with the CSV brain).
 
 1. Gemini key (2 min) — biggest visible change: the Gemini agent chip turns
    green.
-2. GitHub Models token (3 min) — second agent.
 3. CryptoPanic key (3 min) — news panel fills in with tagged crypto headlines.
 4. neuPrint token (2 min) — brain status goes `LIVE_CONNECTED`, the Brain
    Matrix page shows the live hemibrain wiring.

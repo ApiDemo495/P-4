@@ -34,7 +34,6 @@ import pytest_asyncio
 
 from backend.agents import fusion as fusion_module
 from backend.agents.gemini_agent import GeminiAgent
-from backend.agents.github_agent import GitHubAgent
 from backend.agents.local_model_agent import LocalModelAgent
 from backend.core import config as cfg
 from backend.core.cycle_manager import CycleManager
@@ -432,11 +431,10 @@ def test_e08_degradation_ladder(manager: CycleManager):
     finally:
         manager.news.degradation_ok = original_news
 
-    # no AI agents (Gemini/GitHub unconfigured, local not loaded) -> level 3
+    # no AI agents (Gemini unconfigured, local not loaded) -> level 3
     # (`configured` / `ready` are read-only properties, so patch the classes)
     with (
         mock.patch.object(GeminiAgent, "configured", property(lambda self: False)),
-        mock.patch.object(GitHubAgent, "configured", property(lambda self: False)),
         mock.patch.object(LocalModelAgent, "ready", property(lambda self: False)),
     ):
         assert manager._compute_degradation(snapshot) >= DegradationLevel.NO_AGENTS
@@ -531,21 +529,19 @@ async def test_e10_agent_key_tests_fail_safe(manager: CycleManager):
     gemini = await manager.agents.gemini.test_key("")
     assert gemini["valid"] is False and gemini["error"]
 
-    github = await manager.agents.github.test_token("")
-    assert github["valid"] is False and github["error"]
-
     # agent status is always reported, configured or not
     status = manager.agents.status_payload()
-    for name in ("gemini", "local", "github"):
+    for name in ("gemini", "local"):
         assert name in status
         assert "status" in status[name]
+    assert "github" not in status                       # Round BP: agent removed
     weights = status["weights"]
     assert weights["drosophila"] == 0.40
-    assert weights["gemini"] == 0.25
-    assert weights["local"] == 0.20
-    assert weights["github"] == 0.15
+    assert weights["gemini"] == 0.30
+    assert weights["local"] == 0.30
+    assert "github" not in weights
 
-    # with Gemini/GitHub unconfigured the engine still completes a full cycle
+    # with Gemini unconfigured the engine still completes a full cycle
     queue = manager.subscribe()
     try:
         data = await wait_for_signal(queue)

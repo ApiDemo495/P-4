@@ -1846,6 +1846,29 @@ function renderRegime(b) {
   $("w-regime-text").innerHTML = `regime clock · drift regime <b>${escapeHtml(b.regime)}</b>, ${age.toFixed(0)} s old (mode ${b.run_mode} steps) · P(changed in the last window) <b>${Math.round(Number(b.p_change_window) * 100)}%</b> · μ̂ ${Number(b.mu_hat) >= 0 ? "+" : ""}${Number(b.mu_hat).toFixed(2)} bp/step · P(next window up) <b class="${pu > 0.5 ? "pos" : pu < 0.5 ? "neg" : ""}">${(pu * 100).toFixed(1)}%</b>`;
 }
 
+/* Round BP: the crowd pulse - every social network at once, how loud, which way. */
+function renderCrowdPulse(p, social) {
+  const host = $("crowd-pulse");
+  if (!host) return;
+  if (!p || !p.reads) {
+    $("pulse-text").textContent = "crowd pulse — waiting for the first social poll";
+    return;
+  }
+  const vel = Number(p.velocity || 0);
+  const tone = Number(p.weighted_sentiment || 0);
+  const fill = $("pulse-fill");
+  fill.style.width = `${Math.min(100, vel * 40).toFixed(0)}%`;
+  fill.className = ["pulse-fill", tone > 0.08 ? "bull" : tone < -0.08 ? "bear" : ""].join(" ").trim();
+  host.classList.toggle("loud", vel >= 1.5);
+  $("pulse-text").innerHTML = `crowd pulse · <b>${p.posts_10m}</b> posts / 10 min (x${vel.toFixed(2)} the hour's rate${vel >= 1.5 ? ", loud" : vel < 0.6 ? ", quiet" : ""}) · tone <b class="${tone > 0 ? "pos" : tone < 0 ? "neg" : ""}">${tone >= 0 ? "+" : ""}${tone.toFixed(2)}</b> engagement-weighted · momentum ${Number(p.momentum || 0) >= 0 ? "+" : ""}${Number(p.momentum || 0).toFixed(2)} · loudest ${escapeHtml(p.loudest || "—")}`;
+  const nets = social && typeof social === "object" ? Object.entries(social).filter(([k]) => !k.startsWith("_")) : [];
+  $("pulse-networks").innerHTML = nets.map(([k, v]) => {
+    const ok = String(v).startsWith("ok");
+    const off = String(v).startsWith("not available") || String(v).startsWith("no token");
+    return `<span class="${ok ? "ok" : off ? "off" : ""}" title="${escapeHtml(String(v))}">${escapeHtml(k)}${ok ? ` ${String(v).replace(/^ok \((\d+)\).*$/, "$1")}` : off ? " ✕" : " !"}</span>`;
+  }).join("");
+}
+
 function renderCompetition(c, pick) {
   if (!c || !$("c-streak")) return;
   state.competition = c;
@@ -2265,6 +2288,7 @@ function renderNewsList(data) {
     impactEl.title = "weight = tier × age decay × novelty (1/k-th headline on the theme × habituation: halves every 2 h a theme stays on the wire)" +
       ((data.filtered_examples || []).length ? "\nfiltered out: " + data.filtered_examples.slice(0, 4).join(" | ") : "");
   }
+  renderCrowdPulse(data.social_pulse, (data.status || {}).social);
   (data.items || []).forEach((item) => {
     const row = document.createElement("div");
     row.className = "news-item";
@@ -2294,7 +2318,6 @@ function renderAgents(data) {
     { key: "drosophila", label: "🧠 Drosophila CCSv2", weight: weights.drosophila },
     { key: "gemini", label: "🤖 Gemini AI", weight: weights.gemini },
     { key: "local", label: "💻 Local model", weight: weights.local },
-    { key: "github", label: "🐙 GitHub Models", weight: weights.github },
   ];
   const s = state.signal;
   const list = $("agent-list");
@@ -3157,7 +3180,7 @@ function renderEmergency() {
    accepted, applied to the running engine immediately, and can optionally be
    written to the git-ignored .env. */
 
-const KEY_SLOTS = ["gemini", "cryptopanic", "newsapi", "github", "neuprint"];
+const KEY_SLOTS = ["gemini", "cryptopanic", "newsapi", "neuprint"];
 
 function openKeys() {
   $("keys-modal").classList.remove("hidden");
@@ -3257,7 +3280,7 @@ function renderKeyStates() {
 function maybeShowSetupBanner() {
   const configured = (state.config && state.config.configured) || {};
   const dismissed = localStorage.getItem("drosophila.setup.dismissed") === "1";
-  const nothingSet = !configured.gemini && !configured.cryptopanic && !configured.newsapi && !configured.github;
+  const nothingSet = !configured.gemini && !configured.cryptopanic && !configured.newsapi;
   $("setup-banner").classList.toggle("hidden", dismissed || !nothingSet);
 }
 

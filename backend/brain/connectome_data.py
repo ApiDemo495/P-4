@@ -160,7 +160,7 @@ def _download(name: str, dest: Path, status: DataStatus, timeout: float = 600.0)
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
     errors = []
-    token = os.environ.get("GITHUB_TOKEN") or getattr(cfg.SETTINGS, "github_models_token", "")
+    token = os.environ.get("GITHUB_TOKEN", "")
     for url in SOURCES[name]:
         host = url.split("/")[2]
         headers = {"Accept": _RAW} if "api.github.com" in url else {}

@@ -34,7 +34,6 @@ ERROR_COOLDOWN = 60.0
 #: ``<NAME>_2`` and ``<NAME>_3``).
 ENV_NAMES = {
     "gemini": "GEMINI_API_KEY",
-    "github": "GITHUB_MODELS_TOKEN",
     "cryptopanic": "CRYPTOPANIC_API_KEY",
     "newsapi": "NEWSAPI_API_KEY",
 }

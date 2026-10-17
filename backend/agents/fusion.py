@@ -1,6 +1,6 @@
 """Agent decision fusion (Section 8).
 
-    drosophila 0.40 | gemini 0.25 | local 0.20 | github 0.15
+    drosophila 0.40 | gemini 0.30 | local 0.30   (Round BP: the GitHub agent was removed)
 
 Weights are renormalised over the agents that actually answered this cycle, so
 losing Gemini does not silently halve the signal.
@@ -226,7 +226,7 @@ def fuse(
             "source": f"weighted consensus of {int(consensus_voters)} directional formulas",
         }
 
-    for name in ("gemini", "local", "github"):
+    for name in ("gemini", "local"):
         result = agents.get(name)
         if result is not None and result.available:
             active[name] = table.mark(name)
@@ -368,7 +368,7 @@ def fuse(
 
     agent_confidences = [
         float(contributions[name]["confidence"])
-        for name in ("gemini", "local", "github")
+        for name in ("gemini", "local")
         if name in contributions
     ]
     brain_conf = max(0.0, min(1.0, ccs_confidence))

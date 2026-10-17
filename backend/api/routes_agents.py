@@ -5,7 +5,7 @@ Includes the endpoints that make the v1.0 fixes real:
 * ``POST /api/agents/local/upload`` - multipart upload with validation, load and
   a mandatory test inference before the agent is declared ready
 * ``POST /api/agents/{name}/test`` - "Test" buttons for the Gemini key, the
-  GitHub PAT, the CryptoPanic key and the NewsAPI key
+  the CryptoPanic key and the NewsAPI key
 * ``POST /api/agents/local/unload`` - release memory, optionally delete the file
 """
 
@@ -91,8 +91,6 @@ async def test_agent(name: str, payload: TestPayload | None = None) -> dict:
     key = (payload.key if payload else "") or ""
     if name == "gemini":
         return await manager.agents.gemini.test_key(key)
-    if name == "github":
-        return await manager.agents.github.test_token(key)
     if name == "cryptopanic":
         from backend.news import cryptopanic_source
 
@@ -155,7 +153,6 @@ async def key_effects() -> dict:
                        "no key" if not (ring and ring.configured) else f"not voting: {health.get('status')} - {health.get('last_error') or health.get('detail') or ''}"),
         }
     agent_row("gemini", getattr(manager.agents, "gemini", None), settings.rings.get("gemini"))
-    agent_row("github", getattr(manager.agents, "github", None), settings.rings.get("github"))
 
     news_status = manager.news.status.to_dict()
     providers = dict(manager.news.cache.providers)
@@ -222,8 +219,6 @@ def _store_key(manager, name: str, key: str, slot: int) -> None:
     slot = min(max(int(slot or 1), 1), keyring.MAX_SLOTS)
     if name == "gemini":
         manager.agents.gemini.set_key(key, slot)
-    elif name == "github":
-        manager.agents.github.set_token(key, slot)
     elif name in ("cryptopanic", "newsapi"):
         manager.settings.rings[name].set_slot(slot, key)
         setattr(manager.settings, f"{name}_key", manager.settings.rings[name].primary)

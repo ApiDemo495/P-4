@@ -120,11 +120,11 @@ def test_votes_from_reads_every_source_family() -> None:
     votes = EvidenceLedger.votes_from(
         formula_values={"OFI": 0.3, "VPIN": -0.2, "HSI": 0.9, "ZERO": 0.0},
         directional={"OFI": "flow", "VPIN": "flow", "ZERO": "flow"},
-        ccs_value=-0.1, agents={"gemini": Agent("BUY"), "github": Agent("SELL", available=False)},
+        ccs_value=-0.1, agents={"gemini": Agent("BUY"), "other": Agent("SELL", available=False)},
         spec_score=0.05, niv=-0.3, crowd_tone=0.2, candles=candles, ticks=ticks,
     )
     assert votes["f:OFI"] == 1 and votes["f:VPIN"] == -1 and "f:HSI" not in votes and "f:ZERO" not in votes
-    assert votes["brain:CCSv2"] == -1 and votes["agent:gemini"] == 1 and "agent:github" not in votes
+    assert votes["brain:CCSv2"] == -1 and votes["agent:gemini"] == 1 and "agent:other" not in votes
     assert votes["spec:fusion"] == 1 and votes["news:NIV"] == -1 and votes["crowd:tone"] == 1
     assert votes["micro:ret_1m"] == 1 and votes["micro:ret_5m"] == 1 and votes["micro:order_flow"] == 1
 

@@ -49,7 +49,7 @@ document.querySelectorAll("[data-test]").forEach((btn) => {
   };
 });
 
-const RING_PROVIDERS = ["gemini", "github", "cryptopanic", "newsapi"];
+const RING_PROVIDERS = ["gemini", "cryptopanic", "newsapi"];
 
 /* Which slot each ring is using right now, and why the others are resting. */
 async function refreshRings() {
@@ -152,7 +152,7 @@ $("save-keys").onclick = async () => {
   if (saved.some((s) => s.startsWith("newsapi") || s.startsWith("cryptopanic"))) {
     await getJSON("/api/news/poll", { method: "POST" });
   }
-  for (const provider of ["gemini", "github"]) {
+  for (const provider of ["gemini"]) {
     if (saved.some((s) => s.startsWith(provider))) await getJSON(`/api/agents/${provider}/test`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: "" }) });
   }
   await refreshRings();
@@ -421,7 +421,7 @@ async function refreshSystem() {
     `signal threshold ±${res.signal_threshold} · min fusion confidence ${res.min_fusion_confidence} · ` +
     `emergency ${res.emergency_duration_seconds}s<br>` +
     `weights: drosophila ${res.weights.drosophila} / gemini ${res.weights.gemini} / ` +
-    `local ${res.weights.local} / github ${res.weights.github} / formula consensus ${res.weights.formulas ?? 0} / physics layer ${res.weights.physics ?? 0} (renormalised; simulator tape counts half)<br>` +
+    `local ${res.weights.local} / formula consensus ${res.weights.formulas ?? 0} / physics layer ${res.weights.physics ?? 0} (renormalised; simulator tape counts half)<br>` +
     `configured: ${Object.entries(res.configured).map(([k, v]) => `${k}=${v ? "yes" : "no"}`).join(" · ")}`;
 }
 

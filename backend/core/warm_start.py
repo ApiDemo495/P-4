@@ -99,7 +99,7 @@ class WarmStartReport:
     # Round BH: the last replayed (outcome, pnl_bps) rows, so DRG and the
     # dopamine stage start from measured history instead of a dead 0.00
     drg_seed: list = field(default_factory=list)
-    not_replayed: list = field(default_factory=lambda: ["agents (Gemini / GitHub / local)", "news (NIV, themes)",
+    not_replayed: list = field(default_factory=lambda: ["agents (Gemini / local)", "news (NIV, themes)",
                                                          "crowd emotions", "physics", "genesis", "order book (L2) formulas"])
 
     def to_dict(self) -> dict:

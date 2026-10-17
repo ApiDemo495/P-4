@@ -44,28 +44,6 @@
       <div class="status-line" id="status-gemini">—</div>
     </div>
     <div class="field">
-      <label>GitHub PATs (optional) — same failover order</label>
-      <div class="row key-row">
-        <span class="key-role" id="role-github-1" title="always used">primary</span>
-        <input type="password" id="key-github-1" data-provider="github" data-slot="1" placeholder="github_pat_…" autocomplete="off" />
-        <button class="btn tiny ghost" data-reveal="key-github-1">👁</button>
-        <button class="btn" data-test="github" data-input="key-github-1" data-slot="1">Test</button>
-      </div>
-      <div class="row key-row">
-        <span class="key-role" id="role-github-2" title="only while primary fails">backup 1</span>
-        <input type="password" id="key-github-2" data-provider="github" data-slot="2" placeholder="optional" autocomplete="off" />
-        <button class="btn tiny ghost" data-reveal="key-github-2">👁</button>
-        <button class="btn" data-test="github" data-input="key-github-2" data-slot="2">Test</button>
-      </div>
-      <div class="row key-row">
-        <span class="key-role" id="role-github-3" title="only while primary and backup 1 fail">backup 2</span>
-        <input type="password" id="key-github-3" data-provider="github" data-slot="3" placeholder="optional" autocomplete="off" />
-        <button class="btn tiny ghost" data-reveal="key-github-3">👁</button>
-        <button class="btn" data-test="github" data-input="key-github-3" data-slot="3">Test</button>
-      </div>
-      <div class="status-line" id="status-github">—</div>
-    </div>
-    <div class="field">
       <label>CryptoPanic API Keys (optional)</label>
       <div class="row key-row">
         <span class="key-role" id="role-cryptopanic-1" title="always used">primary</span>

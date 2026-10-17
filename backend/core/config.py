@@ -185,7 +185,7 @@ class Settings:
     # Round AP: social sensors (Reddit + StockTwits keyless; X needs a paid bearer token)
     x_bearer_token: str = field(default_factory=lambda: _env("X_BEARER_TOKEN"))
     social_enabled: bool = field(default_factory=lambda: _env("SOCIAL_ENABLED", "1") not in ("0", "false", "no"))
-    social_poll_seconds: float = field(default_factory=lambda: _env_float("SOCIAL_POLL_SECONDS", 90.0))
+    social_poll_seconds: float = field(default_factory=lambda: _env_float("SOCIAL_POLL_SECONDS", 60.0))
     cave_server: str = field(
         default_factory=lambda: _env("CAVE_SERVER", "https://global.daf-apis.com")
     )
@@ -207,18 +207,14 @@ class Settings:
     gemini_api_key: str = field(default_factory=lambda: _env("GEMINI_API_KEY"))
     gemini_model: str = field(default_factory=lambda: _env("GEMINI_MODEL", "auto"))
     gemini_timeout_seconds: float = 9.0
-    github_models_token: str = field(default_factory=lambda: _env("GITHUB_MODELS_TOKEN"))
-    github_models_model: str = field(
-        default_factory=lambda: _env("GITHUB_MODELS_MODEL", "gpt-4o-mini")
-    )
-    github_timeout_seconds: float = 9.0
     local_timeout_seconds: float = 9.0   # Round AY: 9 s (was 7 s)
 
     # Fusion weights (Section 8.1)
     weight_drosophila: float = 0.40
-    weight_gemini: float = 0.25
-    weight_local: float = 0.20
-    weight_github: float = 0.15
+    # Round BP: the GitHub Models agent was removed; its 0.15 went to the two
+    # remaining agents (0.40 / 0.30 / 0.30).
+    weight_gemini: float = 0.30
+    weight_local: float = 0.30
     # Round T: the thermodynamic capital layer (backend/physics) votes beside
     # the agents.  0 disables it; the other weights are renormalised with it.
     weight_physics: float = field(default_factory=lambda: _env_float("PHYSICS_WEIGHT", 0.20))

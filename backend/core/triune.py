@@ -4,7 +4,7 @@ Every window three very different intelligences give an opinion:
 
 * **HUMAN** - the crowd: the emotion layer's tone (fear / greed on the tape),
   the social posts and the news sentiment.  This is what human traders feel.
-* **AI** - the language-model agents (Gemini, GitHub Models, the local model):
+* **AI** - the language-model agents (Gemini, the local model):
   what an AI reasons from the same evidence.
 * **DATA** - the fly brain and the formulas: the mushroom-body verdict (CCSv2),
   the formula consensus and the physics layer.  Pure measurement.

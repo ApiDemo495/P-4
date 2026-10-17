@@ -1142,9 +1142,7 @@ class CycleManager:
         level = self.market.degradation_level()
         if not self.news.degradation_ok():
             level = max(level, DegradationLevel.NO_NEWS)
-        if not any(
-            agent.configured for agent in (self.agents.gemini, self.agents.github)
-        ) and not self.agents.local.ready:
+        if not self.agents.gemini.configured and not self.agents.local.ready:
             level = max(level, DegradationLevel.NO_AGENTS)
         if self.brain.status.value in ("FALLBACK_CSV", "CACHED"):
             level = max(level, DegradationLevel.FALLBACK_BRAIN)
@@ -1891,6 +1889,7 @@ class CycleManager:
             "niv": round(self.news.current_niv(), 4),
             "cache_size": len(self.news.cache.all()),
             "providers": self.news.cache.providers,
+            "social_pulse": dict(getattr(self.news, "social_pulse", {}) or {}),
             "filtered": dict(self.news.cache.filtered),
             "filtered_examples": list(self.news.cache.filtered_examples)[:6],
         }
@@ -3117,7 +3116,7 @@ class CycleManager:
         except Exception:  # pragma: no cover - only during warm-up
             agent_status = {
                 name: {"status": "STARTING", "detail": "warming up"}
-                for name in ("gemini", "local", "github")
+                for name in ("gemini", "local")
             }
         components = {
             "market_data": self.market.status(),
@@ -3133,11 +3132,11 @@ class CycleManager:
                 name="agents",
                 healthy=any(
                     agent_status[name]["status"] in ("ACTIVE", "STUB")
-                    for name in ("gemini", "local", "github")
+                    for name in ("gemini", "local")
                 ),
                 detail=", ".join(
                     f"{name}={agent_status[name]['status']}"
-                    for name in ("gemini", "local", "github")
+                    for name in ("gemini", "local")
                 ),
                 mode="fusion",
             ),

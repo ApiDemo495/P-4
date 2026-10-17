@@ -86,6 +86,8 @@ class NewsEngine:
         self._last_newsapi = 0.0
         self._last_rss = 0.0
         self._last_social = 0.0
+        self.social_pulse: dict = {}
+        self.social_interval: float = float(getattr(self.settings, "social_poll_seconds", 60.0))
         self._synthetic_index = 0
         self.last_error: str = ""
 
@@ -150,7 +152,7 @@ class NewsEngine:
 
         # --- Social sensors (Round AP): Reddit + StockTwits keyless, X keyed
         if getattr(self.settings, "social_enabled", True) and (
-            force or (now - self._last_social) >= float(getattr(self.settings, "social_poll_seconds", 90.0))
+            force or (now - self._last_social) >= float(getattr(self, "social_interval", None) or getattr(self.settings, "social_poll_seconds", 60.0))
         ):
             polled["social"] = await self._poll_social()
             self._last_social = now
@@ -173,10 +175,15 @@ class NewsEngine:
             self.cache.providers["social"] = f"error: {exc}"
             return 0
         self.status.social = status
+        self.social_pulse = dict(status.get("_pulse") or {})
         added = self.cache.add(items)
-        live = [k for k, v in status.items() if str(v).startswith("ok")]
-        self.cache.providers["social"] = (f"ok ({added} new from {', '.join(live)})" if live
-                                          else "; ".join(f"{k}: {v}" for k, v in status.items() if k in ("reddit", "stocktwits", "x")))
+        live = [k for k, v in status.items() if not k.startswith("_") and str(v).startswith("ok")]
+        self.cache.providers["social"] = (f"ok ({added} new from {', '.join(live)} in {status.get('_ms', 0):.0f} ms)" if live
+                                          else "; ".join(f"{k}: {v}" for k, v in status.items() if k in ("reddit", "stocktwits", "bluesky", "mastodon", "x")))
+        # Round BP: poll faster while the crowd is loud (velocity > 1.5x), never
+        # faster than every 30 s - the networks' own limits set the floor
+        vel = float(self.social_pulse.get("velocity") or 1.0)
+        self.social_interval = 30.0 if vel >= 1.5 else float(getattr(self.settings, "social_poll_seconds", 60.0))
         return added
 
     async def _poll_cryptopanic(self) -> int:

@@ -62,7 +62,7 @@ HEDGE_FORMULAS = ("HRDD", "SHRP", "GCDV")
 SIGNED_FEATURES = (
     "return_1s_bps", "return_win_bps", "z_win", "aggression_1s", "aggression_5s", "aggression_window",
     "aggression_micro", "depth_imbalance", "candle_trend_bps", "news_sentiment", "social_sentiment",
-    "herding",
+    "herding", "social_momentum",
 )
 
 

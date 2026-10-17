@@ -445,7 +445,7 @@ decision maker.
 ### 8.1 Weights
 
 ```
-drosophila 0.40   gemini 0.25   local 0.20   github 0.15
+drosophila 0.40   gemini 0.30   local 0.30   (GitHub Models agent removed in Round BP)
 ```
 
 Renormalised over the agents that answered: `wᵢ = Wᵢ / Σ W_active`.
@@ -777,7 +777,7 @@ backend/
   brain/      startup verification, connectome query, clustering, GCN, health,
               fallback/mb_adjacency_80x80.csv, generate_fallback_matrix.py
   news/       sentiment lexicon, 3 sources, critical detector, news engine
-  agents/     base, gemini, local model, github, fusion, orchestrator
+  agents/     base, gemini, local model, fusion, orchestrator
   web/        dashboard (index.html, app.js, styles.css, matrix, settings)
   tests/      smoke.py + test_e2e.py (Appendix E)
 docs/         SPECIFICATION_v2.md, SPEC_NOTES.md

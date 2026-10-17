@@ -61,10 +61,10 @@ def test_inputs_from_covers_every_group():
             self.decision, self.confidence = d, c
     inputs, groups = H.HindsightReviewer.inputs_from(
         formula_values={"VSD": 0.2, "HSI": 0.7, "TAI": -0.1}, directional={"VSD": "a", "TAI": "a"},
-        agents={"gemini": R("SELL", 0.7), "github": R(None, None)}, ccs_value=0.3, physics_vote=-0.2,
+        agents={"gemini": R("SELL", 0.7), "other": R(None, None)}, ccs_value=0.3, physics_vote=-0.2,
         genesis_vote=0.1, niv=0.05, crowd_tone=-0.3, forward_vote=0.2, spec_score=0.4,
         features={"return_1s_bps": 3.0, "tick_rate_hz": 9.0})
-    assert "HSI" not in inputs and inputs["agent:gemini"] == -0.7 and "agent:github" not in inputs
+    assert "HSI" not in inputs and inputs["agent:gemini"] == -0.7 and "agent:other" not in inputs
     assert set(groups.values()) == {"formula", "agent", "reasoning", "physics", "genesis", "emotion", "feature"}
     assert "feature:return_1s_bps" in inputs and "feature:tick_rate_hz" not in inputs
 
@@ -281,3 +281,80 @@ def test_bocpd_dates_the_regime_and_regime_experts_route_walk_forward():
     js = open("backend/web/app.js", encoding="utf-8").read()
     assert 'id="w-regime"' in html and 'id="hs-meta-experts"' in html
     assert "function renderRegime" in js
+
+
+def test_github_agent_removed_and_social_sensor_runs_concurrently():
+    """Round BP: no GitHub agent anywhere; the social sensor fetches every
+    network at once, backs off per network, de-duplicates and reports a pulse."""
+    import asyncio
+    import json
+    import os
+    import httpx
+    from backend.agents.orchestrator import AgentOrchestrator
+    from backend.core import config as cfg
+    from backend.news import social_source as S
+
+    assert not os.path.exists("backend/agents/github_agent.py")
+    orch = AgentOrchestrator(cfg.Settings(), local_stub=True)
+    assert set(orch.agents) == {"gemini", "local"} and "github" not in orch.weights()
+    assert abs(orch.weights()["gemini"] + orch.weights()["local"] + orch.weights()["drosophila"] - 1.0) < 1e-9
+    for path in ("backend/web/index.html", "backend/web/settings.html", "backend/web/app.js", "backend/web/settings.js", ".env.example"):
+        txt = open(path, encoding="utf-8").read()
+        assert "GITHUB_MODELS" not in txt and "key-github" not in txt and "k-github" not in txt, path
+
+    now = time.time()
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        url = str(request.url)
+        if "reddit.com" in url:
+            return httpx.Response(200, json={"data": {"children": [
+                {"data": {"title": "Bitcoin breaks out, bulls back", "score": 500, "num_comments": 80, "created_utc": now - 60,
+                          "permalink": "/r/Bitcoin/x", "subreddit": "Bitcoin"}}]}})
+        if "stocktwits.com" in url:
+            if "trending" in url:
+                return httpx.Response(429)
+            return httpx.Response(200, json={"messages": [{"body": "$BTC.X going to the moon", "created_at": "2026-10-17T10:00:00Z",
+                                                            "entities": {"sentiment": {"basic": "Bullish"}}, "user": {"username": "u"}, "likes": {"total": 3}}]})
+        if "bsky.app" in url:
+            return httpx.Response(200, json={"posts": [{"record": {"text": "bitcoin crash incoming, sell", "createdAt": "2026-10-17T10:00:00Z"},
+                                                        "author": {"handle": "a.bsky.social"}, "likeCount": 2, "repostCount": 0, "replyCount": 1,
+                                                        "uri": "at://did/app.bsky.feed.post/abc"}]})
+        if "mastodon.social" in url or "fosstodon.org" in url:
+            return httpx.Response(200, json=[{"content": "<p>Bitcoin breaks out, bulls back</p>", "created_at": "2026-10-17T10:00:00Z",
+                                              "account": {"acct": "m"}, "favourites_count": 1, "reblogs_count": 0, "replies_count": 0, "url": "https://mastodon.social/@m/1"},
+                                             {"content": "<p>#gold quietly bid into the close</p>", "created_at": "2026-10-17T10:01:00Z",
+                                              "account": {"acct": "g"}, "favourites_count": 4, "reblogs_count": 1, "replies_count": 0, "url": "https://mastodon.social/@g/2"}])
+        if "hn.algolia.com" in url:
+            return httpx.Response(200, json={"hits": [{"title": "Why gold price is surging", "points": 120, "num_comments": 40,
+                                                        "created_at_i": int(now - 300), "objectID": "1"}]})
+        if "alternative.me" in url:
+            return httpx.Response(200, json={"data": [{"value": "72", "value_classification": "Greed", "timestamp": str(int(now))},
+                                                       {"value": "65", "value_classification": "Greed", "timestamp": str(int(now - 86400))}]})
+        return httpx.Response(404)
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await S.fetch(client, cfg.Settings())
+    items, status = asyncio.run(run())
+    providers = {i.provider for i in items}
+    assert {"Social:reddit", "Social:stocktwits", "Social:bluesky", "Social:mastodon", "Social:hackernews", "Social:feargreed"} <= providers
+    assert all(i.tier == 4 and i.relevance_tag == "social" and 0.5 <= i.relevance <= 0.75 for i in items)
+    # the duplicate headline across reddit / mastodon is kept once
+    assert sum(1 for i in items if i.headline.startswith("Bitcoin breaks out")) == 1
+    fg = next(i for i in items if i.provider == "Social:feargreed")
+    assert abs(fg.sentiment - 0.44) < 1e-9 and "72" in fg.headline
+    assert status["stocktwits"].startswith("ok") and status["x"].startswith("no token")
+    assert status["instagram"].startswith("not available") and status["_ms"] >= 0
+    p = status["_pulse"]
+    assert p["posts_10m"] >= 1 and p["velocity"] > 0 and "reads" in p and p["loudest"]
+    assert json.dumps(status)                                   # serialisable for the API
+    # a network that rate-limits is backed off and skipped on the next poll
+    S._backoff["bluesky"] = (time.time() + 300, 90.0)
+    items2, status2 = asyncio.run(run())
+    assert status2["bluesky"].startswith("backing off")
+    S._backoff.pop("bluesky", None)
+    html = open("backend/web/index.html", encoding="utf-8").read()
+    js = open("backend/web/app.js", encoding="utf-8").read()
+    assert 'id="crowd-pulse"' in html and "function renderCrowdPulse" in js

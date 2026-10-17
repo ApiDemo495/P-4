@@ -1,6 +1,6 @@
 """Agent orchestrator - runs the four agents inside the 8-second lock budget.
 
-Gemini, the local model and the GitHub agent are all called concurrently.  Each
+Gemini and the local model are called concurrently.  Each
 has its own timeout (7 s) so the *slowest* agent still cannot push the lock past
 t=8 s: the fusion step simply proceeds with whoever answered.
 """
@@ -13,7 +13,6 @@ import time
 
 from backend.agents.base import AgentResult, AgentStatus
 from backend.agents.gemini_agent import GeminiAgent
-from backend.agents.github_agent import GitHubAgent
 from backend.agents.local_pool import LocalModelPool
 from backend.core import config as cfg
 
@@ -25,7 +24,6 @@ class AgentOrchestrator:
         self.settings = settings or cfg.SETTINGS
         self.gemini = GeminiAgent(self.settings)
         self.local = LocalModelPool(self.settings)
-        self.github = GitHubAgent(self.settings)
         if local_stub is not None:
             self.local.stub = local_stub
         self.last_run_ms = 0.0
@@ -34,14 +32,13 @@ class AgentOrchestrator:
     # ------------------------------------------------------------------
     @property
     def agents(self) -> dict:
-        return {"gemini": self.gemini, "local": self.local, "github": self.github}
+        return {"gemini": self.gemini, "local": self.local}
 
     def weights(self) -> dict[str, float]:
         return {
             "drosophila": self.settings.weight_drosophila,
             "gemini": self.settings.weight_gemini,
             "local": self.settings.weight_local,
-            "github": self.settings.weight_github,
         }
 
     # ------------------------------------------------------------------
@@ -51,12 +48,11 @@ class AgentOrchestrator:
 
         gemini_task = asyncio.create_task(self.gemini.decide(context, weights["gemini"]))
         local_task = asyncio.create_task(self.local.decide(context, weights["local"]))
-        github_task = asyncio.create_task(self.github.decide(context, weights["github"]))
 
         gathered = await asyncio.gather(
-            gemini_task, local_task, github_task, return_exceptions=True
+            gemini_task, local_task, return_exceptions=True
         )
-        names = ("gemini", "local", "github")
+        names = ("gemini", "local")
         results: dict[str, AgentResult] = {}
         for name, outcome in zip(names, gathered):
             if isinstance(outcome, BaseException):

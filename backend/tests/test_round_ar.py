@@ -71,7 +71,7 @@ def test_minds_are_built_from_the_three_kinds_of_evidence():
             self.decision, self.confidence, self.ok = d, c, ok
 
     m = TriuneAnalyst.minds_from(crowd_tone=0.5, social_sentiment=0.2, news_niv=-0.1,
-                                 agents={"gemini": R("BUY", 0.8), "github": R("SELL", 0.4), "local": R("BUY", 0.5, ok=False)},
+                                 agents={"gemini": R("BUY", 0.8), "other": R("SELL", 0.4), "local": R("BUY", 0.5, ok=False)},
                                  ccs_value=-0.4, formula_consensus=-0.2, physics_vote=0.1)
     assert m["human"] == pytest.approx(0.6 * 0.5 + 0.2 * 0.2 - 0.2 * 0.1, abs=1e-4)
     assert m["ai"] == pytest.approx((0.8 - 0.4) / 2, abs=1e-4) and m["ai_answered"] == 2

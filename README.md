@@ -202,7 +202,7 @@ budget too.
 `/settings` saves every key to the running engine **and** to `.env` (default on).
 A brand-new Codespace has no `.env`, so put the same names in
 **GitHub → Settings → Codespaces → Secrets** (repository access: this repo):
-`GEMINI_API_KEY`, `NEWSAPI_API_KEY`, `CRYPTOPANIC_API_KEY`, `GITHUB_MODELS_TOKEN`,
+`GEMINI_API_KEY`, `NEWSAPI_API_KEY`, `CRYPTOPANIC_API_KEY`,
 `NEUPRINT_APPLICATION_CREDENTIALS`, `CAVE_TOKEN`. The `/settings` page's
 "What each key is doing right now" table (and `/api/settings/effects`) proves
 each key is contributing - voting in fusion, headlines on the wire, live
@@ -383,8 +383,7 @@ tick *remember* to persist to the git-ignored `.env`.
 
 | Key | What it unlocks |
 |---|---|
-| `GEMINI_API_KEY` (+ `_2`, `_3`) | Gemini agent, 25 % of the fusion. Slot 1 is the primary; `_2`/`_3` are optional stand-ins used automatically while slot 1 is rejected / rate limited, primary retried as soon as it recovers |
-| `GITHUB_MODELS_TOKEN` (+ `_2`, `_3`) | GitHub Models agent, 15 %, same three-slot failover |
+| `GEMINI_API_KEY` (+ `_2`, `_3`) | Gemini agent, 30 % of the fusion. Slot 1 is the primary; `_2`/`_3` are optional stand-ins used automatically while slot 1 is rejected / rate limited, primary retried as soon as it recovers |
 | `CRYPTOPANIC_API_KEY`, `NEWSAPI_API_KEY` (+ `_2`, `_3`) | news sources, same three-slot failover; `GET /api/settings/keys` shows which slot is in use |
 | `CRYPTOPANIC_API_KEY` | 30-second news engine + critical-event detection |
 | `NEWSAPI_API_KEY` | NewsAPI backup tier |
@@ -582,7 +581,7 @@ tail -f server.log
 | `backend/formulas` | the 31 formulas in 9 categories + `engine.py` + the DRG reward learner |
 | `backend/brain` | 5-step startup verification, connectome query, spectral clustering, 3-layer GCN, `explain.py`, fallback matrix |
 | `backend/news` | sentiment lexicon, CryptoPanic/NewsAPI/RSS, critical-event detector |
-| `backend/agents` | Gemini, local GGUF/ONNX, GitHub Models, fusion, orchestrator |
+| `backend/agents` | Gemini, local GGUF/ONNX, fusion, orchestrator |
 | `backend/web` | zero-build dashboard (`/`, `/matrix`, `/settings`) |
 | `backend/tests` | `smoke.py` + `test_e2e.py` (Appendix E) |
 | `docs` | [`SPECIFICATION_v2.md`](docs/SPECIFICATION_v2.md), [`SPEC_NOTES.md`](docs/SPEC_NOTES.md) |
@@ -973,7 +972,7 @@ engine does this itself):
 * [`docs/SPECIFICATION_v2.md`](docs/SPECIFICATION_v2.md) — the full specification
   (every formula, every threshold, the API, Appendices A–F).
 * [`docs/API_KEYS_AND_MODELS.md`](docs/API_KEYS_AND_MODELS.md) — how to get every
-  key (Gemini, GitHub Models, CryptoPanic, NewsAPI, neuPrint, FlyWire — all
+  key (Gemini, CryptoPanic, NewsAPI, neuPrint, FlyWire — all
   free), where to paste it, how to test it, and which local AI models to
   download from where and how to load them.
 * [`docs/SPEC_NOTES.md`](docs/SPEC_NOTES.md) — every deliberate deviation from the

@@ -253,6 +253,8 @@ TERM_DEFINITIONS: dict[str, str] = {
     "social_buzz": "ramp(social posts among the last 30 wire items; 2, 12)",
     "social_pos": "ramp(social_sentiment; 0.10, 0.60) × social_buzz",
     "social_neg": "ramp(−social_sentiment; 0.10, 0.60) × social_buzz",
+    "social_velocity": "social posts in the last 10 min ÷ (posts in the last hour ÷ 6) - how loud the crowd is vs its own hour",
+    "social_momentum": "engagement-weighted social tone × min(3, social_velocity) - a loud leaning crowd",
     "pinned": ("ramp(pin_prob; 0.05, 0.40) - pin_prob = max(share of the last 70 s windows that closed "
                "exactly at their open, 2·Φ(tick/(2·σ₅₃)) − 1) - the probability the next window ties"),
     "frozen_tape": "1 − ramp(tick rate / its own pace; 0.30, 1.00) - prints drying up",
@@ -1105,6 +1107,21 @@ def features(
         out["social_buzz"] = _ramp(len(social), 2.0, 12.0)
         out["social_sentiment"] = (float(np.mean([_num(getattr(i, "sentiment", 0.0)) for i in social]))
                                    if social else 0.0)
+        # Round BP: how *loud* the crowd is - social posts published in the
+        # last 10 min against the trailing hour's per-10-min rate (over the
+        # whole wire, not just the last 30 items) - and the signed momentum:
+        # engagement-weighted tone x velocity, the input the meta learns.
+        now_s = time.time()
+        all_social = [i for i in items if str(getattr(i, "relevance_tag", "")) == "social"
+                      and now_s - _num(getattr(i, "published_at", 0.0)) < 3600.0]
+        last10 = [i for i in all_social if now_s - _num(getattr(i, "published_at", 0.0)) < 600.0]
+        base = max(1.0, len(all_social) / 6.0)
+        velocity = len(last10) / base
+        weights = [max(0.1, _num(getattr(i, "relevance", 0.5)) - 0.4) for i in all_social]
+        wtone = (float(sum(w * _num(getattr(i, "sentiment", 0.0)) for w, i in zip(weights, all_social)) / sum(weights))
+                 if all_social else 0.0)
+        out["social_velocity"] = float(velocity)
+        out["social_momentum"] = float(wtone * min(3.0, velocity))
     else:
         out["news_sentiment"] = 0.0
         out["news_items"] = 0.0
@@ -1113,6 +1130,8 @@ def features(
         out["social_posts"] = 0.0
         out["social_buzz"] = 0.0
         out["social_sentiment"] = 0.0
+        out["social_velocity"] = 0.0
+        out["social_momentum"] = 0.0
 
     # --- Round AX: the frozen tape --------------------------------------
     # The contest loses on a tie, so "the price stays at one point" is a

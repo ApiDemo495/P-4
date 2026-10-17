@@ -2562,3 +2562,28 @@ tracked file is referenced; nothing was deleted on a hunch.
   was over-confident and is shrunk.  Reliability strip in the Meta-combiner
   box: predicted vs realised hit rate in five confidence bins.
   `_apply_meta` blends the calibrated confidence.
+
+### BP — GitHub agent removed; the social sensor rebuilt
+
+* **GitHub Models agent removed** (`backend/agents/github_agent.py`, its
+  key ring, settings fields, `/api/agents/github/test`, the PAT rows on
+  `/` and `/settings`, env vars).  Fusion weights are now
+  drosophila 0.40 / gemini 0.30 / local 0.30.
+* **Social sensor** (`backend/news/social_source.py`): every network is
+  fetched **concurrently** under one 9 s deadline (was sequential, 20–40 s
+  worst case); per-network exponential back-off on 429/5xx (90 s → 20 min)
+  so one limit never stalls the rest; de-duplication by URL and normalised
+  text across networks; engagement-weighted relevance (0.5–0.75).  Networks,
+  all keyless: Reddit (6 subs, new + rising, site search), StockTwits
+  (BTC.X, GLD, trending), **Bluesky** (public searchPosts), **Mastodon**
+  (hashtag timelines on two instances), **Hacker News** (Algolia), **Crypto
+  Fear & Greed** (alternative.me); X with a bearer token; Instagram /
+  Facebook honestly listed as not readable.  A network whose every call
+  failed is reported as an error, never as "nothing new".
+* **Crowd pulse**: posts in the last 10 min vs the hour's rate (velocity),
+  engagement-weighted tone, momentum = tone × min(3, velocity), loudest
+  network - in `/api/news → social_pulse`, the news card's pulse meter
+  (beats when loud, green/red by tone, per-network chips), and the
+  emotion features `social_velocity` / `social_momentum`; the latter is a
+  learned hindsight / meta-combiner input.  Social poll every 60 s, 30 s
+  while the crowd is loud.

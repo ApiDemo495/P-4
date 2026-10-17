@@ -41,7 +41,6 @@ BACKERS = {
     "news": ("news:NIV",),
     "gemini": ("agent:gemini",),
     "local": ("agent:local",),
-    "github": ("agent:github",),
 }
 
 
@@ -115,7 +114,6 @@ def build(settings, ledger_sources: list[dict] | None = None) -> LockWeightTable
         "news": float(getattr(settings, "weight_news", 0.0) or 0.0),
         "gemini": float(getattr(settings, "weight_gemini", 0.0) or 0.0),
         "local": float(getattr(settings, "weight_local", 0.0) or 0.0),
-        "github": float(getattr(settings, "weight_github", 0.0) or 0.0),
     }
     table = LockWeightTable()
     rows = ledger_sources or []

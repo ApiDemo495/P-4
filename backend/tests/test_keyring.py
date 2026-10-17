@@ -11,7 +11,6 @@ import pytest
 from backend.agents import keyring
 from backend.agents.base import AgentResult, AgentStatus
 from backend.agents.gemini_agent import GeminiAgent, RateLimited
-from backend.agents.github_agent import GitHubAgent
 from backend.agents.keyring import KeyRing
 from backend.agents.local_pool import LocalModelPool, merge_results
 from backend.core import config as cfg
@@ -60,7 +59,7 @@ def test_every_slot_is_optional_and_env_accepts_suffixes(monkeypatch):
 
 
 def test_all_cooling_still_offers_the_soonest_key_when_close():
-    ring = KeyRing.from_keys("github", ["a", "b"])
+    ring = KeyRing.from_keys("cryptopanic", ["a", "b"])
     ring.report_failure("a", "rejected")
     ring.report_failure("b", "error")
     assert ring.all_cooling()
@@ -112,23 +111,6 @@ def test_gemini_reports_rate_limited_only_when_every_key_is_cooling(monkeypatch)
     # A brand-new key pasted into slot 1 clears its cooldown immediately.
     agent.set_key("fresh", 1)
     assert agent.ring.current() == "fresh"
-
-
-def test_github_rejected_pat_hands_over_to_the_backup(monkeypatch):
-    settings = _settings()
-    settings.rings["github"] = KeyRing.from_keys("github", ["revoked", "", "spare"])
-    agent = GitHubAgent(settings)
-
-    async def fake_call(prompt, token):
-        if token == "revoked":
-            raise PermissionError("rejected")
-        return '{"decision": "SELL", "confidence": 0.6, "reasoning": "ok"}'
-
-    monkeypatch.setattr(agent, "_call", fake_call)
-    result = asyncio.run(agent.decide({}, 0.15))
-    assert result.decision == "SELL"
-    assert agent.ring.status()["active_slot"] == 3
-    assert agent.ring.slots[0].reason.startswith("rejected")
 
 
 # ---------------------------------------------------------------- pool
