@@ -223,6 +223,9 @@ function handle(msg) {
     case "HORIZON":
       if (msg.data && msg.data.horizons) renderHorizons(msg.data.horizons);
       break;
+    case "TWIN":
+      if (msg.data && msg.data.temporal_arb) renderTemporalArb(msg.data.temporal_arb);
+      break;
     case "OUTCOME":
       refreshOutcomes();
       if (msg.data && msg.data.competition) {
@@ -1747,6 +1750,49 @@ function renderHorizons(h) {
   });
 }
 
+/* Round BL: Temporal Arbitrage - continuous 70 s risk against its synthetic
+   twin (60 s leg rolled at :60 into a 10 s leg), priced at the boundary and
+   settled on the last trade.  Nothing here moves the Signal Lock. */
+function renderTemporalArb(t) {
+  if (!t || !$("tw-head")) return;
+  state.temporalArb = t;
+  markPanel("twin");
+  const pr = t.pricing || {};
+  const cur = t.current || null;
+  const led = t.ledger || {};
+  const pct = (x) => `${(Number(x || 0) * 100).toFixed(1)}%`;
+  const bp = (x) => `${Number(x || 0) >= 0 ? "+" : ""}${Number(x || 0).toFixed(2)} bp`;
+  $("tw-head").textContent = cur ? `window ${cur.cycle} · priced at the boundary · ${pr.covered ? `${pr.pairs} roll pairs on the tape` : "tape too short to price"}` : "waiting for the first boundary";
+  const richerTwin = Number(pr.twin_edge || 0) > 0;
+  const c = $("tw-continuous"), w = $("tw-twin");
+  c.classList.toggle("richer", pr.covered && !richerTwin);
+  w.classList.toggle("richer", pr.covered && richerTwin);
+  c.querySelector(".twin-body").innerHTML = pr.covered
+    ? `${escapeHtml(pr.leg_a_side || "—")} for 70 s · σ₇₀ ${Number(pr.sigma_70).toFixed(1)} bp<br>P(win) ${pct(pr.p_win_70)} · tie ${pct(pr.p_tie_70)}<br>EV <b>${Number(pr.ev_continuous).toFixed(3)}</b> win-units`
+    : "—";
+  w.querySelector(".twin-body").innerHTML = pr.covered
+    ? `leg A ${escapeHtml(pr.leg_a_side || "—")} 60 s · σ₆₀ ${Number(pr.sigma_60).toFixed(1)} bp · P(win) ${pct(pr.p_win_60)} · tie ${pct(pr.p_tie_60)}<br>` +
+      `leg B 10 s at :60 · σ₁₀ ${Number(pr.sigma_10).toFixed(1)} bp · rule <i>${escapeHtml(pr.roll_rule || "")}</i> · P(win) ${pct(pr.p_win_10)} · tie ${pct(pr.p_tie_10)}<br>` +
+      `EV <b>${Number(pr.ev_twin).toFixed(3)}</b> win-units · twin edge <b>${Number(pr.twin_edge) >= 0 ? "+" : ""}${Number(pr.twin_edge).toFixed(3)}</b>`
+    : "—";
+  $("tw-spread").innerHTML = pr.covered
+    ? `volatility decay spread: σ₇₀² − (σ₆₀² + σ₁₀²) = 2·ρ·σ₆₀·σ₁₀ = <b>${Number(pr.spread_bps2) >= 0 ? "+" : ""}${Number(pr.spread_bps2).toFixed(2)} bp²</b> = <b>${(Number(pr.spread_share) * 100).toFixed(1)}%</b> of the 70 s variance · ρ_roll ${Number(pr.rho_roll) >= 0 ? "+" : ""}${Number(pr.rho_roll).toFixed(3)} (${Number(pr.rho_roll) < 0 ? "the window loses variance at the roll - segmented legs own more sign-risk" : "the window gains variance at the roll - the single window owns more sign-risk"})`
+    : "the tape must cover two windows before the spread can be measured";
+  $("tw-roll").textContent = cur
+    ? (cur.settled_at ? `settled: leg A ${cur.leg_a_won ? "won" : "lost"} (${bp(cur.r60_bps)}), leg B ${escapeHtml(cur.leg_b_side || "")} ${cur.leg_b_won ? "won" : "lost"} (${bp(cur.r10_bps)}), continuous ${cur.continuous_won ? "won" : cur.flat_70 ? "flat = loss" : "lost"} (${bp(cur.r70_bps)}) · realised spread ${bp((cur.twin_pnl || 0) - (cur.continuous_pnl || 0))}`
+      : cur.roll_price ? `rolled at :60 — ${cur.roll_note}` : `leg A running · rolls at :60 · settles at :70`)
+    : "—";
+  $("tw-ledger").innerHTML = [
+    `settled <b>${led.windows || 0}</b>`,
+    `twin out-earned the window in <b>${pct(led.twin_better_share)}</b>`,
+    `realised spread <b>${bp(led.avg_spread_bps)}</b> / window (Σ ${bp(led.sum_spread_bps)})`,
+    `flat 70 s prints <b>${led.flat_windows || 0}</b> · twin earned there <b>${bp(led.flat_twin_bps)}</b>`,
+    `strict-sign: continuous <b>${pct(led.continuous_rate)}</b> · leg A <b>${pct(led.leg_a_rate)}</b> · leg B <b>${pct(led.leg_b_rate)}</b>`,
+  ].map((x) => `<span>${x}</span>`).join("");
+  $("tw-verdict").textContent = t.verdict || "—";
+  $("tw-logic").innerHTML = (pr.logic || []).map((l) => `<div>${escapeHtml(l)}</div>`).join("") + (cur && cur.roll_note ? `<div>roll: ${escapeHtml(cur.roll_note)}</div>` : "");
+}
+
 function renderCompetition(c, pick) {
   if (!c || !$("c-streak")) return;
   state.competition = c;
@@ -3269,6 +3315,7 @@ function applySnapshot(data, opts = {}) {
   if (data.outcomes) renderOutcomes(data.outcomes);
   if (data.competition) renderCompetition(data.competition, data.boundary_pick);
   if (data.horizons) renderHorizons(data.horizons);
+  if (data.temporal_arb) renderTemporalArb(data.temporal_arb);
   if (data.accuracy && state.prediction) state.prediction.accuracy = data.accuracy;
   if (data.window) state.window = data.window;
   state.lastSnapshotAt = Date.now();

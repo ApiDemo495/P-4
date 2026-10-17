@@ -2474,3 +2474,27 @@ tracked file is referenced; nothing was deleted on a hunch.
   overrode or agreed with the recipe. `fusion.meta`, `/api/hindsight →
   meta`, vault key `meta`, panel block in the Hindsight card (trailing vs
   recipe hit rate, fit size, top weights, this window's drivers).
+
+### BL — Temporal Arbitrage Engine (continuous vs segmented risk)
+
+* `backend/core/temporal_arb.py`: every window the contest sells *continuous
+  risk* (one 70 s sign).  The engine prices, at the same boundary and from
+  the same frozen tape, its **synthetic twin** - *segmented risk*: a 60 s
+  leg that rolls at :60 into a 10 s leg.
+* The maths is exact, not assumed: `σ₇₀² = σ₆₀² + σ₁₀² + 2·ρ_roll·σ₆₀·σ₁₀`
+  with `ρ_roll` measured between each window's first 60 s and the 10 s that
+  follow (roll pairs every 2 s over the tape).  The cross term is the
+  **volatility decay spread**; its share of the 70 s variance is shown.
+  The rolled leg is priced with the arcsin law
+  `P(sign r₁₀ = sign r₆₀) = ½ + arcsin ρ / π` when `|ρ_roll| ≥ 0.10`
+  (continue / fade the first leg), else it keeps the lock side.  Per-leg
+  tie risk (a flat print = loss) and expected win-units for both structures
+  → `twin_edge`.
+* Lifecycle: `price()` at the boundary, `roll()` at :60 (books the roll
+  print, decides leg B), `settle()` at :70 on the last trade.  Ledger =
+  realised twin − continuous P&L (bps), share of windows the twin
+  out-earned, what the twin earned in flat-70 s windows, strict-sign rates
+  per structure/leg; `verdict()` only speaks after 10 settled windows.
+* The Signal Lock is untouched - leg A inherits it; this is pricing and a
+  ledger.  `GET /api/temporal-arb`, WS `TWIN`, snapshot `temporal_arb`,
+  vault key `temporal_arb`, dashboard card `#twin-card`.

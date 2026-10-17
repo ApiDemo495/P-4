@@ -73,6 +73,14 @@ async def horizons() -> dict:
     return {"horizons": get_manager().horizons_payload()}
 
 
+@router.get("/api/temporal-arb")
+async def temporal_arb() -> dict:
+    """Round BL: continuous 70 s risk priced against its segmented twin
+    (60 s rolled at :60 into 10 s) - the volatility decay spread, both
+    structures' P(win) and the realised twin-minus-continuous ledger."""
+    return {"temporal_arb": get_manager().temporal_arb_payload()}
+
+
 @router.get("/api/hindsight")
 async def hindsight() -> dict:
     """Round BI: the trailing hour's review of every input - formulas, agents,

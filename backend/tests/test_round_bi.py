@@ -137,3 +137,56 @@ def test_meta_combiner_learns_walk_forward_and_only_decides_when_earned():
     assert d["decides"] and d["fit"]["top_weights"][0]["name"] == "GOOD"
     html = (Path(__file__).resolve().parents[2] / "backend/web/index.html").read_text(encoding="utf-8")
     assert 'id="hs-meta"' in html
+
+
+def test_temporal_arbitrage_prices_rolls_and_settles_the_twin():
+    """Round BL: the synthetic twin (60 s -> roll -> 10 s) is priced on the
+    tape with the exact variance decomposition, rolled at :60 from the first
+    leg, settled strictly, and the ledger is the realised spread."""
+    import numpy as np
+    from backend.core import temporal_arb as ta
+
+    rng = np.random.default_rng(7)
+    n = 20 * 60 * 10
+    t = np.arange(n) * 100.0
+    # strongly mean-reverting tape at the roll scale: an AR(1) in 10 s blocks
+    blocks = n // 100
+    br = np.zeros(blocks)
+    for i in range(1, blocks):
+        br[i] = -0.6 * br[i - 1] + rng.normal(0, 3.0)
+    r = np.repeat(br / 100.0, 100) + rng.normal(0, 0.05, n)
+    p = 60000 * np.exp(np.cumsum(r) / 1e4)
+    ticks = np.c_[t, p, np.ones(n), np.sign(r)]
+    pr = ta.price_structures(ticks, "BUY", 0.3)
+    assert pr["covered"] and pr["pairs"] >= ta.MIN_PAIRS
+    # the decomposition sigma_70^2 = s60^2 + s10^2 + 2 rho s60 s10 holds on the tape
+    assert abs(pr["sigma_70_model"] - pr["sigma_70"]) / pr["sigma_70"] < 0.15
+    assert pr["rho_roll"] < -ta.ACT_RHO and pr["roll_rule"].startswith("fade")
+    assert pr["spread_bps2"] < 0 and pr["p_win_10"] > 0.5
+    assert len(pr["logic"]) >= 5 and "arcsin" in " ".join(pr["logic"])
+    eng = ta.TemporalArbEngine()
+    tr = eng.price(5, 100.0, "BUY", 0.3, ticks, now=0.0)
+    assert tr.roll_at == 60.0 and tr.due_at == 70.0
+    eng.roll(tr, 100.10)                       # leg A +10 bp -> fade -> SELL
+    assert tr.leg_b_side == "SELL"
+    eng.settle(tr, 100.05)                     # 10 s leg -5 bp: SELL wins; continuous +5 bp wins
+    assert tr.leg_a_won and tr.leg_b_won and tr.continuous_won
+    assert tr.twin_pnl > tr.continuous_pnl     # ~+15 vs +5 bp
+    d = eng.to_dict()
+    assert d["ledger"]["windows"] == 1 and d["ledger"]["twin_better"] == 1
+    # a flat 70 s print is a loss for the continuous bet; the twin can still earn
+    tr2 = eng.price(6, 100.0, "BUY", 0.3, ticks, now=100.0)
+    eng.roll(tr2, 100.08)
+    eng.settle(tr2, 100.0)
+    assert tr2.flat_70 and not tr2.continuous_won and tr2.twin_pnl > 0
+    assert eng.to_dict()["ledger"]["flat_windows"] == 1
+    # persistence round-trips the ledger
+    fresh = ta.TemporalArbEngine()
+    fresh.import_state(eng.export_state())
+    assert fresh.windows == 2 and fresh.twin_better == 2
+    # a short tape abstains instead of inventing a price
+    assert ta.price_structures(ticks[:50], "BUY", 0.5)["covered"] is False
+    html = open("backend/web/index.html", encoding="utf-8").read()
+    js = open("backend/web/app.js", encoding="utf-8").read()
+    assert 'id="twin-card"' in html and 'data-panel="twin"' in html
+    assert "function renderTemporalArb" in js and 'case "TWIN"' in js

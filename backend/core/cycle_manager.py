@@ -179,6 +179,8 @@ class CycleManager:
         # Round BD: 55 / 60 / 70 / 120 s picks at every boundary, each settled on its own clock
         from backend.core.horizons import HorizonBook
         self.horizons = HorizonBook(contest_horizon=int(round(self.settings.cycle_period_seconds)))
+        from backend.core.temporal_arb import TemporalArbEngine
+        self.temporal_arb = TemporalArbEngine()
         self.picker = BoundaryPicker()
         #: Round AX: what each emotion has really meant for the next 70 s window
         self.emotion_outcomes = EmotionOutcomes()
@@ -641,6 +643,7 @@ class CycleManager:
         )
         self.competition.enter(cycle, locked.signal, float(locked.price or 0.0))
         self._issue_horizons(cycle, locked)
+        self._issue_twin(cycle, locked)
         self._schedule_outcome(locked, None)
         asyncio.create_task(self._heartbeat_loop(cycle, deadline_wall, self.window_valid_until))
         log.info(
@@ -1722,6 +1725,35 @@ class CycleManager:
     def horizons_payload(self) -> dict:
         return self.horizons.to_dict()
 
+    # Round BL: the Temporal Arbitrage Engine - price the synthetic twin
+    # (60 s -> roll -> 10 s) at the boundary, roll it at :60, settle at :70.
+    def _issue_twin(self, cycle: int, locked: FrozenSignal) -> None:
+        try:
+            ticks = self.market.buffers[self.asset].ticks.view()
+            trade = self.temporal_arb.price(cycle, float(locked.price or 0.0), locked.signal,
+                                            float(locked.confidence or 0.0), ticks)
+            asyncio.create_task(self._run_twin(trade), name=f"twin-{cycle}")
+        except Exception as exc:  # noqa: BLE001
+            log.debug("twin issue skipped: %s", exc)
+
+    async def _run_twin(self, trade) -> None:
+        try:
+            await asyncio.sleep(max(0.0, trade.roll_at - time.time()))
+            px = self.market.last_trade(self.asset)[0] or self.market.last_price(self.asset)
+            if px > 0 and trade.entry > 0:
+                self.temporal_arb.roll(trade, px)
+                await self.broadcast({"type": "TWIN", "data": {"temporal_arb": self.temporal_arb.to_dict()}})
+            await asyncio.sleep(max(0.0, trade.due_at - time.time()))
+            px = self.market.last_trade(self.asset)[0] or self.market.last_price(self.asset)
+            if px > 0 and trade.entry > 0:
+                self.temporal_arb.settle(trade, px)
+                await self.broadcast({"type": "TWIN", "data": {"temporal_arb": self.temporal_arb.to_dict()}})
+        except Exception as exc:  # noqa: BLE001
+            log.debug("twin roll/settle skipped: %s", exc)
+
+    def temporal_arb_payload(self) -> dict:
+        return self.temporal_arb.to_dict()
+
     async def _price_at(self, asset: str, fallback: float) -> float:
         """Prefer live data; the CoinGecko/simulator feeds both end up here."""
         price = self.market.last_price(asset)
@@ -1887,6 +1919,7 @@ class CycleManager:
         payload["accuracy"] = self.accuracy_block()
         payload["competition"] = self.competition_payload()
         payload["horizons"] = self.horizons_payload()
+        payload["temporal_arb"] = self.temporal_arb_payload()
         payload["boundary_pick"] = dict(self.last_pick)
         payload["brain_explain"] = self.brain_explain_payload()
         payload["physics"] = self.physics_payload()
@@ -3024,6 +3057,7 @@ class CycleManager:
         written["horizons"] = self.vault.save("horizons", self.horizons.export_state())
         written["hindsight"] = self.vault.save("hindsight", self.hindsight.export_state())
         written["meta"] = self.vault.save("meta", self.meta.export_state())
+        written["temporal_arb"] = self.vault.save("temporal_arb", self.temporal_arb.export_state())
         try:
             written["formulas"] = self.vault.save("formulas", self.formulas.export_state())
         except Exception as exc:  # noqa: BLE001
@@ -3066,6 +3100,10 @@ class CycleManager:
                     self.meta.refit(list(self.hindsight.rows))
                 except Exception as exc:  # noqa: BLE001
                     log.debug("meta refit on restore skipped: %s", exc)
+        ta = self.vault.load("temporal_arb", max_age=self.VAULT_MAX_AGE)
+        if isinstance(ta, dict):
+            self.temporal_arb.import_state(ta)
+            restored.append("temporal_arb")
         mt = self.vault.load("meta", max_age=self.VAULT_MAX_AGE)
         if mt and self.meta.import_state(mt):
             restored.append("meta")

@@ -511,6 +511,28 @@
     <div class="muted" style="font-size:11px;margin-top:8px" id="gn-note"></div>
   </section>
 
+  <!-- Round BL: the Temporal Arbitrage Engine - continuous 70 s risk priced
+       against its synthetic twin (60 s leg rolled at :60 into a 10 s leg).
+       Priced at the boundary, rolled at :60, settled at :70; the ledger is
+       the realised twin-minus-continuous P&L.  The contest lock is untouched. -->
+  <section class="card twin-card" id="twin-card" data-panel="twin">
+    <div class="card-head">
+      <h2>⧖ Temporal Arbitrage <span class="muted">continuous 70 s risk vs its segmented twin · 60 s → roll → 10 s</span></h2>
+      <span class="muted" id="tw-head">—</span>
+    </div>
+    <div class="twin-grid">
+      <div class="twin-struct" id="tw-continuous"><div class="twin-title">continuous · one 70 s window</div><div class="twin-body">—</div></div>
+      <div class="twin-struct" id="tw-twin"><div class="twin-title">synthetic twin · 60 s leg, rolled at :60 into 10 s</div><div class="twin-body">—</div></div>
+    </div>
+    <div class="twin-spread" id="tw-spread">—</div>
+    <div class="twin-roll muted" id="tw-roll">—</div>
+    <div class="twin-ledger" id="tw-ledger">—</div>
+    <div class="twin-verdict" id="tw-verdict">—</div>
+    <details class="physics-logic"><summary class="muted" style="cursor:pointer">Show the mathematics (variance decomposition, arcsin law, both structures' pricing)</summary>
+      <div id="tw-logic" class="mono"></div>
+    </details>
+  </section>
+
   <section class="card hindsight-card" id="hindsight-card" data-panel="hindsight">
     <div class="card-head">
       <h2>⏪ Last-hour Hindsight <span class="muted">every formula · agent · system · feature re-graded on the hour that just happened</span></h2>
