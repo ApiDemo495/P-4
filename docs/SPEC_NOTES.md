@@ -2453,3 +2453,24 @@ tracked file is referenced; nothing was deleted on a hunch.
   mean-reverting hour, faded a trend, silent, noise) — plus the lists of
   lacking and in-favour inputs and the counts changed. Shown at the top of
   the Hindsight card. Live hindsight rows now carry the same layer names.
+
+### BK — Meta-combiner ("still lacking": the win rate)
+
+* `backend/core/meta.py` (`MetaCombiner`): ridge logistic regression over
+  every recorded input of every settled window (formulas, hedge, physics,
+  emotions, features, reasoning, agents, genesis), standardised, recency
+  half-life 120 windows, λ = 3, IRLS. Fitted on the hindsight rows — the
+  24 h warm-start replay now records into the reviewer too (capacity 3000
+  rows), plus the opening audit and the live windows — and refitted after
+  every settled window (off-loop).
+* Scored **walk-forward**: the call is stored at the lock and graded at
+  settlement; at start `build_record()` replays the history in 20-window
+  blocks (fit on the past, predict the block) so the record is honest from
+  the first minute. It takes the side only while its trailing 40-window
+  record is ≥ 53 % and ≥ the recipe's on the same windows (`may_decide`);
+  otherwise it watches and prints what it would have said.
+* Applied last in the chain (`_apply_meta` after the tape veto); when it
+  decides, the reasoning names the drivers (z × weight) and whether it
+  overrode or agreed with the recipe. `fusion.meta`, `/api/hindsight →
+  meta`, vault key `meta`, panel block in the Hindsight card (trailing vs
+  recipe hit rate, fit size, top weights, this window's drivers).

@@ -103,3 +103,37 @@ def test_opening_audit_grades_sixty_candles_through_every_layer():
     assert changed
     html = (Path(__file__).resolve().parents[2] / "backend/web/index.html").read_text(encoding="utf-8")
     assert 'id="hs-audit"' in html and 'id="hs-audit-layers"' in html
+
+
+def test_meta_combiner_learns_walk_forward_and_only_decides_when_earned():
+    import numpy as np
+    from backend.core import meta as M
+    rng = np.random.default_rng(7)
+    rev = H.HindsightReviewer()
+    now = time.time()
+    n = 200
+    for i in range(n):
+        move = float(rng.normal(0, 10))
+        good = 0.6 * np.sign(move) + rng.normal(0, 0.5)       # informative
+        noise = rng.normal(0, 1)                               # not
+        inputs = {"GOOD": good, "NOISE": noise, "fusion:recipe": float(rng.normal(0, 1))}
+        groups = {"GOOD": "formula", "NOISE": "formula", "fusion:recipe": "reasoning"}
+        rev.record(i, "BUY", 0.5, inputs, groups, at=now - (n - i) * 70.0)
+        rev.rows[-1].move_bps, rev.rows[-1].cost_bps, rev.rows[-1].settled = move, 0.5, True
+    mc = M.MetaCombiner()
+    graded = mc.build_record(list(rev.rows))
+    assert graded >= 100 and mc.fit is not None
+    w = dict(zip(mc.fit.names, mc.fit.w))
+    assert w["GOOD"] > 0.3 and abs(w["NOISE"]) < abs(w["GOOD"]) / 2
+    rate, k = mc.trailing()
+    assert rate is not None and rate > 0.6 and mc.may_decide()[0]
+    pred = mc.predict({"GOOD": 0.9, "NOISE": 0.0, "fusion:recipe": -0.5})
+    assert pred["side"] == "BUY" and pred["drivers"][0]["name"] == "GOOD"
+    # a fresh combiner with no graded record only watches
+    fresh = M.MetaCombiner()
+    fresh.refit(list(rev.rows))
+    assert fresh.fit is not None and not fresh.may_decide()[0]
+    d = mc.to_dict()
+    assert d["decides"] and d["fit"]["top_weights"][0]["name"] == "GOOD"
+    html = (Path(__file__).resolve().parents[2] / "backend/web/index.html").read_text(encoding="utf-8")
+    assert 'id="hs-meta"' in html

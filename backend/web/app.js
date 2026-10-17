@@ -2436,6 +2436,20 @@ function renderHindsight(h) {
     const tag = v.startsWith("LACKING") ? "LACKING" : v.startsWith("IN FAVOUR") ? "IN" : v.startsWith("COIN") ? "COIN-FLIP" : "none";
     return `<div class="audit-layer" data-verdict="${tag}"><b>${escapeHtml(L.label || key)}</b> ${escapeHtml(v)}</div>`;
   }).join("");
+  const mt = h.meta || {};
+  const metaBox = $("hs-meta");
+  if (metaBox) metaBox.dataset.decides = mt.decides ? "true" : "false";
+  $("hs-meta-state").textContent = !mt.available ? "no fit yet" : mt.decides ? "DECIDING THE SIDE" : "watching";
+  const pct = (v) => (v === null || v === undefined ? "—" : `${fx(v * 100, 1)}%`);
+  const lastM = mt.last || {};
+  $("hs-meta-summary").textContent = !mt.available
+    ? `${mt.why || ""} ${mt.error ? `· ${mt.error}` : ""}`
+    : `walk-forward: ${pct(mt.trailing_hit_rate)} over the last ${mt.trailing_n} decided windows (recipe ${pct(mt.recipe_trailing_hit_rate)} on the same windows) · ` +
+      `all-time ${pct(mt.all_time_hit_rate)} over ${mt.graded} · fit on ${mt.fit?.rows} windows × ${mt.fit?.inputs} inputs (in-sample ${pct(mt.fit?.train_hit_rate)}) · ${mt.why}` +
+      (lastM.side ? ` · this window: ${lastM.side} p(up) ${fx(lastM.p_up, 2)}${lastM.applied?.decided ? (lastM.applied.flipped ? " — overrode the recipe" : " — agreed with the recipe") : " (not applied)"}` : "");
+  $("hs-meta-weights").innerHTML = (mt.fit?.top_weights || []).slice(0, 12).map((w) =>
+    `<div class="audit-layer"><b>${escapeHtml(w.name)}</b> weight ${fmtSigned(w.weight, 3)}</div>`).join("") +
+    (lastM.drivers || []).slice(0, 4).map((d) => `<div class="audit-layer"><b>→ ${escapeHtml(d.name)}</b> z ${fmtSigned(d.z, 2)} × w ${fmtSigned(d.weight, 3)} = ${fmtSigned(d.contribution, 3)}</div>`).join("");
   const groups = h.by_group || {};
   const g = (k) => groups[k] ? `${groups[k].inputs} reviewed · ${groups[k].corrected} corrected · lost ${fx(groups[k].lost_bps, 0)} bp · won ${fx(groups[k].won_bps, 0)} bp` : "—";
   $("hs-head").textContent = h.available

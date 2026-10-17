@@ -55,6 +55,7 @@ from backend.core.state_vault import StateVault
 from backend.core.warm_start import WarmStarter
 from backend.core.forward import ForwardExpectancy
 from backend.core.hindsight import HindsightReviewer
+from backend.core.meta import MetaCombiner
 from backend.core.superposition import Superposition
 from backend.core.competition import BoundaryPicker, CompetitionLedger, boundary_features
 from backend.core.dopamine import DopamineBrain
@@ -142,6 +143,10 @@ class CycleManager:
         # Round BI: the trailing hour re-grades every input and corrects it
         self.hindsight = HindsightReviewer()
         self._last_hindsight: dict = {}
+        # Round BK: one model learns how to weigh every recorded input
+        self.meta = MetaCombiner()
+        self._last_meta: dict = {}
+        self._last_recipe_side: str | None = None
         # Round BC: superposition - every source carried as |up>/|down>/|tie>
         # of the NEXT window from its measured AND its projected reading; the
         # engine acts on the collapsed value wherever it used the reading.
@@ -197,7 +202,8 @@ class CycleManager:
         # Round BA: before the first live window the ledger is scored on the
         # last hours of REAL tape (forward, strict sign) so it never starts blind.
         self.warm_starter = WarmStarter(self.ledger, asset="BTC", brain=self.brain, forward=self.forward,
-                                        hindsight=self.hindsight, physics=PhysicsEngine(), genesis=self.genesis)
+                                        hindsight=self.hindsight, physics=PhysicsEngine(), genesis=self.genesis,
+                                        meta=self.meta)
         #: (side, outcome) pairs, so the accuracy panel can say which side the
         #: engine has actually been getting right rather than only the total.
         self._side_outcomes: deque[tuple[str, float]] = deque(maxlen=40)
@@ -1547,6 +1553,7 @@ class CycleManager:
         if self._last_hindsight.get("inputs"):
             self.hindsight.record(signal.cycle_number, signal.signal, float(getattr(signal, "confidence", 0.0) or 0.0),
                                   self._last_hindsight["inputs"], self._last_hindsight["groups"])
+        self.meta.remember(signal.cycle_number, self._last_meta or {}, self._last_recipe_side)
         # Round BB: the forward tables remember this window's readings and are
         # settled on what the price does next (strict sign, ties counted).
         try:
@@ -1627,8 +1634,10 @@ class CycleManager:
         self.outcomes.append(outcome, pnl_bps)
         try:
             self.hindsight.settle(signal.cycle_number, change_bps, cost_bps)
+            self.meta.settle(signal.cycle_number, change_bps, cost_bps)
+            await asyncio.to_thread(self.meta.refit, list(self.hindsight.rows))
         except Exception as exc:  # noqa: BLE001
-            log.debug("hindsight settle skipped: %s", exc)
+            log.debug("hindsight/meta settle skipped: %s", exc)
         if flat:
             self._flat_windows += 1
         else:
@@ -2157,6 +2166,7 @@ class CycleManager:
                 spec_score=float(spec.score), features=(crowd or {}).get("features") or {},
                 emotions=(crowd or {}).get("emotions") or [])
             self._last_hindsight = {"inputs": hs_inputs, "groups": hs_groups, "changed": hs_changed}
+            self._last_meta = self.meta.predict(hs_inputs)
         except Exception as exc:  # noqa: BLE001
             log.debug("hindsight inputs skipped: %s", exc)
         votes = EvidenceLedger.votes_from(
@@ -2207,7 +2217,36 @@ class CycleManager:
         fusion.whole_brain = self.last_whole_brain
         fusion.hindsight = self._hindsight_applied()
         fusion = self._apply_triune(fusion)
-        return self._tape_veto_inner(fusion, snapshot)
+        fusion = self._tape_veto_inner(fusion, snapshot)
+        return self._apply_meta(fusion)
+
+    def _apply_meta(self, fusion):
+        """Round BK: the meta-combiner's call.  It takes the side only while
+        its walk-forward record earns it; everything is printed either way."""
+        if fusion is None:
+            return fusion
+        try:
+            self._last_recipe_side = fusion.decision if fusion.decision in ("BUY", "SELL") else None
+            pred = dict(self._last_meta or {})
+            decide, why = self.meta.may_decide()
+            applied = {"decided": False, "why": why, "recipe_side": self._last_recipe_side,
+                       "recipe_confidence": round(float(fusion.confidence), 4)}
+            if decide and pred.get("available") and pred.get("side") in ("BUY", "SELL"):
+                before = fusion.decision
+                fusion.decision = pred["side"]
+                fusion.confidence = float(min(0.95, max(0.05, 0.5 * float(fusion.confidence) + 0.5 * float(pred["confidence"]))))
+                fusion.score = (abs(float(fusion.score)) if fusion.score else float(pred["confidence"])) * (1.0 if pred["side"] == "BUY" else -1.0)
+                applied.update({"decided": True, "flipped": before != pred["side"],
+                                "confidence": round(fusion.confidence, 4)})
+                drivers = ", ".join(f"{d['name']} {d['contribution']:+.2f}" for d in pred.get("drivers", [])[:4])
+                fusion.reasoning = (f"meta-combiner {pred['side']} p(up) {pred['p_up']:.2f} ({why}; drivers: {drivers})"
+                                    f"{' — overrides recipe ' + str(before) if before != pred['side'] else ' — agrees with the recipe'} | "
+                                    + (fusion.reasoning or ""))[:900]
+            fusion.meta = {**pred, "applied": applied}
+            self.meta.last = fusion.meta
+        except Exception as exc:  # noqa: BLE001
+            log.debug("meta apply skipped: %s", exc)
+        return fusion
 
     def _hindsight_agents(self, agent_results: dict, changed: dict) -> dict:
         """Round BI: an agent that lost the hour answers with less (or inverted)
@@ -2252,6 +2291,7 @@ class CycleManager:
         payload = self.hindsight.to_dict()
         payload["applied_to_current"] = self._hindsight_applied()
         payload["opening_audit"] = self.warm_starter.audit.to_dict()
+        payload["meta"] = self.meta.to_dict()
         return payload
 
     #: the analyst's share of the score once her record is mature (30 decided windows)
@@ -2983,6 +3023,7 @@ class CycleManager:
             })
         written["horizons"] = self.vault.save("horizons", self.horizons.export_state())
         written["hindsight"] = self.vault.save("hindsight", self.hindsight.export_state())
+        written["meta"] = self.vault.save("meta", self.meta.export_state())
         try:
             written["formulas"] = self.vault.save("formulas", self.formulas.export_state())
         except Exception as exc:  # noqa: BLE001
@@ -3021,6 +3062,13 @@ class CycleManager:
             n = self.hindsight.import_state(hs)
             if n:
                 restored.append(f"hindsight:{n}")
+                try:
+                    self.meta.refit(list(self.hindsight.rows))
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("meta refit on restore skipped: %s", exc)
+        mt = self.vault.load("meta", max_age=self.VAULT_MAX_AGE)
+        if mt and self.meta.import_state(mt):
+            restored.append("meta")
         payload = self.vault.load("formulas", max_age=self.VAULT_MAX_AGE)
         if payload:
             try:

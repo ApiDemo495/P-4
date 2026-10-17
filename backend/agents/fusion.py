@@ -76,6 +76,8 @@ class FusionResult:
     triune: dict | None = None
     #: Round BI: what the last hour's hindsight review changed on this window's inputs
     hindsight: dict | None = None
+    #: Round BK: the meta-combiner's call for this window and whether it decided the side
+    meta: dict | None = None
 
     # -- binary direction fields (HOLD was removed) ----------------------
     @property
@@ -122,6 +124,7 @@ class FusionResult:
             "whole_brain": self.whole_brain,
             "triune": self.triune,
             "hindsight": self.hindsight,
+            "meta": self.meta,
         }
         # Kept for the two clients: "lean" now always equals the decision,
         # because there is no third state to lean away from.

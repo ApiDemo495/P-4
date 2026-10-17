@@ -217,7 +217,8 @@ def window_boundaries(first_ms: float, last_ms: float, period_s: float) -> np.nd
 
 def replay(asset: str, bars: np.ndarray, hedge_bars: np.ndarray | None, ledger, *, brain_mb=None,
            period_s: float | None = None, directional: dict | None = None,
-           report: WarmStartReport | None = None, max_windows: int = 2000, forward=None) -> WarmStartReport:
+           report: WarmStartReport | None = None, max_windows: int = 2000, forward=None,
+           hindsight=None) -> WarmStartReport:
     """Run the formulas at every historical boundary and score them on the
     next window (strict sign).  ``ledger`` is the live EvidenceLedger."""
     from backend.core.calibration import EvidenceLedger
@@ -296,6 +297,20 @@ def replay(asset: str, bars: np.ndarray, hedge_bars: np.ndarray | None, ledger, 
             p_up = float(learned.get("p_up") or 0.5)
             ledger.remember(asset, cycle, votes, p_up)
             ledger.score(asset, cycle, actual_up, move_bps=move_bps, cost_bps=1.0)
+            if hindsight is not None:       # Round BK: the meta-combiner learns from the whole replay
+                try:
+                    from backend.core.hindsight import HEDGE_FORMULAS
+                    h_in = {n: float(result.values[n]) for n in directional if n in result.values and np.isfinite(result.values[n])}
+                    h_gr = {n: ("hedge" if n in HEDGE_FORMULAS else "formula") for n in h_in}
+                    h_in["brain:CCSv2"], h_gr["brain:CCSv2"] = ccs, "reasoning"
+                    rec_score = ccs if ccs != 0.0 else (float(np.mean(list(h_in.values()))) if h_in else 0.0)
+                    h_in["fusion:recipe"], h_gr["fusion:recipe"] = rec_score, "reasoning"
+                    if forward is not None and fwd.get("available"):
+                        h_in["forward"], h_gr["forward"] = float(fwd.get("value") or 0.0), "reasoning"
+                    hindsight.record(cycle, "BUY" if rec_score >= 0 else "SELL", 0.55, h_in, h_gr, at=b / 1000.0 + period)
+                    hindsight.settle(cycle, move_bps, cost_bps=1.0)
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("replay hindsight row skipped: %s", exc)
             if forward is not None:
                 forward.settle(cycle, actual_up, move_bps)
             # facts for the report (un-decayed, strict sign)
@@ -357,10 +372,10 @@ class WarmStarter:
     """Runs the fetch + replay on a worker thread; never blocks the engine."""
 
     def __init__(self, ledger, *, asset: str = "BTC", hours: float | None = None, brain=None, forward=None,
-                 hindsight=None, physics=None, genesis=None) -> None:
+                 hindsight=None, physics=None, genesis=None, meta=None) -> None:
         # Round BJ: the opening audit (last 60 candles through every layer)
         from backend.core.opening_audit import AuditReport
-        self.hindsight, self.physics, self.genesis = hindsight, physics, genesis
+        self.hindsight, self.physics, self.genesis, self.meta = hindsight, physics, genesis, meta
         self.audit = AuditReport(asset=asset)
         self.ledger = ledger
         self.forward = forward
@@ -381,6 +396,20 @@ class WarmStarter:
                                         name="opening-audit" if audit_only else "warm-start", daemon=True)
         self._thread.start()
         return True
+
+    def _build_meta(self) -> None:
+        """Round BK: walk-forward record + first fit of the meta-combiner on
+        everything recorded so far (replay + audit)."""
+        if self.meta is None or self.hindsight is None:
+            return
+        try:
+            t0 = time.time()
+            graded = self.meta.build_record(list(self.hindsight.rows))
+            log.info("meta-combiner: %d walk-forward windows graded, fit on %s rows in %.1f s",
+                     graded, getattr(self.meta.fit, "n", 0), time.time() - t0)
+        except Exception as exc:  # noqa: BLE001
+            self.meta.last_error = f"{type(exc).__name__}: {exc}"[:200]
+            log.warning("meta-combiner build failed: %s", exc)
 
     def run_audit_only(self):
         """Round BJ: the ledger replay was skipped (it learned live recently),
@@ -410,6 +439,7 @@ class WarmStarter:
             run_audit(self.asset, bars, hedge, self.hindsight, brain_mb=mb, physics=self.physics,
                       genesis=self.genesis, forward=self.forward, report=au)
             log.info("opening audit: %s | %s", au.detail, au.summary)
+            self._build_meta()
         except Exception as exc:  # noqa: BLE001
             au.phase, au.error = "failed", f"{type(exc).__name__}: {exc}"[:300]
             au.detail = "the opening audit could not fetch the last hour; the hour is learned live instead"
@@ -444,7 +474,8 @@ class WarmStarter:
                     break
                 time.sleep(0.2)
             rep.detail = f"replaying {bars.shape[0]:,} seconds of real tape through the 31 formulas"
-            replay(self.asset, bars, hedge, self.ledger, brain_mb=mb, report=rep, forward=self.forward)
+            replay(self.asset, bars, hedge, self.ledger, brain_mb=mb, report=rep, forward=self.forward,
+                   hindsight=self.hindsight)
             if self.hindsight is not None:
                 from backend.core.opening_audit import HOUR_CANDLES, run_audit
                 rep.detail = "opening audit: the last 60 candles through formulas · hedge · physics · emotions · reasoning · genesis"
@@ -452,6 +483,7 @@ class WarmStarter:
                 run_audit(self.asset, bars[bars[:, 0] >= cut], hedge, self.hindsight, brain_mb=mb,
                           physics=self.physics, genesis=self.genesis, forward=self.forward, report=self.audit)
                 log.info("opening audit: %s | %s", self.audit.detail, self.audit.summary)
+            self._build_meta()
             rep.detail = (f"{rep.scored} real windows scored on the NEXT window · recipe agreed with the past "
                           f"{(rep.recipe_agrees_with_past or 0) * 100:.0f} %, with the future "
                           f"{(rep.recipe_agrees_with_future or 0) * 100:.0f} %")

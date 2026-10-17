@@ -150,7 +150,7 @@ class ComponentReview:
 class HindsightReviewer:
     """Keeps the trailing-hour record and the per-input corrections."""
 
-    def __init__(self, hour_seconds: float = HOUR_SECONDS, max_rows: int = 240) -> None:
+    def __init__(self, hour_seconds: float = HOUR_SECONDS, max_rows: int = 3000) -> None:
         self.hour_seconds = float(hour_seconds)
         self.rows: deque[WindowRecord] = deque(maxlen=max_rows)
         self.reviews: dict[str, ComponentReview] = {}
