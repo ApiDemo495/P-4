@@ -46,8 +46,16 @@ BLOCK = 20                 # walk-forward block size when building the start rec
 #: only where its own walk-forward record in that regime beats the global fit
 REGIME_KEY = "regime:bocpd"
 REGIMES = ("fresh", "young", "mature", "old")
+#: Round BO: every routing key the experts may specialise on.  A label is
+#: "<key>=<name>"; an input named ``regime:*`` is a routing key, never a feature.
+ROUTES: dict[str, tuple[str, ...]] = {
+    REGIME_KEY: REGIMES,
+    "regime:session": ("asia", "europe", "us", "late-us"),
+    "regime:vol": ("calm", "normal", "violent"),
+}
 EXPERT_MIN_FIT = 40
 EXPERT_MIN_GRADED = 15
+CALIB_MIN = 40             # graded windows before the probability is calibrated
 
 
 def _sigmoid(z: np.ndarray) -> np.ndarray:
@@ -76,7 +84,8 @@ class MetaCombiner:
         self.last_error: str = ""
         self.settled_since_fit: int = 0
         self.experts: dict[str, Fit] = {}
-        self.expert_graded: dict[str, deque] = {r: deque(maxlen=300) for r in REGIMES}
+        self.expert_graded: dict[str, deque] = {}
+        self.calib: tuple[float, float] | None = None       # Platt (a, b) on the walk-forward record
 
     # ------------------------------------------------------------------
     # fitting
@@ -114,6 +123,19 @@ class MetaCombiner:
             return None
         return REGIMES[code] if 0 <= code < len(REGIMES) else None
 
+    @staticmethod
+    def routes_of(inputs: dict) -> list[str]:
+        """Every "<key>=<name>" label this window falls in."""
+        out = []
+        for key, names in ROUTES.items():
+            try:
+                code = int(round(float(inputs.get(key))))
+            except (TypeError, ValueError):
+                continue
+            if 0 <= code < len(names):
+                out.append(f"{key}={names[code]}")
+        return out
+
     def refit(self, rows: list, now: float | None = None) -> Fit | None:
         """The global fit, then one expert per regime that has enough rows."""
         rows = [r for r in rows if r.decided]
@@ -123,13 +145,62 @@ class MetaCombiner:
         self.fit = fit
         self.settled_since_fit = 0
         experts: dict[str, Fit] = {}
-        for label in REGIMES:
-            sub = [r for r in rows if self.regime_of(r.inputs) == label]
+        buckets: dict[str, list] = {}
+        for r in rows:
+            for label in self.routes_of(r.inputs):
+                buckets.setdefault(label, []).append(r)
+        for label, sub in buckets.items():
             ef = self._fit_rows(sub, now, EXPERT_MIN_FIT)
             if ef is not None:
                 experts[label] = ef
         self.experts = experts
+        self._fit_calibration()
         return fit
+
+    # ------------------------------------------------------------------
+    # Round BO: Platt calibration of P(up) on the walk-forward record
+    # ------------------------------------------------------------------
+    def _fit_calibration(self) -> None:
+        rows = [g for g in list(self.graded)[-400:] if "p_up" in g]
+        if len(rows) < CALIB_MIN:
+            self.calib = None
+            return
+        z = np.array([math.log(max(1e-4, g["p_up"]) / max(1e-4, 1 - g["p_up"])) for g in rows])
+        y = np.array([1.0 if ((g["p_up"] > 0.5) == bool(g["hit"])) else 0.0 for g in rows])   # realised "up"
+        # one-parameter Platt (slope only): the side is never changed by
+        # calibration, only how much the probability is trusted
+        a = 1.0
+        for _ in range(25):
+            p = 1.0 / (1.0 + np.exp(-(a * z)))
+            g = float(np.dot(z, p - y)) + 0.1 * (a - 1.0)
+            h = float(np.dot(z * z, p * (1 - p))) + 0.1
+            da = g / h
+            a -= da
+            if abs(da) < 1e-7:
+                break
+        self.calib = (float(np.clip(a, 0.05, 5.0)), 0.0)
+
+    def calibrate(self, p_up: float) -> float:
+        if self.calib is None:
+            return float(p_up)
+        a, b = self.calib
+        z = math.log(max(1e-4, p_up) / max(1e-4, 1 - p_up))
+        return float(1.0 / (1.0 + math.exp(-(a * z + b))))
+
+    def reliability(self, bins: int = 5) -> list[dict]:
+        """Predicted confidence vs realised hit rate, in confidence bins."""
+        rows = [g for g in list(self.graded)[-400:] if "p_up" in g]
+        out = []
+        edges = np.linspace(0.0, 1.0, bins + 1)
+        for lo, hi in zip(edges[:-1], edges[1:]):
+            sub = [g for g in rows if lo <= abs(2 * g["p_up"] - 1) < hi or (hi == 1.0 and abs(2 * g["p_up"] - 1) == 1.0)]
+            if not sub:
+                out.append({"lo": round(float(lo), 2), "hi": round(float(hi), 2), "n": 0, "predicted": None, "realised": None})
+                continue
+            pred = float(np.mean([0.5 + abs(2 * g["p_up"] - 1) / 2 for g in sub]))
+            real = float(np.mean([1.0 if g["hit"] else 0.0 for g in sub]))
+            out.append({"lo": round(float(lo), 2), "hi": round(float(hi), 2), "n": len(sub), "predicted": round(pred, 4), "realised": round(real, 4)})
+        return out
 
     def _fit_rows(self, rows: list, now: float | None, min_rows: int) -> Fit | None:
         if len(rows) < min_rows:
@@ -174,38 +245,61 @@ class MetaCombiner:
     # ------------------------------------------------------------------
     def expert_record(self, label: str, n: int = WINDOW) -> tuple[float | None, float | None, int]:
         """(expert hit rate, global hit rate, count) over the last n graded
-        windows that fell in this regime."""
+        windows that fell in this route."""
         rows = list(self.expert_graded.get(label, ()))[-n:]
         if not rows:
             return None, None, 0
         return (sum(e for e, _ in rows) / len(rows), sum(g for _, g in rows) / len(rows), len(rows))
 
     def predict(self, inputs: dict, fit: Fit | None = None) -> dict:
-        """The global fit's call, routed to the regime expert where that
-        expert has earned it walk-forward."""
+        """The global fit's call, routed to the expert (change-point regime,
+        session, volatility) that has earned it best walk-forward; P(up) is
+        then Platt-calibrated on the walk-forward record."""
         base = self._predict_fit(inputs, fit)
         if not base.get("available"):
             return base
-        label = self.regime_of(inputs)
-        base["regime"] = label
-        base["expert_side"] = None
-        ef = self.experts.get(label) if label else None
-        if ef is None:
-            base["routing"] = f"regime '{label}': no expert yet" if label else "no regime label"
-            return base
-        ex = self._predict_fit(inputs, ef)
-        base["expert_side"] = ex.get("side")
-        e_rate, g_rate, n = self.expert_record(label)
-        if n >= EXPERT_MIN_GRADED and e_rate is not None and g_rate is not None and e_rate > g_rate:
+        base["regime"] = self.regime_of(inputs)
+        routes = self.routes_of(inputs)
+        base["routes"] = routes
+        expert_sides: dict[str, str] = {}
+        best = None                                   # (margin, label, prediction, e_rate, g_rate, n)
+        watching = []
+        for label in routes:
+            ef = self.experts.get(label)
+            if ef is None:
+                continue
+            ex = self._predict_fit(inputs, ef)
+            expert_sides[label] = ex.get("side")
+            e_rate, g_rate, n = self.expert_record(label)
+            if n >= EXPERT_MIN_GRADED and e_rate is not None and g_rate is not None and e_rate > g_rate:
+                margin = e_rate - g_rate
+                if best is None or margin > best[0]:
+                    best = (margin, label, ex, e_rate, g_rate, n)
+            else:
+                watching.append(f"{label} {n}/{EXPERT_MIN_GRADED}" if n < EXPERT_MIN_GRADED else f"{label} {e_rate:.0%} vs {g_rate:.0%}")
+        base["expert_sides"] = expert_sides
+        base["expert_side"] = expert_sides.get(f"{REGIME_KEY}={base['regime']}") if base["regime"] else None
+        if best is not None:
+            _, label, ex, e_rate, g_rate, n = best
             routed = dict(ex)
-            routed.update({"regime": label, "expert_side": ex.get("side"), "global_side": base["side"],
-                           "routing": f"regime '{label}' expert ({e_rate:.0%} vs global {g_rate:.0%} over {n}) picks the side",
-                           "expert_used": True})
-            return routed
-        base["routing"] = (f"regime '{label}' expert watching ({n}/{EXPERT_MIN_GRADED} graded)" if n < EXPERT_MIN_GRADED
-                           else f"regime '{label}' expert {e_rate:.0%} vs global {g_rate:.0%} over {n} - global keeps the side")
+            routed.update({"regime": base["regime"], "routes": routes, "expert_sides": expert_sides,
+                           "expert_side": ex.get("side"), "global_side": base["side"], "expert_used": True, "route": label,
+                           "routing": f"{label} expert ({e_rate:.0%} vs global {g_rate:.0%} over {n}) picks the side"})
+            return self._calibrated(routed)
         base["expert_used"] = False
-        return base
+        base["route"] = None
+        base["routing"] = ("no expert fitted yet" if not expert_sides else "experts watching: " + "; ".join(watching)) if routes else "no routing labels"
+        return self._calibrated(base)
+
+    def _calibrated(self, pred: dict) -> dict:
+        p = float(pred.get("p_up", 0.5))
+        pc = self.calibrate(p)
+        pred["p_up_raw"] = round(p, 4)
+        pred["p_up"] = round(pc, 4)
+        # slope-only calibration keeps the side; it only resizes the confidence
+        pred["confidence"] = round(abs(2 * pc - 1), 4)
+        pred["calibrated"] = self.calib is not None
+        return pred
 
     def _predict_fit(self, inputs: dict, fit: Fit | None = None) -> dict:
         f = fit or self.fit
@@ -236,6 +330,7 @@ class MetaCombiner:
             self.pending[int(cycle)] = {"p_up": prediction["p_up"], "side": prediction["side"],
                                         "recipe_side": recipe_side, "at": time.time(),
                                         "regime": prediction.get("regime"), "expert_side": prediction.get("expert_side"),
+                                        "expert_sides": dict(prediction.get("expert_sides") or {}),
                                         "global_side": prediction.get("global_side") or prediction["side"]}
             if len(self.pending) > 200:
                 for k in sorted(self.pending)[:-200]:
@@ -251,10 +346,10 @@ class MetaCombiner:
         self.graded.append({"cycle": int(cycle), "hit": bool(hit), "p_up": rec["p_up"], "move_bps": round(move_bps, 2), "at": time.time()})
         if rec.get("recipe_side") in ("BUY", "SELL"):
             self.recipe_graded.append(1 if (rec["recipe_side"] == "BUY") == up else 0)
-        label = rec.get("regime")
-        if label in self.expert_graded and rec.get("expert_side") in ("BUY", "SELL"):
-            self.expert_graded[label].append((int((rec["expert_side"] == "BUY") == up),
-                                              int((rec.get("global_side") == "BUY") == up)))
+        g_hit = int((rec.get("global_side") == "BUY") == up)
+        for label, side in (rec.get("expert_sides") or {}).items():
+            if side in ("BUY", "SELL"):
+                self.expert_graded.setdefault(label, deque(maxlen=300)).append((int((side == "BUY") == up), g_hit))
         return self.graded[-1]
 
     # ------------------------------------------------------------------
@@ -278,6 +373,7 @@ class MetaCombiner:
                 recipe_side = None if recipe is None or recipe == 0 else ("BUY" if recipe > 0 else "SELL")
                 self.pending[r.cycle] = {"p_up": pred["p_up"], "side": pred["side"], "recipe_side": recipe_side, "at": r.at,
                                          "regime": pred.get("regime"), "expert_side": pred.get("expert_side"),
+                                         "expert_sides": dict(pred.get("expert_sides") or {}),
                                          "global_side": pred.get("global_side") or pred["side"]}
                 if self.settle(r.cycle, float(r.move_bps), float(r.cost_bps)) is not None:
                     graded += 1
@@ -332,11 +428,16 @@ class MetaCombiner:
                                            "fitted_at": f.fitted_at, "bias": round(float(f.b), 4), "top_weights": weights},
             "last": self.last, "error": self.last_error,
             "experts": [
-                {"regime": lbl, "fitted": lbl in self.experts, "rows": self.experts[lbl].n if lbl in self.experts else 0,
+                {"route": lbl, "key": lbl.split("=")[0], "regime": lbl.split("=")[1],
+                 "fitted": lbl in self.experts, "rows": self.experts[lbl].n if lbl in self.experts else 0,
                  "expert_hit_rate": None if er is None else round(er, 4), "global_hit_rate": None if gr is None else round(gr, 4),
                  "graded": n, "in_use": bool(lbl in self.experts and n >= EXPERT_MIN_GRADED and er is not None and gr is not None and er > gr)}
-                for lbl in REGIMES for (er, gr, n) in [self.expert_record(lbl)]
+                for lbl in [f"{k}={nm}" for k, names in ROUTES.items() for nm in names] for (er, gr, n) in [self.expert_record(lbl)]
             ],
+            "calibration": {"fitted": self.calib is not None,
+                            "a": None if self.calib is None else round(self.calib[0], 3),
+                            "b": None if self.calib is None else round(self.calib[1], 3),
+                            "reliability": self.reliability()},
             "method": ("ridge logistic regression over every recorded input (standardised), recency half-life "
                        f"{HALF_LIFE:.0f} windows, λ={LAMBDA:g}; scored walk-forward; takes the side only while its trailing "
                        f"{WINDOW}-window record ≥ {TAKEOVER_RATE:.0%} and ≥ the recipe's"),
@@ -353,7 +454,9 @@ class MetaCombiner:
         for v in (payload or {}).get("recipe_graded") or []:
             self.recipe_graded.append(int(v))
         for k, rows in ((payload or {}).get("expert_graded") or {}).items():
-            if k in self.expert_graded:
-                for e, gl in rows:
-                    self.expert_graded[k].append((int(e), int(gl)))
+            label = k if "=" in k else f"{REGIME_KEY}={k}"
+            dq = self.expert_graded.setdefault(label, deque(maxlen=300))
+            for e, gl in rows:
+                dq.append((int(e), int(gl)))
+        self._fit_calibration()
         return len(g)

@@ -264,16 +264,19 @@ def test_bocpd_dates_the_regime_and_regime_experts_route_walk_forward():
     mc = M.MetaCombiner()
     mc.build_record(list(rev.rows))
     assert "regime:bocpd" not in mc.fit.names                # a routing key, never a feature
-    assert "young" in mc.experts and "mature" in mc.experts
-    e_rate, g_rate, k = mc.expert_record("mature")
+    assert "regime:bocpd=young" in mc.experts and "regime:bocpd=mature" in mc.experts
+    e_rate, g_rate, k = mc.expert_record("regime:bocpd=mature")
     assert k >= M.EXPERT_MIN_GRADED and e_rate > g_rate and e_rate > 0.7
     pred = mc.predict({"GOOD": 0.9, "fusion:recipe": 0.0, "regime:bocpd": 2.0})
     assert pred["expert_used"] and pred["side"] == "SELL" and pred["regime"] == "mature"
+    assert pred["route"] == "regime:bocpd=mature" and pred["calibrated"] and 0 <= pred["p_up"] <= 1
     d = mc.to_dict()
     assert any(e["in_use"] for e in d["experts"])
+    # Round BO: calibration fitted on the walk-forward record, reliability bins sum to the graded count
+    assert d["calibration"]["fitted"] and sum(b["n"] for b in d["calibration"]["reliability"]) == min(400, len(mc.graded))
     fresh = M.MetaCombiner()
     fresh.import_state(mc.export_state())
-    assert fresh.expert_record("mature")[2] == k
+    assert fresh.expert_record("regime:bocpd=mature")[2] == k and fresh.calib is not None
     html = open("backend/web/index.html", encoding="utf-8").read()
     js = open("backend/web/app.js", encoding="utf-8").read()
     assert 'id="w-regime"' in html and 'id="hs-meta-experts"' in html

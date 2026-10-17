@@ -2548,11 +2548,21 @@ function renderHindsight(h) {
       `all-time ${pct(mt.all_time_hit_rate)} over ${mt.graded} · fit on ${mt.fit?.rows} windows × ${mt.fit?.inputs} inputs (in-sample ${pct(mt.fit?.train_hit_rate)}) · ${mt.why}` +
       (lastM.side ? ` · this window: ${lastM.side} p(up) ${fx(lastM.p_up, 2)}${lastM.applied?.decided ? (lastM.applied.flipped ? " — overrode the recipe" : " — agreed with the recipe") : " (not applied)"}` : "");
   if ($("hs-meta-experts")) {
-    const nowRegime = mt.last?.regime || null;
+    const nowRoutes = new Set(mt.last?.routes || []);
+    const usedRoute = mt.last?.route || null;
+    const keyName = (k) => k === "regime:bocpd" ? "change-point" : k === "regime:session" ? "session" : k === "regime:vol" ? "volatility" : k;
     $("hs-meta-experts").innerHTML = (mt.experts || []).map((e) =>
-      `<div class="${["expert-chip", e.in_use ? "active" : "", nowRegime === e.regime ? "now" : ""].join(" ").trim()}"><b>${escapeHtml(e.regime)} regime${nowRegime === e.regime ? " · now" : ""}</b>` +
-      (e.fitted ? `expert ${e.expert_hit_rate === null ? "—" : Math.round(e.expert_hit_rate * 100) + "%"} vs global ${e.global_hit_rate === null ? "—" : Math.round(e.global_hit_rate * 100) + "%"} over ${e.graded} · ${e.rows} rows · ${e.in_use ? "picks the side here" : "watching"}`
-               : `no expert yet (needs 40 windows in this regime)`) + `</div>`).join("");
+      `<div class="${["expert-chip", e.in_use ? "active" : "", nowRoutes.has(e.route) ? "now" : "", usedRoute === e.route ? "used" : ""].join(" ").trim()}"><b>${escapeHtml(keyName(e.key))} · ${escapeHtml(e.regime)}${usedRoute === e.route ? " · picking now" : nowRoutes.has(e.route) ? " · now" : ""}</b>` +
+      (e.fitted ? `expert ${e.expert_hit_rate === null ? "—" : Math.round(e.expert_hit_rate * 100) + "%"} vs global ${e.global_hit_rate === null ? "—" : Math.round(e.global_hit_rate * 100) + "%"} over ${e.graded} · ${e.rows} rows · ${e.in_use ? "earned the side here" : "watching"}`
+               : `no expert yet (needs 40 windows here)`) + `</div>`).join("");
+    const cal = mt.calibration || {};
+    const rel = cal.reliability || [];
+    $("hs-meta-calib").innerHTML = `<span class="muted">calibration · ${cal.fitted ? `slope ${Number(cal.a).toFixed(2)} fitted walk-forward: 1.00 = trusted as is, below 1 = over-confident and shrunk` : "needs 40 graded windows"} · predicted vs realised by confidence bin:</span>` +
+      `<div class="calib-bins">${rel.map((b) => {
+        const has = b.n > 0 && b.realised !== null;
+        const pr = has ? Math.round(b.predicted * 100) : 0, re = has ? Math.round(b.realised * 100) : 0;
+        return `<div class="calib-bin" title="confidence ${Math.round(b.lo * 100)}–${Math.round(b.hi * 100)}% · ${b.n} windows"><div class="calib-bars"><div class="calib-pred" style="height:${pr}%"></div><div class="calib-real ${has ? (re >= pr ? "good" : "bad") : ""}" style="height:${re}%"></div></div><small>${Math.round(b.lo * 100)}–${Math.round(b.hi * 100)}%<br>${has ? `${pr}% → <b>${re}%</b>` : "—"}<br>n=${b.n}</small></div>`;
+      }).join("")}</div>`;
   }
   $("hs-meta-weights").innerHTML = (mt.fit?.top_weights || []).slice(0, 12).map((w) =>
     `<div class="audit-layer"><b>${escapeHtml(w.name)}</b> weight ${fmtSigned(w.weight, 3)}</div>`).join("") +

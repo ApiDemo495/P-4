@@ -2547,3 +2547,18 @@ tracked file is referenced; nothing was deleted on a hunch.
 * UI: regime clock on the prediction cell - a half-dial whose needle is the
   regime's age, P(changed), μ̂ and P(next window up); `fusion.bocpd`,
   snapshot `bocpd`.
+
+### BO — Experts on three routes, honest confidence
+
+* The meta-combiner's experts now specialise on three routing keys at once:
+  change-point regime (`regime:bocpd`), **session** (`regime:session`:
+  asia / europe / us / late-us by UTC hour) and **volatility**
+  (`regime:vol`: σ₇₀ calm < 6 bp, normal < 14 bp, violent).  Every expert
+  that fits is predicted and graded per window; the one with the largest
+  earned margin over the global fit (≥ 15 graded, in that route) picks the
+  side.  Routing keys are never features.
+* **Calibration**: a one-parameter Platt slope fitted on the walk-forward
+  record resizes P(up) (never the side) - a slope below 1 means the model
+  was over-confident and is shrunk.  Reliability strip in the Meta-combiner
+  box: predicted vs realised hit rate in five confidence bins.
+  `_apply_meta` blends the calibrated confidence.

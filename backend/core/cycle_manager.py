@@ -2326,8 +2326,15 @@ class CycleManager:
             if bc.get("covered"):
                 extras["feature:bocpd"] = float(bc["score"])
                 extras["regime:bocpd"] = float(("fresh", "young", "mature", "old").index(bc["regime"]))
+            # Round BO: session and volatility routing keys for the experts
+            hour = time.gmtime().tm_hour
+            extras["regime:session"] = 0.0 if hour < 7 else 1.0 if hour < 13 else 2.0 if hour < 21 else 3.0
             tw = price_structures(tk, "BUY" if float(spec.score) >= 0 else "SELL", min(1.0, abs(float(spec.score))))
             self._last_twin_pricing = tw
+            s70 = float(tw.get("sigma_70") or 0.0)
+            if s70 > 0:
+                # bps over the window: calm < 6, normal < 14, violent beyond
+                extras["regime:vol"] = 0.0 if s70 < 6.0 else 1.0 if s70 < 14.0 else 2.0
             if tw.get("covered"):
                 sgn = 1.0 if float(spec.score) >= 0 else -1.0
                 extras["feature:twin_edge"] = float(tw["twin_edge"]) * sgn
