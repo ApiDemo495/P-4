@@ -139,6 +139,13 @@
           <div class="hawkes-bars"><div class="hawkes-bar buy" id="w-hawkes-buy"></div><div class="hawkes-bar sell" id="w-hawkes-sell"></div></div>
           <div class="hawkes-text muted" id="w-hawkes-text">cascade — waiting for the first lock</div>
         </div>
+        <!-- Round BN: the regime clock - Bayesian change-point posterior:
+             how old the drift regime is, P(it changed inside the last window)
+             and P(next window up) under it.  Frozen at the lock. -->
+        <div class="regime-line" id="w-regime" title="Bayesian online change-point detection on the 5 s returns: run-length posterior, P(change), next-window P(up)">
+          <div class="regime-dial"><div class="regime-needle" id="w-regime-needle"></div></div>
+          <div class="regime-text muted" id="w-regime-text">regime clock — waiting for the first lock</div>
+        </div>
         <!-- Round L: the crowd *as it was at the lock*.  Nothing inside the
              prediction cell may move during a window, so this line is the
              frozen reading; the live one is in the Crowd Emotion card. -->
@@ -562,6 +569,9 @@
       <div class="audit-title">Meta-combiner — one model learns how to weigh everything <span class="muted" id="hs-meta-state">—</span></div>
       <div class="audit-summary" id="hs-meta-summary">—</div>
       <div class="audit-layers" id="hs-meta-weights"></div>
+      <!-- Round BN: regime experts - one fit per change-point regime, each
+           used only where its own walk-forward record beats the global fit. -->
+      <div class="expert-row" id="hs-meta-experts"></div>
     </div>
     <div class="hindsight-verdict" id="hs-verdict">waiting for the first settled windows of this hour…</div>
     <div class="kv-grid physics-kv hindsight-kv">

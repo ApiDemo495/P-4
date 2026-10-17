@@ -2525,3 +2525,25 @@ tracked file is referenced; nothing was deleted on a hunch.
   rows and meta-combiner inputs, graded walk-forward like everything else.
 * UI: win-rate ring (animated SVG arc, green ≥ 60 %, red < 50 %) and the
   streak flame (🔥 at 3, 🔥🔥 at 5, 🔥🔥🔥 at 20) in the competition cell.
+
+### BN — Bayesian change-point regime clock + regime experts
+
+* `backend/core/bocpd.py`: Adams–MacKay Bayesian online change-point
+  detection over the 5 s returns of the frozen tape, Normal-Gamma conjugate
+  (unknown drift and precision), hazard 1/(window/5 s).  Exact run-length
+  recursion (growth / change in log space, truncated at 400 runs).  Reads:
+  posterior run length (mode / mean → regime age), `P(change in the last
+  window)`, run-length-weighted drift `μ̂` and predictive σ̂, and
+  `P(next window up)` = regime predictive mixed with a flat predictive by
+  `P(change)`.  Learned input `feature:bocpd`; label `regime:bocpd`
+  (fresh / young / mature / old) is a routing key, never a feature.
+* Meta-combiner **regime experts**: `refit` fits the global model and one
+  expert per regime with ≥ 40 rows; the expert's and the global's calls
+  are both remembered at the lock and graded at settlement per regime; the
+  expert picks the side only where its trailing record in that regime (≥ 15
+  graded) beats the global's.  `build_record` grades the experts walk-
+  forward too; vault carries `expert_graded`.  Shown as four regime chips
+  in the Meta-combiner box (expert vs global rate, in use / watching).
+* UI: regime clock on the prediction cell - a half-dial whose needle is the
+  regime's age, P(changed), μ̂ and P(next window up); `fusion.bocpd`,
+  snapshot `bocpd`.

@@ -226,3 +226,55 @@ def test_hawkes_cascade_and_watchdog_guards():
     js = open("backend/web/app.js", encoding="utf-8").read()
     assert 'id="w-hawkes"' in html and 'id="c-ring-fg"' in html
     assert "function renderHawkes" in js and "function renderWinRing" in js
+
+
+def test_bocpd_dates_the_regime_and_regime_experts_route_walk_forward():
+    """Round BN: the change-point detector finds a drift that began two
+    windows ago; the meta-combiner fits one expert per regime and routes to
+    it only where its walk-forward record in that regime beats the global."""
+    import numpy as np
+    from backend.core.bocpd import bocpd
+    from backend.core import meta as M
+
+    rng = np.random.default_rng(2)
+    n = 20 * 60 * 10
+    t = np.arange(n) * 100.0
+    r = rng.normal(0, 0.3, n)
+    r[-1400:] += 0.08                                     # drift up for the last 140 s
+    p = 60000 * np.exp(np.cumsum(r) / 1e4)
+    b = bocpd(np.c_[t, p, np.ones(n), np.sign(r)])
+    assert b["covered"] and b["score"] > 0.3 and 60 <= b["run_age_s"] <= 260
+    assert b["regime"] in ("young", "mature") and len(b["logic"]) == 5
+    flat = bocpd(np.c_[t, np.full(n, 60000.0) * np.exp(np.cumsum(rng.normal(0, 0.3, n)) / 1e4), np.ones(n), np.ones(n)])
+    assert flat["covered"] and abs(flat["score"]) < abs(b["score"])
+    assert bocpd(np.c_[t[:100], p[:100], np.ones(100), np.ones(100)])["covered"] is False
+
+    # regime experts: in regime 2 the sign of GOOD flips, so only an expert can learn it
+    rev = H.HindsightReviewer()
+    now = time.time()
+    total = 320
+    for i in range(total):
+        regime = 2.0 if i % 2 else 1.0
+        move = float(rng.normal(0, 10))
+        good = (0.8 if regime == 1.0 else -0.8) * np.sign(move) + rng.normal(0, 0.4)
+        inputs = {"GOOD": good, "fusion:recipe": float(rng.normal(0, 1)), "regime:bocpd": regime}
+        groups = {"GOOD": "formula", "fusion:recipe": "reasoning", "regime:bocpd": "feature"}
+        rev.record(i, "BUY", 0.5, inputs, groups, at=now - (total - i) * 70.0)
+        rev.rows[-1].move_bps, rev.rows[-1].cost_bps, rev.rows[-1].settled = move, 0.5, True
+    mc = M.MetaCombiner()
+    mc.build_record(list(rev.rows))
+    assert "regime:bocpd" not in mc.fit.names                # a routing key, never a feature
+    assert "young" in mc.experts and "mature" in mc.experts
+    e_rate, g_rate, k = mc.expert_record("mature")
+    assert k >= M.EXPERT_MIN_GRADED and e_rate > g_rate and e_rate > 0.7
+    pred = mc.predict({"GOOD": 0.9, "fusion:recipe": 0.0, "regime:bocpd": 2.0})
+    assert pred["expert_used"] and pred["side"] == "SELL" and pred["regime"] == "mature"
+    d = mc.to_dict()
+    assert any(e["in_use"] for e in d["experts"])
+    fresh = M.MetaCombiner()
+    fresh.import_state(mc.export_state())
+    assert fresh.expert_record("mature")[2] == k
+    html = open("backend/web/index.html", encoding="utf-8").read()
+    js = open("backend/web/app.js", encoding="utf-8").read()
+    assert 'id="w-regime"' in html and 'id="hs-meta-experts"' in html
+    assert "function renderRegime" in js

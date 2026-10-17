@@ -1271,3 +1271,16 @@ body.pulse .widget-panel, body.pulse .card { animation: pulse-breath .6s var(--e
 .hawkes-line.exciting .hawkes-bar { animation: cascade 0.9s ease-in-out infinite alternate; }
 @keyframes cascade { from { filter: brightness(0.85); } to { filter: brightness(1.35); } }
 .hawkes-text { font-size: 11px; margin-top: 3px; }
+
+/* Round BN: regime clock + experts */
+.regime-line { display: flex; align-items: center; gap: 10px; margin: 4px 0 6px; }
+.regime-dial { position: relative; width: 44px; height: 22px; border-radius: 44px 44px 0 0; background: conic-gradient(from 270deg at 50% 100%, #f87171 0deg, #facc15 60deg, #4ade80 120deg, #60a5fa 180deg, transparent 180deg); overflow: hidden; flex: none; opacity: 0.9; }
+.regime-dial::after { content: ""; position: absolute; left: 6px; right: 6px; bottom: 0; height: 16px; border-radius: 32px 32px 0 0; background: var(--card, #0f172a); }
+.regime-needle { position: absolute; left: 50%; bottom: 0; width: 2px; height: 20px; background: #e2e8f0; transform-origin: bottom center; transform: rotate(-90deg); transition: transform 900ms cubic-bezier(.2,.8,.2,1); box-shadow: 0 0 6px rgba(226, 232, 240, 0.7); }
+.regime-text { font-size: 11px; }
+.expert-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+.expert-chip { border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 8px; padding: 6px 8px; font-size: 11px; line-height: 1.4; }
+.expert-chip.active { border-color: rgba(74, 222, 128, 0.6); background: rgba(74, 222, 128, 0.06); }
+.expert-chip.now { box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.6) inset; }
+.expert-chip b { display: block; text-transform: capitalize; }
+@media (max-width: 720px) { .expert-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

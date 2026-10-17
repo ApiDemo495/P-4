@@ -1830,6 +1830,22 @@ function renderHawkes(h) {
   $("w-hawkes-text").innerHTML = `Hawkes cascade at the lock · λ<sub>buy</sub> ${b.toFixed(3)} vs λ<sub>sell</sub> ${s.toFixed(3)} · branching n = <b>${n.toFixed(2)}</b> ${n >= 0.5 ? "(self-exciting)" : "(calm)"} · flow still to come <b class="${sc > 0 ? "pos" : sc < 0 ? "neg" : ""}">${sc >= 0 ? "+" : ""}${sc.toFixed(3)}</b>`;
 }
 
+/* Round BN: the regime clock (change-point posterior) frozen at the lock. */
+function renderRegime(b) {
+  const line = $("w-regime");
+  if (!line) return;
+  if (!b || !b.covered) {
+    $("w-regime-text").textContent = b && b.logic && b.logic[0] ? `regime clock — ${b.logic[0]}` : "regime clock — waiting for the first lock";
+    return;
+  }
+  // needle: -90deg = regime just changed, +90deg = old regime (6+ windows)
+  const age = Number(b.run_age_s || 0);
+  const frac = Math.max(0, Math.min(1, age / (6 * 70)));
+  $("w-regime-needle").style.transform = `rotate(${(-90 + 180 * frac).toFixed(1)}deg)`;
+  const pu = Number(b.p_up_window || 0.5);
+  $("w-regime-text").innerHTML = `regime clock · drift regime <b>${escapeHtml(b.regime)}</b>, ${age.toFixed(0)} s old (mode ${b.run_mode} steps) · P(changed in the last window) <b>${Math.round(Number(b.p_change_window) * 100)}%</b> · μ̂ ${Number(b.mu_hat) >= 0 ? "+" : ""}${Number(b.mu_hat).toFixed(2)} bp/step · P(next window up) <b class="${pu > 0.5 ? "pos" : pu < 0.5 ? "neg" : ""}">${(pu * 100).toFixed(1)}%</b>`;
+}
+
 function renderCompetition(c, pick) {
   if (!c || !$("c-streak")) return;
   state.competition = c;
@@ -2531,6 +2547,13 @@ function renderHindsight(h) {
     : `walk-forward: ${pct(mt.trailing_hit_rate)} over the last ${mt.trailing_n} decided windows (recipe ${pct(mt.recipe_trailing_hit_rate)} on the same windows) · ` +
       `all-time ${pct(mt.all_time_hit_rate)} over ${mt.graded} · fit on ${mt.fit?.rows} windows × ${mt.fit?.inputs} inputs (in-sample ${pct(mt.fit?.train_hit_rate)}) · ${mt.why}` +
       (lastM.side ? ` · this window: ${lastM.side} p(up) ${fx(lastM.p_up, 2)}${lastM.applied?.decided ? (lastM.applied.flipped ? " — overrode the recipe" : " — agreed with the recipe") : " (not applied)"}` : "");
+  if ($("hs-meta-experts")) {
+    const nowRegime = mt.last?.regime || null;
+    $("hs-meta-experts").innerHTML = (mt.experts || []).map((e) =>
+      `<div class="${["expert-chip", e.in_use ? "active" : "", nowRegime === e.regime ? "now" : ""].join(" ").trim()}"><b>${escapeHtml(e.regime)} regime${nowRegime === e.regime ? " · now" : ""}</b>` +
+      (e.fitted ? `expert ${e.expert_hit_rate === null ? "—" : Math.round(e.expert_hit_rate * 100) + "%"} vs global ${e.global_hit_rate === null ? "—" : Math.round(e.global_hit_rate * 100) + "%"} over ${e.graded} · ${e.rows} rows · ${e.in_use ? "picks the side here" : "watching"}`
+               : `no expert yet (needs 40 windows in this regime)`) + `</div>`).join("");
+  }
   $("hs-meta-weights").innerHTML = (mt.fit?.top_weights || []).slice(0, 12).map((w) =>
     `<div class="audit-layer"><b>${escapeHtml(w.name)}</b> weight ${fmtSigned(w.weight, 3)}</div>`).join("") +
     (lastM.drivers || []).slice(0, 4).map((d) => `<div class="audit-layer"><b>→ ${escapeHtml(d.name)}</b> z ${fmtSigned(d.z, 2)} × w ${fmtSigned(d.weight, 3)} = ${fmtSigned(d.contribution, 3)}</div>`).join("");
@@ -3355,6 +3378,7 @@ function applySnapshot(data, opts = {}) {
   if (data.horizons) renderHorizons(data.horizons);
   if (data.temporal_arb) renderTemporalArb(data.temporal_arb);
   if (data.hawkes) renderHawkes(data.hawkes);
+  if (data.bocpd) renderRegime(data.bocpd);
   if (data.accuracy && state.prediction) state.prediction.accuracy = data.accuracy;
   if (data.window) state.window = data.window;
   state.lastSnapshotAt = Date.now();

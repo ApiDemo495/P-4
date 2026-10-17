@@ -229,6 +229,7 @@ class CycleManager:
         self.last_window_opened_at = 0.0
         self.stalls: list[dict] = []
         self._last_hawkes: dict = {}
+        self._last_bocpd: dict = {}
         self._last_twin_pricing: dict = {}
         self.last_errors: dict[str, str] = {}
         self.loop_stats: dict[str, dict] = {}
@@ -2037,6 +2038,7 @@ class CycleManager:
         payload["horizons"] = self.horizons_payload()
         payload["temporal_arb"] = self.temporal_arb_payload()
         payload["hawkes"] = dict(self._last_hawkes or {})
+        payload["bocpd"] = dict(self._last_bocpd or {})
         payload["boundary_pick"] = dict(self.last_pick)
         payload["brain_explain"] = self.brain_explain_payload()
         payload["physics"] = self.physics_payload()
@@ -2318,6 +2320,12 @@ class CycleManager:
             if hk.get("covered"):
                 extras["feature:hawkes"] = float(hk["score"])
                 extras["feature:branching"] = float(hk["branching"]) * (1.0 if hk["score"] >= 0 else -1.0)
+            from backend.core.bocpd import bocpd as run_bocpd
+            bc = run_bocpd(tk, float(self.settings.cycle_period_seconds))
+            self._last_bocpd = bc
+            if bc.get("covered"):
+                extras["feature:bocpd"] = float(bc["score"])
+                extras["regime:bocpd"] = float(("fresh", "young", "mature", "old").index(bc["regime"]))
             tw = price_structures(tk, "BUY" if float(spec.score) >= 0 else "SELL", min(1.0, abs(float(spec.score))))
             self._last_twin_pricing = tw
             if tw.get("covered"):
@@ -2416,6 +2424,7 @@ class CycleManager:
                                     + (fusion.reasoning or ""))[:900]
             fusion.meta = {**pred, "applied": applied}
             fusion.hawkes = dict(self._last_hawkes or {})
+            fusion.bocpd = dict(self._last_bocpd or {})
             self.meta.last = fusion.meta
         except Exception as exc:  # noqa: BLE001
             log.debug("meta apply skipped: %s", exc)

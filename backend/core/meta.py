@@ -42,6 +42,12 @@ TAKEOVER_RATE = 0.53       # must beat this - and the recipe - to decide
 MIN_GRADED = 30            # graded walk-forward predictions before it may decide
 REFIT_EVERY = 1            # windows between refits (live)
 BLOCK = 20                 # walk-forward block size when building the start record
+#: Round BN: regime experts - one extra fit per change-point regime, used
+#: only where its own walk-forward record in that regime beats the global fit
+REGIME_KEY = "regime:bocpd"
+REGIMES = ("fresh", "young", "mature", "old")
+EXPERT_MIN_FIT = 40
+EXPERT_MIN_GRADED = 15
 
 
 def _sigmoid(z: np.ndarray) -> np.ndarray:
@@ -69,6 +75,8 @@ class MetaCombiner:
         self.last: dict = {}
         self.last_error: str = ""
         self.settled_since_fit: int = 0
+        self.experts: dict[str, Fit] = {}
+        self.expert_graded: dict[str, deque] = {r: deque(maxlen=300) for r in REGIMES}
 
     # ------------------------------------------------------------------
     # fitting
@@ -80,8 +88,9 @@ class MetaCombiner:
             for r in rows:
                 for k in r.inputs:
                     seen[k] = seen.get(k, 0) + 1
-            # an input has to be present on at least a third of the rows
-            names = sorted(k for k, c in seen.items() if c >= max(5, len(rows) // 3))
+            # an input has to be present on at least a third of the rows;
+            # regime labels are routing keys, never features
+            names = sorted(k for k, c in seen.items() if c >= max(5, len(rows) // 3) and not k.startswith("regime:"))
         idx = {k: j for j, k in enumerate(names)}
         X = np.zeros((len(rows), len(names)), dtype=np.float64)
         M = np.zeros_like(X, dtype=bool)
@@ -97,9 +106,33 @@ class MetaCombiner:
             t[i] = r.at
         return names, X, M, y, t  # type: ignore[return-value]
 
+    @staticmethod
+    def regime_of(inputs: dict) -> str | None:
+        try:
+            code = int(round(float(inputs.get(REGIME_KEY))))
+        except (TypeError, ValueError):
+            return None
+        return REGIMES[code] if 0 <= code < len(REGIMES) else None
+
     def refit(self, rows: list, now: float | None = None) -> Fit | None:
+        """The global fit, then one expert per regime that has enough rows."""
         rows = [r for r in rows if r.decided]
-        if len(rows) < MIN_FIT:
+        fit = self._fit_rows(rows, now, MIN_FIT)
+        if fit is None:
+            return None
+        self.fit = fit
+        self.settled_since_fit = 0
+        experts: dict[str, Fit] = {}
+        for label in REGIMES:
+            sub = [r for r in rows if self.regime_of(r.inputs) == label]
+            ef = self._fit_rows(sub, now, EXPERT_MIN_FIT)
+            if ef is not None:
+                experts[label] = ef
+        self.experts = experts
+        return fit
+
+    def _fit_rows(self, rows: list, now: float | None, min_rows: int) -> Fit | None:
+        if len(rows) < min_rows:
             return None
         now = time.time() if now is None else now
         names, X, M, y, t = self._matrix(rows)
@@ -134,14 +167,47 @@ class MetaCombiner:
                 break
         p = _sigmoid(Z @ w + b)
         train = float(np.mean((p > 0.5) == (y > 0.5)))
-        self.fit = Fit(names=list(names), mean=mean, std=std, w=w, b=b, n=n, fitted_at=now, train_hit_rate=train)
-        self.settled_since_fit = 0
-        return self.fit
+        return Fit(names=list(names), mean=mean, std=std, w=w, b=b, n=n, fitted_at=now, train_hit_rate=train)
 
     # ------------------------------------------------------------------
     # predicting / grading
     # ------------------------------------------------------------------
+    def expert_record(self, label: str, n: int = WINDOW) -> tuple[float | None, float | None, int]:
+        """(expert hit rate, global hit rate, count) over the last n graded
+        windows that fell in this regime."""
+        rows = list(self.expert_graded.get(label, ()))[-n:]
+        if not rows:
+            return None, None, 0
+        return (sum(e for e, _ in rows) / len(rows), sum(g for _, g in rows) / len(rows), len(rows))
+
     def predict(self, inputs: dict, fit: Fit | None = None) -> dict:
+        """The global fit's call, routed to the regime expert where that
+        expert has earned it walk-forward."""
+        base = self._predict_fit(inputs, fit)
+        if not base.get("available"):
+            return base
+        label = self.regime_of(inputs)
+        base["regime"] = label
+        base["expert_side"] = None
+        ef = self.experts.get(label) if label else None
+        if ef is None:
+            base["routing"] = f"regime '{label}': no expert yet" if label else "no regime label"
+            return base
+        ex = self._predict_fit(inputs, ef)
+        base["expert_side"] = ex.get("side")
+        e_rate, g_rate, n = self.expert_record(label)
+        if n >= EXPERT_MIN_GRADED and e_rate is not None and g_rate is not None and e_rate > g_rate:
+            routed = dict(ex)
+            routed.update({"regime": label, "expert_side": ex.get("side"), "global_side": base["side"],
+                           "routing": f"regime '{label}' expert ({e_rate:.0%} vs global {g_rate:.0%} over {n}) picks the side",
+                           "expert_used": True})
+            return routed
+        base["routing"] = (f"regime '{label}' expert watching ({n}/{EXPERT_MIN_GRADED} graded)" if n < EXPERT_MIN_GRADED
+                           else f"regime '{label}' expert {e_rate:.0%} vs global {g_rate:.0%} over {n} - global keeps the side")
+        base["expert_used"] = False
+        return base
+
+    def _predict_fit(self, inputs: dict, fit: Fit | None = None) -> dict:
         f = fit or self.fit
         if f is None:
             return {"available": False, "reason": f"needs {MIN_FIT} decided windows for the first fit"}
@@ -168,7 +234,9 @@ class MetaCombiner:
     def remember(self, cycle: int, prediction: dict, recipe_side: str | None) -> None:
         if prediction.get("available"):
             self.pending[int(cycle)] = {"p_up": prediction["p_up"], "side": prediction["side"],
-                                        "recipe_side": recipe_side, "at": time.time()}
+                                        "recipe_side": recipe_side, "at": time.time(),
+                                        "regime": prediction.get("regime"), "expert_side": prediction.get("expert_side"),
+                                        "global_side": prediction.get("global_side") or prediction["side"]}
             if len(self.pending) > 200:
                 for k in sorted(self.pending)[:-200]:
                     self.pending.pop(k, None)
@@ -183,6 +251,10 @@ class MetaCombiner:
         self.graded.append({"cycle": int(cycle), "hit": bool(hit), "p_up": rec["p_up"], "move_bps": round(move_bps, 2), "at": time.time()})
         if rec.get("recipe_side") in ("BUY", "SELL"):
             self.recipe_graded.append(1 if (rec["recipe_side"] == "BUY") == up else 0)
+        label = rec.get("regime")
+        if label in self.expert_graded and rec.get("expert_side") in ("BUY", "SELL"):
+            self.expert_graded[label].append((int((rec["expert_side"] == "BUY") == up),
+                                              int((rec.get("global_side") == "BUY") == up)))
         return self.graded[-1]
 
     # ------------------------------------------------------------------
@@ -204,7 +276,9 @@ class MetaCombiner:
                     continue
                 recipe = r.inputs.get("fusion:recipe")
                 recipe_side = None if recipe is None or recipe == 0 else ("BUY" if recipe > 0 else "SELL")
-                self.pending[r.cycle] = {"p_up": pred["p_up"], "side": pred["side"], "recipe_side": recipe_side, "at": r.at}
+                self.pending[r.cycle] = {"p_up": pred["p_up"], "side": pred["side"], "recipe_side": recipe_side, "at": r.at,
+                                         "regime": pred.get("regime"), "expert_side": pred.get("expert_side"),
+                                         "global_side": pred.get("global_side") or pred["side"]}
                 if self.settle(r.cycle, float(r.move_bps), float(r.cost_bps)) is not None:
                     graded += 1
         self.refit(rows)
@@ -257,13 +331,20 @@ class MetaCombiner:
             "fit": None if f is None else {"inputs": len(f.names), "rows": f.n, "train_hit_rate": round(f.train_hit_rate, 4),
                                            "fitted_at": f.fitted_at, "bias": round(float(f.b), 4), "top_weights": weights},
             "last": self.last, "error": self.last_error,
+            "experts": [
+                {"regime": lbl, "fitted": lbl in self.experts, "rows": self.experts[lbl].n if lbl in self.experts else 0,
+                 "expert_hit_rate": None if er is None else round(er, 4), "global_hit_rate": None if gr is None else round(gr, 4),
+                 "graded": n, "in_use": bool(lbl in self.experts and n >= EXPERT_MIN_GRADED and er is not None and gr is not None and er > gr)}
+                for lbl in REGIMES for (er, gr, n) in [self.expert_record(lbl)]
+            ],
             "method": ("ridge logistic regression over every recorded input (standardised), recency half-life "
                        f"{HALF_LIFE:.0f} windows, λ={LAMBDA:g}; scored walk-forward; takes the side only while its trailing "
                        f"{WINDOW}-window record ≥ {TAKEOVER_RATE:.0%} and ≥ the recipe's"),
         }
 
     def export_state(self) -> dict:
-        return {"graded": list(self.graded), "recipe_graded": list(self.recipe_graded), "saved_at": time.time()}
+        return {"graded": list(self.graded), "recipe_graded": list(self.recipe_graded),
+                "expert_graded": {k: [list(x) for x in v] for k, v in self.expert_graded.items()}, "saved_at": time.time()}
 
     def import_state(self, payload: dict) -> int:
         g = (payload or {}).get("graded") or []
@@ -271,4 +352,8 @@ class MetaCombiner:
             self.graded.append(dict(row))
         for v in (payload or {}).get("recipe_graded") or []:
             self.recipe_graded.append(int(v))
+        for k, rows in ((payload or {}).get("expert_graded") or {}).items():
+            if k in self.expert_graded:
+                for e, gl in rows:
+                    self.expert_graded[k].append((int(e), int(gl)))
         return len(g)

@@ -80,6 +80,8 @@ class FusionResult:
     meta: dict | None = None
     #: Round BM: the Hawkes order-flow cascade measured at the boundary
     hawkes: dict | None = None
+    #: Round BN: the change-point posterior (regime age, P(change), next-window P(up))
+    bocpd: dict | None = None
 
     # -- binary direction fields (HOLD was removed) ----------------------
     @property
@@ -128,6 +130,7 @@ class FusionResult:
             "hindsight": self.hindsight,
             "meta": self.meta,
             "hawkes": self.hawkes,
+            "bocpd": self.bocpd,
         }
         # Kept for the two clients: "lean" now always equals the decision,
         # because there is no third state to lean away from.
