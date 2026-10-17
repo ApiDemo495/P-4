@@ -1,0 +1,72 @@
+{
+  "name": "Drosophila Trader v2.0",
+  // Pre-provisioned image built by .github/workflows/devcontainer-image.yml
+  // from .devcontainer/Dockerfile: Python 3.11 + every requirement already in
+  // /opt/venv, redis, gh.  A new Codespace pulls one cached image - no apt, no
+  // pip, no SDK download - and the engine is up seconds after the editor opens.
+  "image": "ghcr.io/apidemo495/p-4-dev:latest",
+  // Codespaces: everything lives on ONE port - 8000 serves the dashboard, the
+  // API, the WebSocket stream, /matrix, /settings and /docs.  Nothing else
+  // needs forwarding; ports you start by hand stay silent.
+  "hostRequirements": {
+    "cpus": 2,
+    "memory": "4gb",
+    "storage": "16gb"
+  },
+
+  // ---------------------------------------------------------------------------
+  // ZERO COMMANDS.  Create the codespace, then do nothing: these three hooks
+  // install everything, start the engine, wait until the first prediction is
+  // locked, publish the port and print the URL.  See tools/codespace_autostart.sh.
+  //
+  //   postCreateCommand  once per codespace - adopts /opt/venv as .venv (or
+  //                      installs if the image is not pre-built), .env, redis
+  //   postStartCommand   every start / wake - self-heals a missing .venv or a
+  //                      changed requirements.txt, then (re)starts the engine
+  //   postAttachCommand  every editor attach - the same, plus the URL banner
+  // ---------------------------------------------------------------------------
+  // Round AY: the editor is handed over as soon as the container exists
+  // (waitFor = onCreateCommand, which is empty).  Provisioning and the engine
+  // start run in the terminal while you watch; port 8000 shows the
+  // "setting up" page with the live journal until the engine takes over.
+  // The old "waitFor: postCreateCommand" kept GitHub's "Setting up your
+  // codespace" screen up for the whole provisioning - on a machine where the
+  // image did not load and pip had to install from scratch that was 10+ min
+  // of nothing to look at, and when it failed the editor never opened at all.
+  "waitFor": "onCreateCommand",
+  "postCreateCommand": "bash tools/codespace_autostart.sh --provision",
+  "postStartCommand": "bash tools/codespace_autostart.sh --start",
+  "postAttachCommand": "bash tools/codespace_autostart.sh --attach",
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "Drosophila Trader - everything (dashboard, API, WS)",
+      "onAutoForward": "openBrowser",
+      "visibility": "public"
+    }
+  },
+  // Any other port you start by hand (a scratch tool) is left
+  // alone instead of auto-opening a preview that cannot work.
+  "otherPortsAttributes": { "onAutoForward": "silent" },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python",
+        "task.allowAutomaticTasks": "on",
+        "workbench.startupEditor": "none",
+        "markdown.preview.openMarkdownLinks": "inEditor",
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": ["backend/tests"],
+        "files.exclude": { "**/__pycache__": true }
+      }
+    }
+  },
+  "remoteEnv": {
+    "PYTHONPATH": "${containerWorkspaceFolder}",
+    "PYTHONUNBUFFERED": "1"
+  }
+}
