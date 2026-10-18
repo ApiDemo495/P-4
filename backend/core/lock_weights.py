@@ -39,6 +39,7 @@ BACKERS = {
     "physics": ("physics:layer",),
     "genesis": ("genesis:composite",),
     "news": ("news:NIV",),
+    "jev": ("agent:jev",),
     "gemini": ("agent:gemini",),
     "local": ("agent:local",),
 }
@@ -112,6 +113,7 @@ def build(settings, ledger_sources: list[dict] | None = None) -> LockWeightTable
         "physics": float(getattr(settings, "weight_physics", 0.0) or 0.0),
         "genesis": float(getattr(settings, "weight_genesis", 0.0) or 0.0),
         "news": float(getattr(settings, "weight_news", 0.0) or 0.0),
+        "jev": float(getattr(settings, "weight_jev", 0.0) or 0.0),
         "gemini": float(getattr(settings, "weight_gemini", 0.0) or 0.0),
         "local": float(getattr(settings, "weight_local", 0.0) or 0.0),
     }

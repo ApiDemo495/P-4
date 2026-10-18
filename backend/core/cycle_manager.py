@@ -338,6 +338,14 @@ class CycleManager:
                 self.agents.local.autoloader.start()
             except Exception as exc:  # noqa: BLE001
                 log.warning("model autoload not started: %s", exc)
+        # Round BQ: the jevos decision agent installs itself (release download,
+        # SHA-256 verified) and keeps its own CPU server up.  JEV_AUTOINSTALL=0
+        # / JEV_URL opt out or point at a server you run.
+        if os.environ.get("JEV_AUTOSTART", "1").strip().lower() not in ("0", "false", "no"):
+            try:
+                self.agents.jev.start()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("jev agent not started: %s", exc)
         # Round AL: public minute history first (Kraken, then Gemini), then the
         # worker thread takes over from the live tape.
         try:
@@ -422,6 +430,7 @@ class CycleManager:
         for name, step in (
             ("persist", self._persist_state),
             ("news", self.news.stop),
+            ("jev", self.agents.jev.shutdown),
             ("brain", self.brain.stop),
             ("market", self.market.stop),
             ("macro", self.macro.stop),
@@ -3116,7 +3125,7 @@ class CycleManager:
         except Exception:  # pragma: no cover - only during warm-up
             agent_status = {
                 name: {"status": "STARTING", "detail": "warming up"}
-                for name in ("gemini", "local")
+                for name in ("jev", "gemini", "local")
             }
         components = {
             "market_data": self.market.status(),
@@ -3132,11 +3141,11 @@ class CycleManager:
                 name="agents",
                 healthy=any(
                     agent_status[name]["status"] in ("ACTIVE", "STUB")
-                    for name in ("gemini", "local")
+                    for name in ("jev", "gemini", "local")
                 ),
                 detail=", ".join(
                     f"{name}={agent_status[name]['status']}"
-                    for name in ("gemini", "local")
+                    for name in ("jev", "gemini", "local")
                 ),
                 mode="fusion",
             ),

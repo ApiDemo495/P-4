@@ -445,7 +445,7 @@ decision maker.
 ### 8.1 Weights
 
 ```
-drosophila 0.40   gemini 0.30   local 0.30   (GitHub Models agent removed in Round BP)
+drosophila 0.40   jev 0.30   gemini 0.15   local 0.15   (GitHub Models agent removed in Round BP; jevos primary since Round BQ)
 ```
 
 Renormalised over the agents that answered: `wᵢ = Wᵢ / Σ W_active`.
@@ -840,7 +840,7 @@ Time is compressed 20×; every ratio of the protocol is preserved.
 | E07 | brain fallback | 80×80 matrix, healthy, signed and connected, non-zero 3-layer read-out |
 | E08 | degradation | six ordered levels, driven by real component failures; level 6 forces HOLD |
 | E09 | local model | GGUF/ONNX magic-byte and size validation, and a usable labelled STUB |
-| E10 | agents | empty keys fail safe, weights are 0.40/0.25/0.20/0.15, a cycle completes with no agents |
+| E10 | agents | empty keys fail safe, weights are 0.40/0.30/0.15/0.15 (brain/jev/gemini/local), a cycle completes with no agents |
 | E11 | asset switch | unsupported assets rejected; switch applies at the next boundary; Appendix C per asset |
 | E12 | hedge stress | HSI 0.95 ⇒ ×0.20 dampening, forced HOLD, verbatim HOLD box |
 | E13 | outcomes | signal scored after the horizon, HOLD neutral, win rate, DRG reward path |

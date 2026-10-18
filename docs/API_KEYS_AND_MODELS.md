@@ -165,15 +165,61 @@ GEMINI_MODEL=gemini-3.8-flash
 | `API key not valid` | typo / truncated paste | copy again from AI Studio |
 | `models/... is not found` | that model name is retired in your region | change `GEMINI_MODEL` (above) |
 | `429 RESOURCE_EXHAUSTED` | free-tier rate limit | wait a minute; the app already spaces calls out |
-| `User location is not supported` | Gemini API not available in your country | use a VPN region that is, or rely on the GitHub agent |
+| `User location is not supported` | Gemini API not available in your country | use a VPN region that is, or rely on the jevos / local agents |
 
 **Revoke:** https://aistudio.google.com/app/apikey → bin icon next to the key.
 
 ---
 
-## 2. GitHub Models token — removed (Round BP)
+## 2. jevos decision agent — `feder-cr/jev` (free, no key, the primary AI agent)
 
-The GitHub Models agent was removed; the two remaining agents carry 0.30 each beside the fly brain's 0.40.
+**What it is:** [jev](https://github.com/feder-cr/jev) is Federico Elia's
+open-source CPU decision model ("jevos"): one native binary that reads a
+*state* and answers yes/no, multiple-choice and score questions **with
+probabilities read from the model's option logits** - it generates no text,
+so there is nothing to parse and nothing to make up, and a short request
+answers in tens of milliseconds on a laptop CPU. The GitHub Models agent it
+replaces (Round BP) is gone; jev carries the primary agent weight (0.30 beside
+the fly brain's 0.40; Gemini and the local GGUF model 0.15 each - the hourly
+hindsight review and the meta-combiner re-weight all four from graded outcomes).
+
+**What the app sends:** every window the state (all 31 formulas with their
+signs spelled out, the tally, tie risk, the latest headline, the brain
+consensus) and six questions in **one** request - five rule questions
+(continuation, order flow, exhaustion, news, brain - each with its rule in the
+question, as jev is designed) and one direct up/down choice.
+`P(up) = ½·P(choice=up) + ½·mean(rule answers oriented to "up")`;
+the side is the sign of `P(up) − ½`, the confidence `|2·P(up) − 1|`. The
+reasoning on the agent row prints every probability.
+
+**Install:** automatic. The engine downloads the `jevos-v5` release for your
+platform (binary ~27 MB + OpenVINO INT8 model ~630 MB) from GitHub Releases
+into `backend/models/jev/`, **verifies both against the release's
+`SHA256SUMS.txt`**, unpacks them and runs `jev serve` on `127.0.0.1:8017`
+as a child of the engine (restarted if it dies, stopped with the engine).
+Progress is on the agent row and in `/api/agents` → `jev.install`.
+Linux x64, macOS arm64 and Windows x64 have release binaries; anything else
+needs `python scripts/build.py` from the jev repo and `JEV_URL`.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `JEV_AUTOINSTALL` | `1` | `0` = never download; use what is in `backend/models/jev` or `JEV_URL` |
+| `JEV_URL` | *(empty)* | a jev server you run yourself, e.g. `http://127.0.0.1:8017` |
+| `JEV_PORT` | `8017` | port of the engine-owned server |
+| `JEV_API_KEY` | *(empty)* | only if your own server was started with `JEV_API_KEY` set |
+| `JEV_THREADS` | all cores | fewer if the GGUF model also runs |
+| `JEV_WEIGHT` / `GEMINI_WEIGHT` / `LOCAL_WEIGHT` | 0.30 / 0.15 / 0.15 | opening fusion weights |
+
+**Memory:** about 1 GB (1.4 GB with the text cache full) - a 2-core / 8 GB
+Codespace runs it beside the 0.5B GGUF model.
+
+**Test:** settings page → *jevos* row, or `POST /api/agents/jev/test`
+(`GET /health` of the server: model name and file fingerprint).
+
+**Honesty:** jevos is a general decision model trained on rules-and-scenarios
+tasks, not on markets. Its value here is that it applies the stated rules to
+the stated evidence consistently and fast; whether it beats the other voters
+is measured, per hour, by the hindsight review - not assumed.
 
 ## 3. CryptoPanic API key — `CRYPTOPANIC_API_KEY` (free)
 

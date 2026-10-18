@@ -1,6 +1,6 @@
-"""Agent orchestrator - runs the four agents inside the 8-second lock budget.
+"""Agent orchestrator - runs the AI agents inside the 8-second lock budget.
 
-Gemini and the local model are called concurrently.  Each
+jevos (the primary agent, Round BQ), Gemini and the local model are called concurrently.  Each
 has its own timeout (7 s) so the *slowest* agent still cannot push the lock past
 t=8 s: the fusion step simply proceeds with whoever answered.
 """
@@ -13,6 +13,7 @@ import time
 
 from backend.agents.base import AgentResult, AgentStatus
 from backend.agents.gemini_agent import GeminiAgent
+from backend.agents.jev_agent import JevAgent
 from backend.agents.local_pool import LocalModelPool
 from backend.core import config as cfg
 
@@ -22,6 +23,7 @@ log = logging.getLogger("drosophila.agents")
 class AgentOrchestrator:
     def __init__(self, settings=None, local_stub: bool | None = None) -> None:
         self.settings = settings or cfg.SETTINGS
+        self.jev = JevAgent(self.settings)
         self.gemini = GeminiAgent(self.settings)
         self.local = LocalModelPool(self.settings)
         if local_stub is not None:
@@ -32,11 +34,12 @@ class AgentOrchestrator:
     # ------------------------------------------------------------------
     @property
     def agents(self) -> dict:
-        return {"gemini": self.gemini, "local": self.local}
+        return {"jev": self.jev, "gemini": self.gemini, "local": self.local}
 
     def weights(self) -> dict[str, float]:
         return {
             "drosophila": self.settings.weight_drosophila,
+            "jev": self.settings.weight_jev,
             "gemini": self.settings.weight_gemini,
             "local": self.settings.weight_local,
         }
@@ -46,13 +49,14 @@ class AgentOrchestrator:
         weights = self.weights()
         started = time.perf_counter()
 
+        jev_task = asyncio.create_task(self.jev.decide(context, weights["jev"]))
         gemini_task = asyncio.create_task(self.gemini.decide(context, weights["gemini"]))
         local_task = asyncio.create_task(self.local.decide(context, weights["local"]))
 
         gathered = await asyncio.gather(
-            gemini_task, local_task, return_exceptions=True
+            jev_task, gemini_task, local_task, return_exceptions=True
         )
-        names = ("gemini", "local")
+        names = ("jev", "gemini", "local")
         results: dict[str, AgentResult] = {}
         for name, outcome in zip(names, gathered):
             if isinstance(outcome, BaseException):

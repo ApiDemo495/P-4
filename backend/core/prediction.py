@@ -261,7 +261,7 @@ def build_reasoning(
     agents = [
         f"{name} {contributions[name].get('decision')} "
         f"({float(contributions[name].get('confidence') or 0.0):.0%})"
-        for name in ("gemini", "local")
+        for name in ("jev", "gemini", "local")
         if name in contributions
     ]
     if agents:

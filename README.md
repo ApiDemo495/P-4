@@ -368,6 +368,18 @@ WebSocket (`MARKET_DATA_MODE=gemini` pins it), then Kraken, then CoinGecko,
 and only uses the built-in simulator if none is reachable — and it always
 labels which source is active in the UI.
 
+**The primary AI agent needs no key either.** Round BQ added
+[feder-cr/jev](https://github.com/feder-cr/jev) ("jevos"), an open-source CPU
+decision model that answers yes/no and choice questions with probabilities
+instead of text. The engine downloads the `jevos-v5` release by itself
+(binary + 630 MB model, SHA-256 verified against the release checksums) into
+`backend/models/jev/`, runs `jev serve` on `127.0.0.1:8017` as its own child
+and asks it six rule-questions about every window's state in one call. It
+carries 0.30 of the fusion weight beside the fly brain's 0.40 (Gemini and the
+local GGUF model 0.15 each); the hourly hindsight review re-weights all four
+from graded outcomes. `JEV_AUTOINSTALL=0` skips the download, `JEV_URL` points
+at a server you run. Details: `docs/API_KEYS_AND_MODELS.md` §2.
+
 **Optional keyed providers (Formula Genesis Engine).** Three more feeds run
 *only* while their key is saved in `/settings` → "Keyed providers": Glassnode
 (`GLASSNODE_API_KEY`, BTC exchange net-flow), Twelve Data
@@ -581,7 +593,7 @@ tail -f server.log
 | `backend/formulas` | the 31 formulas in 9 categories + `engine.py` + the DRG reward learner |
 | `backend/brain` | 5-step startup verification, connectome query, spectral clustering, 3-layer GCN, `explain.py`, fallback matrix |
 | `backend/news` | sentiment lexicon, CryptoPanic/NewsAPI/RSS, critical-event detector |
-| `backend/agents` | Gemini, local GGUF/ONNX, fusion, orchestrator |
+| `backend/agents` | jevos decision agent (feder-cr/jev, primary), Gemini, local GGUF/ONNX, fusion, orchestrator |
 | `backend/web` | zero-build dashboard (`/`, `/matrix`, `/settings`) |
 | `backend/tests` | `smoke.py` + `test_e2e.py` (Appendix E) |
 | `docs` | [`SPECIFICATION_v2.md`](docs/SPECIFICATION_v2.md), [`SPEC_NOTES.md`](docs/SPEC_NOTES.md) |

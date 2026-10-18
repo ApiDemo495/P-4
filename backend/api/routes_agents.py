@@ -91,6 +91,8 @@ async def test_agent(name: str, payload: TestPayload | None = None) -> dict:
     key = (payload.key if payload else "") or ""
     if name == "gemini":
         return await manager.agents.gemini.test_key(key)
+    if name == "jev":
+        return await manager.agents.jev.test()
     if name == "cryptopanic":
         from backend.news import cryptopanic_source
 
@@ -143,15 +145,17 @@ async def key_effects() -> dict:
 
     def agent_row(name, agent, ring):
         health = agent.health().to_dict() if agent is not None else {}
+        configured = bool(ring.configured) if ring is not None else bool(agent and agent.configured)
         out[name] = {
-            "configured": bool(ring.configured) if ring is not None else bool(agent and agent.configured),
+            "configured": configured,
             "status": health.get("status"), "detail": health.get("detail"), "model": health.get("model"),
             "calls": health.get("calls"), "last_error": health.get("last_error"),
             "weight": float(getattr(settings, f"weight_{name}", 0.0) or 0.0),
             "effect": ((f"voting in fusion ({health.get('calls')} calls, model {health.get('model') or '-'})" if health.get("calls")
                         else "key active · first vote on the next 70 s cycle") if health.get("status") == "ACTIVE" else
-                       "no key" if not (ring and ring.configured) else f"not voting: {health.get('status')} - {health.get('last_error') or health.get('detail') or ''}"),
+                       ("no key" if ring is not None else "not installed") if not configured else f"not voting: {health.get('status')} - {health.get('last_error') or health.get('detail') or ''}"),
         }
+    agent_row("jev", getattr(manager.agents, "jev", None), None)
     agent_row("gemini", getattr(manager.agents, "gemini", None), settings.rings.get("gemini"))
 
     news_status = manager.news.status.to_dict()

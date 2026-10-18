@@ -296,8 +296,8 @@ def test_github_agent_removed_and_social_sensor_runs_concurrently():
 
     assert not os.path.exists("backend/agents/github_agent.py")
     orch = AgentOrchestrator(cfg.Settings(), local_stub=True)
-    assert set(orch.agents) == {"gemini", "local"} and "github" not in orch.weights()
-    assert abs(orch.weights()["gemini"] + orch.weights()["local"] + orch.weights()["drosophila"] - 1.0) < 1e-9
+    assert set(orch.agents) == {"jev", "gemini", "local"} and "github" not in orch.weights()
+    assert abs(orch.weights()["jev"] + orch.weights()["gemini"] + orch.weights()["local"] + orch.weights()["drosophila"] - 1.0) < 1e-9
     for path in ("backend/web/index.html", "backend/web/settings.html", "backend/web/app.js", "backend/web/settings.js", ".env.example"):
         txt = open(path, encoding="utf-8").read()
         assert "GITHUB_MODELS" not in txt and "key-github" not in txt and "k-github" not in txt, path

@@ -240,6 +240,7 @@ async def system_config() -> dict:
         "news_poll_seconds": settings.news_poll_seconds,
         "weights": {
             "drosophila": settings.weight_drosophila,
+            "jev": settings.weight_jev,
             "gemini": settings.weight_gemini,
             "local": settings.weight_local,
             "physics": settings.weight_physics,

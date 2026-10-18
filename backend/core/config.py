@@ -211,10 +211,14 @@ class Settings:
 
     # Fusion weights (Section 8.1)
     weight_drosophila: float = 0.40
-    # Round BP: the GitHub Models agent was removed; its 0.15 went to the two
-    # remaining agents (0.40 / 0.30 / 0.30).
-    weight_gemini: float = 0.30
-    weight_local: float = 0.30
+    # Round BP removed the GitHub Models agent (0.40 / 0.30 / 0.30).  Round BQ
+    # makes jevos (feder-cr/jev, a CPU decision model answering probabilities,
+    # not text) the primary AI agent: 0.40 brain / 0.30 jev / 0.15 gemini /
+    # 0.15 local.  The hindsight review and the meta-combiner re-weight all
+    # four from graded outcomes; these are only the opening weights.
+    weight_jev: float = field(default_factory=lambda: _env_float("JEV_WEIGHT", 0.30))
+    weight_gemini: float = field(default_factory=lambda: _env_float("GEMINI_WEIGHT", 0.15))
+    weight_local: float = field(default_factory=lambda: _env_float("LOCAL_WEIGHT", 0.15))
     # Round T: the thermodynamic capital layer (backend/physics) votes beside
     # the agents.  0 disables it; the other weights are renormalised with it.
     weight_physics: float = field(default_factory=lambda: _env_float("PHYSICS_WEIGHT", 0.20))

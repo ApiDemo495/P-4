@@ -226,7 +226,7 @@ def fuse(
             "source": f"weighted consensus of {int(consensus_voters)} directional formulas",
         }
 
-    for name in ("gemini", "local"):
+    for name in ("jev", "gemini", "local"):
         result = agents.get(name)
         if result is not None and result.available:
             active[name] = table.mark(name)
@@ -368,7 +368,7 @@ def fuse(
 
     agent_confidences = [
         float(contributions[name]["confidence"])
-        for name in ("gemini", "local")
+        for name in ("jev", "gemini", "local")
         if name in contributions
     ]
     brain_conf = max(0.0, min(1.0, ccs_confidence))

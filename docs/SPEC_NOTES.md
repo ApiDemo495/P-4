@@ -2587,3 +2587,32 @@ tracked file is referenced; nothing was deleted on a hunch.
   emotion features `social_velocity` / `social_momentum`; the latter is a
   learned hindsight / meta-combiner input.  Social poll every 60 s, 30 s
   while the crowd is loud.
+
+### BQ — jevos (feder-cr/jev) as the primary AI agent
+
+The user asked for "feder-cr / git-ai" as the primary agent. `git-ai` is
+feder-cr's Git *server* for AI agents (it never calls a model, so it cannot
+predict anything); the same author's **`jev`** is a CPU decision model
+("jevos-v5": yes/no, choice and score questions answered with probabilities
+read from the option logits, 28–130 ms per request) and is what fits here.
+
+* `backend/agents/jev_agent.py` — `JevInstaller` (release download with
+  resume, **SHA-256 verified against `SHA256SUMS.txt`**, safe unpack),
+  `JevServer` (engine-owned `jev serve` child on 127.0.0.1:8017, restarted
+  when it dies, stopped with the engine), `JevAgent` (`decide`/`health`/`test`).
+* The state sent once per window: all formulas with their lean spelled out by
+  group, the tally, PIN/HSI, the headline, CCSv2, DRG and the win rate. Six
+  questions in one request: five `noul` rule-questions (continuation, flow,
+  exhaustion [sign −], news, brain) and a `choice` up/down.
+  `P(up) = ½·P(up choice) + ½·mean(oriented rules)`; side = sign, confidence
+  = `|2P−1|` (floor 0.02, never 0.00), an exact ½ leans with MPL+TAI.
+* Opening weights 0.40 brain / **0.30 jev** / 0.15 gemini / 0.15 local
+  (`JEV_WEIGHT`, `GEMINI_WEIGHT`, `LOCAL_WEIGHT`); `agent:jev` is graded by
+  the ledger, hindsight, meta-combiner and lock-weight table like the others.
+* Wired through orchestrator, fusion, prediction, lock_weights, cycle health,
+  `/api/agents`, `/api/agents/jev/test`, settings effects row and the agents
+  panel (`⚡ jevos decision model`).
+* Honesty: jevos is trained on rules-and-scenarios text, not markets; its
+  value is measured hourly, not assumed. The Arena sandbox cannot reach GitHub
+  release storage, so the install was exercised here with synthetic archives
+  and a mock server; a fresh Codespace downloads the real release.

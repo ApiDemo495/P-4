@@ -2316,6 +2316,7 @@ function renderAgents(data) {
   const weights = data.weights || {};
   const rows = [
     { key: "drosophila", label: "🧠 Drosophila CCSv2", weight: weights.drosophila },
+    { key: "jev", label: "⚡ jevos decision model", weight: weights.jev },
     { key: "gemini", label: "🤖 Gemini AI", weight: weights.gemini },
     { key: "local", label: "💻 Local model", weight: weights.local },
   ];

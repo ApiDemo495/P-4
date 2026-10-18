@@ -531,14 +531,15 @@ async def test_e10_agent_key_tests_fail_safe(manager: CycleManager):
 
     # agent status is always reported, configured or not
     status = manager.agents.status_payload()
-    for name in ("gemini", "local"):
+    for name in ("jev", "gemini", "local"):
         assert name in status
         assert "status" in status[name]
     assert "github" not in status                       # Round BP: agent removed
-    weights = status["weights"]
+    weights = status["weights"]                         # Round BQ: jevos primary
     assert weights["drosophila"] == 0.40
-    assert weights["gemini"] == 0.30
-    assert weights["local"] == 0.30
+    assert weights["jev"] == 0.30
+    assert weights["gemini"] == 0.15
+    assert weights["local"] == 0.15
     assert "github" not in weights
 
     # with Gemini unconfigured the engine still completes a full cycle
