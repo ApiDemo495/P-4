@@ -6,7 +6,7 @@ list may change a side, a confidence or a level, and no step is computed twice.
 | # | Step | Module | What it may decide |
 |---|------|--------|--------------------|
 | 1 | Frozen snapshot | `backend/core/frozen_snapshot.py` | the data every later step reads (one tape, one book, one news set, frozen at t−prefetch) |
-| 2 | 22 formulas (A–H) | `backend/formulas/` | per-formula values; **Formula consensus** = sign-weighted vote of the *directional* formulas only (indicators such as HSI/MPS never vote) |
+| 2 | 31 formulas (A–I) | `backend/formulas/` | per-formula values; **Formula consensus** = sign-weighted vote of the *directional* formulas only (indicators such as HSI/MPS never vote) |
 | 3 | Brain (CCSv2 + GCN) | `backend/brain/` | one score computed **from the formulas**. It is a *second reading of the same evidence*, so it carries weight 0.40 and the formula consensus 0.30 — together 0.70, never two independent 0.70s |
 | 4 | Physics voter | `backend/physics/` | one score, weight 0.20 (halved when model-only) |
 | 5 | Agents (Gemini/GitHub/local) | `backend/agents/` | the remaining weight; absent agents forfeit their weight, they are never imputed |

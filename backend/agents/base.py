@@ -97,7 +97,7 @@ def _window_rule() -> str:
 
 SYSTEM_PROMPT = (
     _window_rule() +
-    "You receive 22 proprietary formula outputs spanning micro-structure, order book, hedge "
+    "You receive 31 proprietary formula outputs spanning micro-structure, order book, hedge "
     "dynamics, regime analysis, temporal patterns, Kalman filtering, news sentiment, and a "
     "biological neural network consensus from the Drosophila melanogaster brain connectome.\n"
     "\n"

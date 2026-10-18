@@ -1,6 +1,6 @@
 """Agent decision fusion (Section 8).
 
-    drosophila 0.40 | gemini 0.30 | local 0.30   (Round BP: the GitHub agent was removed)
+    drosophila 0.40 | jev 0.30 | gemini 0.15 | local 0.15   (Round BQ: jevos primary; the GitHub agent was removed in BP)
 
 Weights are renormalised over the agents that actually answered this cycle, so
 losing Gemini does not silently halve the signal.

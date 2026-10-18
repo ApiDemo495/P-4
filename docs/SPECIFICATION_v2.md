@@ -6,7 +6,7 @@ draft, `docs/SPEC_NOTES.md` records the deviation, the reason and the escape
 hatch.
 
 **Scope:** a 60-second scalp-trading engine for BTC and PAXG that produces one
-immutable signal per minute, driven by 22 formulas, a Drosophila mushroom-body
+immutable signal per minute, driven by 31 formulas, a Drosophila mushroom-body
 connectome model, and up to three external AI agents.
 
 ---
@@ -20,7 +20,7 @@ Every cycle is phase-locked to the UTC minute and follows the same timeline.
 | Virtual time | Wall clock at `TIME_SCALE=1` | What happens |
 |---|---|---|
 | `t = 0.000 s` | `:00.000` | Market snapshot is **frozen**; the lock resets to `COMPUTING` ⏳ |
-| `t = 0.000–0.003 s` | first ~3 ms | All 22 formulas run on the frozen snapshot |
+| `t = 0.000–0.003 s` | first ~3 ms | All 31 formulas run on the frozen snapshot |
 | `t = 0.003–8.000 s` | `:00.0 – :08.0` | AI agents are called **concurrently**, 7 s budget each |
 | `t = 8.000 s` | `:08` | Fusion → signal **LOCKED** 🔒 and broadcast |
 | `t = 8 – 15 s` | `:08 – :15` | (live formula refresh interval) |
@@ -94,7 +94,7 @@ State machine (`backend/core/signal_lock.py`):
                              │                    ┌─────────┴──────────┐
    CryptoPanic ─┐            │                    ▼                    ▼
    NewsAPI ─────┼─▶ NewsEngine│              FormulaEngine        AgentOrchestrator
-   RSS ─────────┘   (30–60 s) │              (22 formulas)        (Gemini/local/GitHub)
+   RSS ─────────┘   (30–60 s) │              (31 formulas)        (jevos/Gemini/local)
                              │                    │                    │
                              │                    └────────┬───────────┘
                              │                             ▼
@@ -236,7 +236,7 @@ snapshot, not raised:
 
 ---
 
-## 6. The 22 formulas
+## 6. The 31 formulas
 
 ### 6.0 Common contract
 
@@ -392,14 +392,14 @@ DRG      = tanh(0.1 · DA)
 
 ## 7. AI agent system
 
-Up to three external agents run **concurrently** with a hard 7 s timeout each;
+The three AI agents (jevos, Gemini, local) run **concurrently** with a hard 9 s timeout each;
 the fusion layer renormalises over whoever answered.
 
 | Agent | Weight | Endpoint | Test on entry |
 |---|---|---|---|
-| Gemini | 0.25 | `generativelanguage.googleapis.com/…:generateContent` | `POST /api/agents/gemini/test` → key validity |
-| Local model | 0.20 | in-process GGUF (llama.cpp) or ONNX | magic-byte validation + test inference |
-| GitHub Models | 0.15 | `models.inference.ai.azure.com/chat/completions` | `GET /user` then the models endpoint |
+| jevos (feder-cr/jev) | 0.30 | `127.0.0.1:8017/v1/systemone` (engine-owned CPU server) | `POST /api/agents/jev/test` → `/health` model + fingerprint |
+| Gemini | 0.15 | `generativelanguage.googleapis.com/…:generateContent` | `POST /api/agents/gemini/test` → key validity |
+| Local model | 0.15 | in-process GGUF (llama.cpp) or ONNX | magic-byte validation + test inference |
 
 ### 7.1 Gemini
 
@@ -605,7 +605,7 @@ lives in one place - see `docs/SPEC_NOTES.md` §AG.)
 | Agents | one row per agent: status, decision, weight |
 | History | last 12 locked signals with lock icon |
 | Outcomes | win rate + last 8 scored outcomes in bps |
-| Formula Explorer | all 22 formulas grouped in the 8 categories, live values, per-formula description toggle, timings |
+| Formula Explorer | all 31 formulas grouped in the 8 categories, live values, per-formula description toggle, timings |
 
 #### 11.1.1 Two rules that are structural, not cosmetic
 
@@ -680,7 +680,7 @@ animations carry the same cue.
 
 | Level | Trigger | Behaviour |
 |---|---|---|
-| 1 · Full | everything connected | 22 formulas + 4 agents + live brain + news |
+| 1 · Full | everything connected | 31 formulas + 3 agents + live brain + news |
 | 2 · No news | every news source fails | NIV = SMD = 0, price-only emergency detection |
 | 3 · No agents | Gemini/GitHub unconfigured and no local model | CCSv2 is the sole decision maker |
 | 4 · Fallback brain | neuPrint/FlyWire unreachable | CCSv2 on the committed CSV matrix |
@@ -773,7 +773,7 @@ backend/
   api/        FastAPI app, WebSocket + REST routers
   core/       config, clock, signal lock, frozen snapshot, cycle manager, store
   data/       ring buffers, Binance WS, CoinGecko, simulator, market hub, sync
-  formulas/   22 formulas in 8 category packages + drg.py + engine.py
+  formulas/   31 formulas in 8 category packages + drg.py + engine.py
   brain/      startup verification, connectome query, clustering, GCN, health,
               fallback/mb_adjacency_80x80.csv, generate_fallback_matrix.py
   news/       sentiment lexicon, 3 sources, critical detector, news engine
@@ -831,7 +831,7 @@ Time is compressed 20×; every ratio of the protocol is preserved.
 
 | # | Test | Asserts |
 |---|---|---|
-| E01 | cold start | first cycle locks 🔒 with all 22 formulas + DRG, no errors, < 50 ms, complete UI payload |
+| E01 | cold start | first cycle locks 🔒 with all 31 formulas + DRG, no errors, < 50 ms, complete UI payload |
 | E02 | immutability | live `FORMULA_UPDATE`s do not move the lock; a duplicate `lock()` returns the same object |
 | E03 | formula isolation | an injected `RuntimeError` in TAI zeroes only TAI, records the error, 21 formulas unaffected |
 | E04 | evidence gate | 11 zeros ⇒ `insufficient_evidence`, fusion returns HOLD @ 0.50 |

@@ -161,6 +161,23 @@
     </div>
   </section>
 
+  <h2 style="font-size:15px;letter-spacing:.05em">PRIMARY AGENT — jevos decision model (feder-cr/jev)</h2>
+  <section class="card" id="jev-card">
+    <div id="jev-status" class="status-line">—</div>
+    <div class="status-line" style="margin-bottom:10px">
+      An open-source CPU decision model: the window state goes in once, six rule-questions come back as
+      probabilities read from the option logits (no text, nothing to parse). It installs itself from the
+      jevos-v5 GitHub release (binary + 630 MB model, SHA-256 verified against the release checksums) in a
+      low-priority background process and serves on 127.0.0.1:8017 as a child of the engine. No key needed.
+      Weight 0.30 beside the fly brain's 0.40; the hourly hindsight review re-weights it from graded outcomes.
+    </div>
+    <div class="row" style="gap:8px;align-items:center">
+      <button class="btn" id="jev-test">Test jevos</button>
+      <span class="muted" id="jev-verdict">—</span>
+    </div>
+    <div class="muted" id="jev-last" style="margin-top:8px">—</div>
+  </section>
+
   <h2 style="font-size:15px;letter-spacing:.05em">LOCAL AI MODELS — up to 5 at the same time</h2>
   <section class="card">
     <div id="local-status" class="status-line">—</div>

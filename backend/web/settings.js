@@ -114,6 +114,37 @@ const effectsBtn = $("effects-refresh");
 if (effectsBtn) effectsBtn.onclick = refreshEffects;
 refreshEffects();
 
+/* ---------------- Round BS: the jevos card (primary agent) ---------------- */
+async function refreshJev() {
+  const box = $("jev-status");
+  if (!box) return;
+  const res = await getJSON("/api/agents");
+  const j = (res && res.jev) || {};
+  if (!res || res.error || !j.status) { box.textContent = "jevos: no answer from the engine"; return; }
+  const inst = j.install || {};
+  const pct = inst.percent != null ? ` ${inst.percent}%` : "";
+  const eta = inst.eta_seconds != null ? ` · ~${Math.round(inst.eta_seconds / 60)} min left` : "";
+  const line = j.status === "ACTIVE"
+    ? `🟢 ACTIVE · ${j.model || "jevos"} · ${j.calls || 0} calls · last ${Math.round(j.latency_ms || 0)} ms · ${j.url || ""}`
+    : j.status === "LOADING"
+      ? `🟠 ${j.detail || "installing"}${pct}${eta}`
+      : `${j.status === "ERROR" ? "🔴" : "⚪"} ${j.status} · ${j.detail || ""}`;
+  box.textContent = line;
+  const parts = j.last_parts || {};
+  const keys = Object.keys(parts);
+  $("jev-last").textContent = keys.length
+    ? "last answers (P oriented to up): " + keys.map((k) => `${k} ${Number(parts[k]).toFixed(2)}`).join(" · ")
+    : (j.installed ? "installed · waiting for the first window" : `release ${j.release || "jevos-v5"} · install log: logs/jev_install.log`);
+}
+const jevBtn = $("jev-test");
+if (jevBtn) jevBtn.onclick = async () => {
+  $("jev-verdict").textContent = "testing…";
+  const res = await getJSON("/api/agents/jev/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: "" }) });
+  $("jev-verdict").textContent = res && res.valid ? `✅ ${res.detail}` : `❌ ${(res && (res.detail || res.error)) || "no answer"}`;
+  refreshJev();
+};
+refreshJev();
+
 $("save-keys").onclick = async () => {
   const persist = $("persist").checked;
   const saved = [];

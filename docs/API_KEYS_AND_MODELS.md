@@ -120,7 +120,7 @@ keep answering.
 
 ## 1. Gemini API key — `GEMINI_API_KEY` (free)
 
-**What it powers:** the *Gemini agent*, one of the three AI agents whose vote
+**What it powers:** the *Gemini agent*, one of the three AI agents (jevos, Gemini, local) whose vote
 carries 25 % of the direction decision (formulas 40 %, agents 25 %, brain
 20 %, news 15 %).
 
@@ -435,7 +435,8 @@ The app has **three agent slots**:
 | Agent | Needs | Runs where | Latency |
 |---|---|---|---|
 | Gemini | `GEMINI_API_KEY` | Google's servers | ~0.5–2 s |
-| GitHub Models | **Local model** | a `.gguf` (or `.onnx`) file you upload | **your machine / the Codespace CPU** | 2–20 s depending on size |
+| jevos | *(none - self-installed)* | `127.0.0.1:8017`, your machine / the Codespace CPU | 0.03–1 s |
+| Local model | *(none)* | a `.gguf` (or `.onnx`) file you upload | **your machine / the Codespace CPU** | 2–20 s depending on size |
 
 Each agent gets the same prompt (asset, last prices, formula summary, news
 sentiment) and returns a direction and a confidence; the orchestrator gives

@@ -840,10 +840,12 @@ tail -f server.log
 * **News engine.** CryptoPanic every 30 s, NewsAPI/RSS every 60 s, an offline
   headline pack so the panel is never blank, and a critical-event detector that
   only trusts Tier ≤2 sources for lock-breaking events.
-* **Agents with a spine.** Gemini (structured JSON schema), a local GGUF/ONNX
-  model with magic-byte validation + test inference + RAM monitoring, and GitHub
-  Models with key-test-on-entry. Weights 0.40/0.25/0.20/0.15 renormalise over
-  whoever actually answered.
+* **Agents with a spine.** jevos (feder-cr/jev: a CPU decision model that
+  answers rule-questions with probabilities, self-installed and SHA-256
+  verified), Gemini (structured JSON schema) and a local GGUF/ONNX model with
+  magic-byte validation + test inference + RAM monitoring. Weights
+  0.40/0.30/0.15/0.15 (brain/jev/gemini/local) renormalise over whoever
+  actually answered, and the hourly hindsight review re-weights them.
 
 ---
 

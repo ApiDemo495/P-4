@@ -2646,3 +2646,19 @@ flip could set the pick against what the panel shows.
   (the consensus is category weight × |value|, not a head count).
 * Honest limit unchanged: these make the pick traceable and keep CPU
   contention off the boundary; they do not make a 70 s coin less noisy.
+
+### BS — update sweep
+
+User: *"Update whole app, I realised many things isn't updated."* Everything
+that still described an older round was brought to the current state:
+* the agent prompt said "22 formula outputs" → 31; the dashboard cell "VS THE
+  22 FORMULAS" → 31; README / SPECIFICATION / DECISION_CHAIN / LOCAL_MODELS /
+  API_KEYS still listed the GitHub agent, 0.40/0.25/0.20/0.15, 22 formulas,
+  4 agents, 60 s windows → jevos/Gemini/local, 0.40/0.30/0.15/0.15, 31
+  formulas, 3 agents, 70 s.
+* `/settings` has a **PRIMARY AGENT — jevos** card (status, install progress
+  with percent/ETA, last rule probabilities, *Test jevos* button).
+* The dev-container image bakes the jevos-v5 release (checksums verified in
+  the Dockerfile, `JEV_BAKE=0` to skip); `run.sh` links `/opt/drosophila/jev`
+  into `backend/models/jev`, so a fresh Codespace starts the server at once
+  instead of downloading 630 MB.

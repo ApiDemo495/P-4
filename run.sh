@@ -98,6 +98,12 @@ adopt_image_assets() {
     done
     say "${DIM}   local models: linked from the image ($(ls "$seed"/models 2>/dev/null | wc -l) file(s))${R}"
   fi
+  # Round BS: the jevos release (binary + model) baked into the image - no
+  # 630 MB download on a fresh Codespace, the engine finds it ready.
+  if [ -d "$seed/jev" ] && [ ! -e "$REPO_ROOT/backend/models/jev" ]; then
+    mkdir -p "$REPO_ROOT/backend/models"
+    ln -s "$seed/jev" "$REPO_ROOT/backend/models/jev" 2>/dev/null && say "${DIM}   jevos decision model: linked from the image${R}"
+  fi
 }
 
 has_deps() {

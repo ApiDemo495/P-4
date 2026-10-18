@@ -61,6 +61,26 @@ RUN mkdir -p /opt/drosophila/connectome /opt/drosophila/models \
  && chown -R vscode:vscode /opt/drosophila \
  && du -sh /opt/drosophila/*
 
+# Round BS: the jevos-v5 release (feder-cr/jev) - the primary AI agent - baked
+# into the image and verified against the release checksums, so a fresh
+# Codespace never downloads it.  run.sh links /opt/drosophila/jev into
+# backend/models/jev; the engine's installer sees it installed and only
+# starts the server.  Build-arg JEV_BAKE=0 skips it (smaller image).
+ARG JEV_BAKE=1
+RUN if [ "$JEV_BAKE" = "1" ]; then \
+      set -e; mkdir -p /opt/drosophila/jev && cd /opt/drosophila/jev \
+      && base=https://github.com/feder-cr/jev/releases/download/jevos-v5 \
+      && curl -fsSL -o SHA256SUMS.txt "$base/SHA256SUMS.txt" \
+      && curl -fsSL -o jev-linux-x64.tar.gz "$base/jev-linux-x64.tar.gz" \
+      && curl -fsSL -o jevos-v5-openvino-int8.zip "$base/jevos-v5-openvino-int8.zip" \
+      && grep -E "jev-linux-x64.tar.gz|jevos-v5-openvino-int8.zip" SHA256SUMS.txt | sha256sum -c - \
+      && tar -xzf jev-linux-x64.tar.gz && unzip -q jevos-v5-openvino-int8.zip \
+      && rm -f jev-linux-x64.tar.gz jevos-v5-openvino-int8.zip \
+      && chmod +x "$(find . -type f -name jev | head -1)" \
+      && printf '{"active": false, "phase": "done", "error": "", "asset": "baked into the image"}' > install.json \
+      && chown -R vscode:vscode /opt/drosophila/jev && du -sh /opt/drosophila/jev; \
+    fi
+
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH=/opt/venv/bin:$PATH
 ENV PYTHONUNBUFFERED=1

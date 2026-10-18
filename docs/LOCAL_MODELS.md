@@ -5,8 +5,8 @@ This is the exact behaviour of `backend/agents/local_model_agent.py` and
 
 ## 1. What the local model is asked to do
 
-Every 60 s window, during the prefetch, the local model receives the same
-context as Gemini and the GitHub agent (price, volatility, the 31 formulas,
+Every 70 s window, during the prefetch, the local model receives the same
+context as Gemini and jevos (price, volatility, the 31 formulas,
 the fly-brain CCSv2 reading, the crowd emotion, the latest headlines) and must
 answer with **JSON only**:
 
