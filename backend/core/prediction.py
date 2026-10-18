@@ -69,6 +69,7 @@ def consensus(formula_values: dict, directional: dict[str, str] | None = None) -
     weighted = 0.0
     up: list[tuple[float, str]] = []
     down: list[tuple[float, str]] = []
+    up_mass = down_mass = 0.0
     for name, raw in (formula_values or {}).items():
         category = directional.get(name)
         if not category:
@@ -86,6 +87,10 @@ def consensus(formula_values: dict, directional: dict[str, str] | None = None) -
         total += weight
         weighted += weight * max(-1.0, min(1.0, value))
         (up if value > 0 else down).append((abs(value), name))
+        if value > 0:
+            up_mass += weight * min(1.0, value)
+        else:
+            down_mass += weight * min(1.0, -value)
     if total <= 0:
         return {
             "score": 0.0,
@@ -94,6 +99,8 @@ def consensus(formula_values: dict, directional: dict[str, str] | None = None) -
             "down": 0,
             "up_names": [],
             "down_names": [],
+            "up_mass": 0.0,
+            "down_mass": 0.0,
         }
     up.sort(reverse=True)
     down.sort(reverse=True)
@@ -104,6 +111,10 @@ def consensus(formula_values: dict, directional: dict[str, str] | None = None) -
         "down": len(down),
         "up_names": [name for _, name in up[:4]],
         "down_names": [name for _, name in down[:4]],
+        # category weight x |value| on each side: the consensus is the sign of
+        # (up_mass - down_mass), which is why 14 small ups can lose to 13 big downs
+        "up_mass": round(up_mass, 4),
+        "down_mass": round(down_mass, 4),
     }
 
 
@@ -230,13 +241,18 @@ def build_reasoning(
     if agreement["voters"]:
         same = agreement["up"] if side == "BUY" else agreement["down"]
         other = agreement["down"] if side == "BUY" else agreement["up"]
+        same_mass = float(agreement.get("up_mass" if side == "BUY" else "down_mass") or 0.0)
+        other_mass = float(agreement.get("down_mass" if side == "BUY" else "up_mass") or 0.0)
+        # The consensus is weighted mass (category weight x |value|), not a head
+        # count - say both, so a count majority on the other side is explained.
         bullets.append({
             "kind": "formulas",
             "weight": None,
-            "supports": same >= other,
+            "supports": (score >= 0) == (side == "BUY") if score else same >= other,
             "text": (
-                f"Formula consensus {_fmt(score)}: {same} of {agreement['voters']} "
-                f"directional formulas lean {side} and {other} lean the other way."
+                f"Formula consensus {_fmt(score)} = (mass for {side} {same_mass:.2f} - mass against {other_mass:.2f}) / total: "
+                f"{same} of {agreement['voters']} directional formulas lean {side} by count, {other} lean the other way"
+                + (" - the smaller group carries the larger weighted magnitude." if (same < other) == (same_mass > other_mass) and same != other else ".")
             ),
         })
     if supporters:

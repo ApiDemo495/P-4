@@ -185,3 +185,72 @@ def test_installer_unpacks_release_layout_and_server_child_lifecycle(tmp_path):
     assert server.start() and server.launches == 1               # idempotent while alive
     server.stop()
     assert not server.alive
+
+
+# ---------------------------------------------------------------------------
+# Round BR - the pick must come from a visible calculation, not from noise
+# ---------------------------------------------------------------------------
+def test_direction_ladder_uses_window_formulas_inside_the_noise_floor():
+    from backend.core.direction import BRAIN_TIE_MIN_CONFIDENCE, resolve
+
+    s = cfg.SETTINGS
+    # 1. outside the floor the fused score decides
+    d = resolve(score=0.09, ccs_value=-0.5, confidence=0.3, settings=s, window_lean=-0.4, neutral_band=0.05)
+    assert d.decision == "BUY" and d.tie_break == "fused score" and "noise floor 0.050" in d.source
+    # 2. inside the floor the 70 s window formulas decide - not a 6 %-confident brain, not a tiny sum
+    d = resolve(score=-0.039, ccs_value=0.09, confidence=0.09, settings=s, window_lean=-0.31,
+                ccs_confidence=0.06, neutral_band=0.05)
+    assert d.decision == "SELL" and d.tie_break == "window formulas" and d.weak and "window formulas lean -0.310" in d.source
+    d = resolve(score=0.01, ccs_value=-0.09, confidence=0.09, settings=s, window_lean=+0.2, ccs_confidence=0.9, neutral_band=0.05)
+    assert d.decision == "BUY" and d.tie_break == "window formulas"
+    # 3. no window lean: the brain breaks the tie only when it is confident
+    d = resolve(score=0.0, ccs_value=0.3, confidence=0.1, settings=s, window_lean=None, ccs_confidence=0.06, previous="SELL")
+    assert d.decision == "SELL" and d.tie_break == "previous window"
+    d = resolve(score=0.0, ccs_value=0.3, confidence=0.1, settings=s, window_lean=None, ccs_confidence=BRAIN_TIE_MIN_CONFIDENCE, previous="SELL")
+    assert d.decision == "BUY" and d.tie_break == "brain CCSv2"
+    # 4. the floor never drops below the spec's neutral band
+    d = resolve(score=0.015, ccs_value=0.0, confidence=0.1, settings=s, window_lean=-0.2, neutral_band=0.0)
+    assert d.decision == "SELL" and d.tie_break == "window formulas"
+
+
+def test_consensus_reports_weighted_mass_so_count_and_sign_cannot_contradict():
+    from backend.core.prediction import consensus
+
+    directional = {"A1": "A", "A2": "A", "A3": "A", "B1": "B"}
+    # three small ups vs one big down: count says BUY, mass says SELL - both are printed
+    agg = consensus({"A1": 0.05, "A2": 0.05, "A3": 0.05, "B1": -0.9}, directional)
+    assert agg["up"] == 3 and agg["down"] == 1 and agg["score"] < 0
+    assert agg["down_mass"] > agg["up_mass"] > 0
+    assert (agg["score"] < 0) == (agg["down_mass"] > agg["up_mass"])
+
+
+def test_window_lean_and_noise_floor_are_computed_from_the_tape():
+    from backend.core.cycle_manager import CycleManager
+
+    lean = CycleManager._window_lean({"MPL": -0.996, "RBB": 0.755, "WDR": -0.851, "ANA": -0.5, "FIH": -0.372,
+                                      "RAR": -0.124, "PRT": -0.002, "LAI": 0.003, "PIN": 0.9})
+    assert lean is not None and lean < 0                      # PIN never counts as a side
+    assert CycleManager._window_lean({"PIN": 0.5}) is None
+
+    class _M:
+        SCORE_HISTORY = 60
+        _remember_score = CycleManager._remember_score
+        _score_noise_floor = CycleManager._score_noise_floor
+
+    m = _M()
+    assert m._score_noise_floor() == 0.02                      # no history: the spec band
+    for v in [0.3, -0.2, 0.25, 0.1, -0.4, 0.2, 0.3, 0.15, -0.35, 0.2, 0.3]:
+        m._remember_score(v)
+    assert m._score_noise_floor() == pytest.approx(0.5 * 0.25, abs=1e-9)
+
+
+def test_jev_installer_runs_out_of_process_at_low_priority(tmp_path):
+    from backend.agents.jev_agent import JevAgent, read_install_state
+
+    agent = JevAgent(cfg.SETTINGS, home=tmp_path / "jev")
+    assert not agent._install_running()
+    src = (ROOT / "backend/agents/jev_agent.py").read_text(encoding="utf-8")
+    assert '"nice", "-n", "19"' in src and '"ionice", "-c", "3"' in src and "start_new_session=True" in src
+    assert "max(1, cores - 1)" in src                           # one core stays with the event loop
+    st = read_install_state(tmp_path / "jev")
+    assert st["phase"] == "idle" and st["active"] is False

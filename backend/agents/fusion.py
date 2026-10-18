@@ -166,6 +166,8 @@ def fuse(
     asset: str = "BTC",
     ledger_sources: list | None = None,
     forward: dict | None = None,
+    window_lean: float | None = None,
+    neutral_band: float | None = None,
 ) -> FusionResult:
     """Combine the Drosophila brain with the available AI agents.
 
@@ -515,6 +517,9 @@ def fuse(
         settings=settings,
         emergency=emergency,
         degraded=degraded,
+        window_lean=window_lean,
+        ccs_confidence=ccs_confidence,
+        neutral_band=neutral_band,
     )
 
     forced_reason = ""

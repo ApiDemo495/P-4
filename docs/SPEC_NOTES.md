@@ -2616,3 +2616,33 @@ read from the option logits, 28–130 ms per request) and is what fits here.
   value is measured hourly, not assumed. The Arena sandbox cannot reach GitHub
   release storage, so the install was exercised here with synthetic archives
   and a mock server; a fresh Codespace downloads the real release.
+
+### BR — delay and "proper calculation" fixes
+
+User: *"It is taking too much delay and predictions are not based on proper
+calculations"* (late pick after :00, countdown lag, slow agents; pick
+contradicting the formulas; poor win rate).
+
+**Delay** - the Round BQ jevos install (630 MB download + SHA-256 + unzip)
+and `jev serve` (all cores, model compile) ran inside / beside the engine on
+a 2-core Codespace and starved the window loop.
+* The installer is now its own process: `nice -n 19 ionice -c 3 python -m
+  backend.agents.jev_agent install --home …`, progress through
+  `backend/models/jev/install.json`; the engine only reads the file.
+* `jev serve` runs at nice 10 with `threads = cores − 1` (`JEV_THREADS`,
+  `JEV_NICE`): one core always belongs to the event loop.
+
+**Calculation** - the side used to be the sign of an eight-voter sum even
+when that sum was ±0.03 (noise), so a 0.5B chat model's guess or a rounding
+flip could set the pick against what the panel shows.
+* `direction.resolve` takes a **measured noise floor** (half the median
+  |fused score| of the last 60 windows, never below the spec's 0.02). Inside
+  it the ladder goes: **window formulas** (magnitude-weighted lean of the nine
+  70 s WINDOW formulas, PIN excluded) → brain CCSv2 **only if ≥ 25 % confident**
+  → previous window → BUY. `direction_source` prints which step decided and
+  the numbers.
+* The formula-consensus bullet prints the weighted **mass for / against** so
+  "16 lean BUY by count but the consensus is SELL" is explained on screen
+  (the consensus is category weight × |value|, not a head count).
+* Honest limit unchanged: these make the pick traceable and keep CPU
+  contention off the boundary; they do not make a 70 s coin less noisy.

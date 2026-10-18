@@ -2186,6 +2186,48 @@ class CycleManager:
             log.debug("news impact failed: %s", exc)
             return {}
 
+    # Round BR: the fused score's noise floor and the window-formula lean ------
+    SCORE_HISTORY = 60
+
+    def _remember_score(self, score: float) -> None:
+        try:
+            hist = self.__dict__.setdefault("_score_history", deque(maxlen=self.SCORE_HISTORY))
+            hist.append(abs(float(score)))
+        except (TypeError, ValueError):
+            pass
+
+    def _score_noise_floor(self) -> float:
+        """Half the median |fused score| of the recent windows (>= NEUTRAL_BAND):
+        a sum of eight voters that lands inside it has no sign worth reading."""
+        from backend.core.direction import NEUTRAL_BAND
+
+        hist = self.__dict__.get("_score_history")
+        if not hist or len(hist) < 10:
+            return NEUTRAL_BAND
+        return float(max(NEUTRAL_BAND, 0.5 * float(np.median(np.asarray(hist, dtype=float)))))
+
+    @staticmethod
+    def _window_lean(values: dict) -> float | None:
+        """Magnitude-weighted mean of the nine WINDOW formulas (PIN excluded: it
+        is a tie probability, not a side) - the formulas built for this exact
+        horizon, so they break the tie before anything that is not."""
+        from backend.formulas.engine import WINDOW_FORMULAS
+
+        num = den = 0.0
+        for spec in WINDOW_FORMULAS:
+            if spec.name == "PIN":
+                continue
+            try:
+                v = float(values.get(spec.name, 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if abs(v) < 1e-9:
+                continue
+            v = max(-1.0, min(1.0, v))
+            num += v * abs(v)
+            den += abs(v)
+        return (num / den) if den > 0 else None
+
     def _fuse(self, snapshot, formula_result, agent_results: dict, warnings: list,
               crowd: dict | None = None) -> fusion_module.FusionResult:
         """The spec recipe, then the evidence ledger's verdict on top of it.
@@ -2296,9 +2338,13 @@ class CycleManager:
             news_impact=self._news_impact_safe(),
             asset=self.asset,
             ledger_sources=self._ledger_sources_safe(),
+            # Round BR: the horizon-matched tie-break and the measured noise floor
+            window_lean=self._window_lean(future_values),
+            neutral_band=self._score_noise_floor(),
         )
         crowd = common["crowd"]
         spec = fusion_module.fuse(**common)
+        self._remember_score(spec.spec_score)
         try:
             niv = float(self.news.current_niv())
         except Exception:  # noqa: BLE001

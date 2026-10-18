@@ -46,7 +46,9 @@ import json
 import logging
 import os
 import platform
+import shutil
 import ssl
+import sys
 import subprocess
 import tarfile
 import time
@@ -171,13 +173,55 @@ def parse_sums(text: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # installer
 # ---------------------------------------------------------------------------
-class JevInstaller:
-    """Fetch + verify + unpack the release into ``home`` (background task)."""
+STATE_FILE = "install.json"
 
-    def __init__(self, home: Path) -> None:
+
+class _State(dict):
+    """The installer's progress dict; every update is mirrored to
+    ``home/install.json`` so the engine (another process) can read it."""
+
+    def __init__(self, path: Path | None, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.path = path
+
+    def update(self, *args, **kwargs) -> None:  # type: ignore[override]
+        super().update(*args, **kwargs)
+        self.flush()
+
+    def flush(self) -> None:
+        if self.path is None:
+            return
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(dict(self), default=str))
+            tmp.replace(self.path)
+        except OSError:
+            pass
+
+
+def read_install_state(home: Path) -> dict:
+    try:
+        return json.loads((home / STATE_FILE).read_text())
+    except (OSError, ValueError):
+        return {"active": False, "phase": "idle", "error": "", "asset": "", "percent": None}
+
+
+class JevInstaller:
+    """Fetch + verify + unpack the release into ``home``.
+
+    Round BR: it runs in its **own process** at the lowest CPU/IO priority
+    (``nice -n 19 ionice -c 3 python -m backend.agents.jev_agent install``):
+    hashing and unpacking 630 MB inside the engine process starved the window
+    loop on a 2-core Codespace (countdown lag, late picks).  Progress goes
+    through ``home/install.json``.
+    """
+
+    def __init__(self, home: Path, persist: bool = True) -> None:
         self.home = home
-        self.state: dict = {"active": False, "phase": "idle", "error": "", "asset": "",
-                            "bytes": 0, "total": None, "percent": None}
+        self.state: dict = _State(home / STATE_FILE if persist else None,
+                                  {"active": False, "phase": "idle", "error": "", "asset": "",
+                                   "bytes": 0, "total": None, "percent": None, "pid": os.getpid()})
         self.task: asyncio.Task | None = None
 
     def start(self) -> None:
@@ -219,7 +263,7 @@ class JevInstaller:
         except Exception as exc:  # noqa: BLE001
             self.state.update({"phase": "failed", "error": f"{type(exc).__name__}: {exc}"[:300]})
         finally:
-            self.state["active"] = False
+            self.state.update({"active": False})
 
     async def _fetch_sums(self, verify) -> dict[str, str]:
         self.state.update({"phase": "fetching checksums", "asset": SUMS_FILE})
@@ -308,9 +352,16 @@ class JevServer:
             return False
         if self.alive:
             return True
-        threads = max(1, min(os.cpu_count() or 2, int(os.environ.get("JEV_THREADS", "0") or 0) or (os.cpu_count() or 2)))
+        cores = os.cpu_count() or 2
+        forced = int(os.environ.get("JEV_THREADS", "0") or 0)
+        # Round BR: one core always stays with the engine's event loop (the
+        # countdown and the lock), and the server runs at nice 10 so a busy
+        # model compile can never delay a boundary.
+        threads = max(1, min(cores, forced or max(1, cores - 1)))
         cmd = [str(binary), "serve", "--host", "127.0.0.1", "--port", str(self.port),
                "--model-dir", str(model_dir), "--threads", str(threads)]
+        if shutil.which("nice"):
+            cmd = ["nice", "-n", str(int(os.environ.get("JEV_NICE", "10") or 10))] + cmd
         try:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
             handle = self.log_path.open("ab")
@@ -431,7 +482,8 @@ class JevAgent:
         self.api_key = os.environ.get("JEV_API_KEY", "").strip()
         self.url = self.external_url or f"http://127.0.0.1:{self.port}"
         self.autoinstall = os.environ.get("JEV_AUTOINSTALL", "1").strip().lower() not in ("0", "false", "no")
-        self.installer = JevInstaller(self.home)
+        self.installer = JevInstaller(self.home, persist=False)   # in-process fallback only
+        self._install_proc: subprocess.Popen | None = None
         self.server = JevServer(self.home, self.port)
         self._transport = transport
         self._client: httpx.AsyncClient | None = None
@@ -476,12 +528,12 @@ class JevAgent:
             try:
                 if not self.external_url:
                     if not self.installed:
-                        if self.autoinstall and not self.installer.state.get("active"):
-                            phase = self.installer.state.get("phase")
+                        if self.autoinstall and not self._install_running():
+                            phase = self.install_state().get("phase")
                             # a failed download is retried every two minutes, not every tick
-                            if phase == "idle" or (phase in ("failed", "cancelled") and time.time() >= self._retry_at):
+                            if phase in (None, "idle", "starting") or (phase in ("failed", "cancelled", "done") and time.time() >= self._retry_at):
                                 self._retry_at = time.time() + 120.0
-                                self.installer.start()
+                                self._spawn_installer()
                     elif not self.server.alive:
                         self.server.start()
                 await self.probe()
@@ -489,9 +541,42 @@ class JevAgent:
                 self.last_error = f"{type(exc).__name__}: {exc}"[:200]
             await asyncio.sleep(15.0 if self.ready else 5.0)
 
+    # -- the installer child ---------------------------------------------
+    def _install_running(self) -> bool:
+        return self._install_proc is not None and self._install_proc.poll() is None
+
+    def install_state(self) -> dict:
+        st = read_install_state(self.home)
+        st["active"] = bool(self._install_running())
+        return st
+
+    def _spawn_installer(self) -> None:
+        """Download/verify/unpack in a separate process at the lowest priority."""
+        cmd = [sys.executable, "-m", "backend.agents.jev_agent", "install", "--home", str(self.home)]
+        if shutil.which("ionice"):
+            cmd = ["ionice", "-c", "3"] + cmd
+        if shutil.which("nice"):
+            cmd = ["nice", "-n", "19"] + cmd
+        try:
+            self.home.mkdir(parents=True, exist_ok=True)
+            log_path = Path(cfg.REPO_ROOT) / "logs" / "jev_install.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            handle = log_path.open("ab")
+            self._install_proc = subprocess.Popen(cmd, stdout=handle, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                                  start_new_session=True, cwd=str(cfg.REPO_ROOT))
+            _State(self.home / STATE_FILE).update({"active": True, "phase": "starting", "error": "", "pid": self._install_proc.pid})
+        except OSError as exc:
+            self.last_error = f"installer could not start: {exc}"[:200]
+            _State(self.home / STATE_FILE).update({"active": False, "phase": "failed", "error": self.last_error})
+
     async def shutdown(self) -> None:
         if self._task is not None:
             self._task.cancel()
+        if self._install_running():
+            try:
+                self._install_proc.terminate()
+            except OSError:
+                pass
         self.server.stop()
         if self._client is not None:
             await self._client.aclose()
@@ -518,7 +603,7 @@ class JevAgent:
         return {"valid": False, "detail": self._why_not_ready(result.get("error", ""))}
 
     def _why_not_ready(self, error: str = "") -> str:
-        st = self.installer.state
+        st = self.install_state()
         if self.external_url:
             return f"JEV_URL {self.url} not answering: {error or 'no response'}"
         if not self.installed:
@@ -540,7 +625,7 @@ class JevAgent:
         if not self.configured:
             return AgentResult(agent=self.name, status=AgentStatus.DISABLED, weight=weight, error="not installed")
         if not self.ready:
-            status = AgentStatus.LOADING if (self.installer.state.get("active") or self.server.alive) else AgentStatus.INACTIVE
+            status = AgentStatus.LOADING if (self._install_running() or self.server.alive) else AgentStatus.INACTIVE
             return AgentResult(agent=self.name, status=status, weight=weight, error=self._why_not_ready())
         body = {"model": "jev-latest", "state": build_state(context), "questions": build_questions()}
         try:
@@ -590,7 +675,7 @@ class JevAgent:
 
     # ------------------------------------------------------------------
     def health(self) -> AgentHealth:
-        st = self.installer.state
+        st = self.install_state()
         extra = {
             "calls": self.calls, "failures": self.failures, "last_error": self.last_error,
             "url": self.url, "installed": self.installed, "fingerprint": self.fingerprint,
@@ -608,3 +693,37 @@ class JevAgent:
         if st.get("phase") == "failed" or (self.installed and self.server.last_error):
             return AgentHealth(self.name, AgentStatus.ERROR, self._why_not_ready(), extra=extra)
         return AgentHealth(self.name, AgentStatus.LOADING, self._why_not_ready(), extra=extra)
+
+
+# ---------------------------------------------------------------------------
+# ``python -m backend.agents.jev_agent install --home DIR`` - the low-priority
+# installer process the engine spawns (see JevAgent._spawn_installer).
+# ---------------------------------------------------------------------------
+def _main(argv: list[str]) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="jev_agent")
+    sub = parser.add_subparsers(dest="cmd")
+    inst = sub.add_parser("install", help="download, verify and unpack the jevos release")
+    inst.add_argument("--home", default=str(jev_home()))
+    args = parser.parse_args(argv)
+    if args.cmd != "install":
+        parser.print_help()
+        return 2
+    try:
+        os.nice(19)
+    except (AttributeError, OSError):
+        pass
+    installer = JevInstaller(Path(args.home))
+
+    async def run() -> None:
+        installer.start()
+        await installer.task
+
+    asyncio.run(run())
+    print(json.dumps(dict(installer.state)))
+    return 0 if installer.state.get("phase") == "done" else 1
+
+
+if __name__ == "__main__":  # pragma: no cover - process entry point
+    raise SystemExit(_main(sys.argv[1:]))
