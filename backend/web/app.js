@@ -2897,6 +2897,26 @@ function renderLiveCalc(data, deltas) {
   }
 }
 
+/* Round BT: which formulas sit flat at the lock, how often, and why (from
+   their own trace) - so "most of them are flat" is a list with reasons, not
+   a feeling. */
+function renderFlatWatch(fw) {
+  const el = $("flat-watch");
+  if (!el || !fw || !Array.isArray(fw.rows)) return;
+  const rows = fw.rows.filter((r) => r.flat_share > 0);
+  const tape = fw.tape || {};
+  const qp = tape.quote_prints || {};
+  const tapeNote = `tape ${tape.source || "?"} · quote prints BTC ${qp.BTC ?? 0} / PAXG ${qp.PAXG ?? 0}`;
+  if (!rows.length) {
+    el.textContent = `flat watch: no formula inside ±${fw.eps} at the lock over the last ${fw.windows} windows · ${tapeNote}`;
+    return;
+  }
+  const flat = rows.filter((r) => r.flat_share > 0.5);
+  const parts = rows.slice(0, 8).map((r) => `${r.name} ${Math.round(r.flat_share * 100)}%${r.reason ? ` (${escapeHtml(r.reason)})` : ""}`);
+  el.innerHTML = `flat watch: <b>${flat.length}</b> of ${fw.rows.length} formulas flat in more than half of the last ${fw.windows} locks` +
+    ` · ${parts.join(" · ")} · ${tapeNote}`;
+}
+
 function renderLiveFormulas(data) {
   if (!data || data.error) return;
   state.liveFormulas = data.formulas || {};
@@ -2906,6 +2926,7 @@ function renderLiveFormulas(data) {
   state.liveFuture = data.future || {};
   state.liveSuperposition = data.superposition || {};
   state.liveTraces = data.traces || {};
+  renderFlatWatch(data.flat_watch);
   state.liveStats = data.stats || {};
   state.liveTimingsUs = data.timings_us || {};
   state.liveChecks = data.checks || {};

@@ -243,8 +243,28 @@ class SelfScale:
         return {"decay": self.decay, "floor": self.floor, "value": self.value, "count": self.count}
 
     @classmethod
-    def from_dict(cls, payload: dict) -> "SelfScale":
-        obj = cls(payload.get("decay", 0.98), payload.get("floor", 0.0))
+    def from_dict(cls, payload: dict, floor: float | None = None) -> "SelfScale":
+        # Round BT: the floor is a *code* constant, not state - a persisted
+        # state must never pin a formula to a floor an older build chose.
+        obj = cls(payload.get("decay", 0.98), payload.get("floor", 0.0) if floor is None else floor)
         obj.value = float(payload.get("value", 0.0))
         obj.count = int(payload.get("count", 0))
         return obj
+
+
+def real_trades(snapshot, asset: str):
+    """Round BT: the rows of the tape that are real prints (volume > 0).
+
+    Quote prints (qty 0 / side 0) keep the price path alive on a thin tape
+    but carry no flow; volume medians, flow regressions and aggressor
+    statistics must skip them or they read flat.  Works on any snapshot that
+    offers ``ticks(asset)`` (tests hand in minimal stand-ins)."""
+    import numpy as np
+
+    trades = getattr(snapshot, "trades", None)
+    if callable(trades):
+        return trades(asset)
+    ticks = np.asarray(snapshot.ticks(asset), dtype=np.float64)
+    if ticks.ndim != 2 or ticks.shape[0] == 0 or ticks.shape[1] < 3:
+        return ticks
+    return ticks[ticks[:, 2] > 0]

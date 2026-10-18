@@ -58,7 +58,7 @@ class State:
         obj = cls()
         obj.last_divergence = float(payload.get("last_divergence", 0.0))
         obj.last_velocity = float(payload.get("last_velocity", 0.0))
-        obj.velocity_scale = SelfScale.from_dict(payload.get("velocity_scale", {}))
+        obj.velocity_scale = SelfScale.from_dict(payload.get("velocity_scale", {}), floor=MEANINGFUL_VELOCITY)
         return obj
 
 

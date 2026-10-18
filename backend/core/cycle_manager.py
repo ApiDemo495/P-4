@@ -1183,6 +1183,7 @@ class CycleManager:
         context: dict,
     ) -> FrozenSignal:
         f = formula_result.values
+        self._flat_watch_record(formula_result)
         hedge = {
             "hsi": round(float(f.get("HSI", 0.0)), 4),
             "hrdd": round(float(f.get("HRDD", 0.0)), 4),
@@ -1986,6 +1987,7 @@ class CycleManager:
             "formulas": dict(self.last_live_formulas),
             "readings": _readings_for(result) if result is not None else {},
             "traces": result.traces if result is not None else {},
+            "flat_watch": self.flat_watch(),
             "checks": result.checks if result is not None else {},
             "double_check": result.check_summary() if result is not None else {},
             "timings_ms": (
@@ -2185,6 +2187,61 @@ class CycleManager:
         except Exception as exc:  # noqa: BLE001
             log.debug("news impact failed: %s", exc)
             return {}
+
+    # Round BT: the flat watch - which formulas sat near zero at the lock, how
+    # often, and the reason their own trace gives --------------------------
+    FLAT_WINDOWS = 50
+    FLAT_EPS = 0.02
+    #: probabilities / stress gauges whose honest reading on a live tape IS
+    #: near zero (PIN = tie probability, HSI = hedge stress) - not direction.
+    FLAT_IGNORE = frozenset({"PIN", "HSI"})
+
+    def _flat_watch_record(self, formula_result) -> None:
+        try:
+            hist = self.__dict__.setdefault("_flat_hist", {})
+            reasons = self.__dict__.setdefault("_flat_reason", {})
+            traces = getattr(formula_result, "traces", {}) or {}
+            for name, raw in (formula_result.values or {}).items():
+                if name.startswith("_") or name in self.FLAT_IGNORE:
+                    continue
+                try:
+                    flat = abs(float(raw)) < self.FLAT_EPS
+                except (TypeError, ValueError):
+                    continue
+                hist.setdefault(name, deque(maxlen=self.FLAT_WINDOWS)).append(1 if flat else 0)
+                if flat:
+                    why = ""
+                    for row in (traces.get(name) or []):
+                        unit = str((row or {}).get("unit") or "")
+                        label = str((row or {}).get("label") or "")
+                        if "skipped" in unit or "waiting" in unit or "need" in unit or "skipped" in label:
+                            why = f"{label}: {unit}" if unit else label
+                    if not why:
+                        last = (traces.get(name) or [])[-1:] or [{}]
+                        why = f"last step {last[0].get('label', '?')} = {last[0].get('value', '?')}" if last[0] else "no trace"
+                    reasons[name] = why[:160]
+        except Exception as exc:  # noqa: BLE001
+            log.debug("flat watch skipped: %s", exc)
+
+    def flat_watch(self) -> dict:
+        """Share of the recent locks each formula spent inside +-FLAT_EPS, with
+        the trace line that explains the last flat reading.  Sorted flattest
+        first; ``flat`` lists the ones flat in more than half the windows."""
+        hist = self.__dict__.get("_flat_hist") or {}
+        reasons = self.__dict__.get("_flat_reason") or {}
+        rows = []
+        for name, h in hist.items():
+            if not h:
+                continue
+            share = sum(h) / len(h)
+            rows.append({"name": name, "flat_share": round(share, 3), "windows": len(h),
+                         "reason": reasons.get(name, "") if share > 0 else ""})
+        rows.sort(key=lambda r: -r["flat_share"])
+        return {"eps": self.FLAT_EPS, "windows": self.FLAT_WINDOWS, "rows": rows,
+                "flat": [r["name"] for r in rows if r["flat_share"] > 0.5 and r["windows"] >= 3],
+                "tape": {"source": self.market.active_source,
+                         "quote_prints": {a: int(getattr(b, "quote_ticks", 0)) for a, b in self.market.buffers.items()},
+                         "ticks": {a: int(b.ticks.size) for a, b in self.market.buffers.items()}}}
 
     # Round BR: the fused score's noise floor and the window-formula lean ------
     SCORE_HISTORY = 60

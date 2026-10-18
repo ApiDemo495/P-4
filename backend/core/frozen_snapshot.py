@@ -64,6 +64,17 @@ class FrozenMarketSnapshot(NamedTuple):
         value = self._pick(asset, self.btc_ticks, self.paxg_ticks)
         return value if value is not None else np.zeros((0, 4))
 
+    def trades(self, asset: str):
+        """Round BT: only the real prints - rows with volume.  Quote prints
+        (``qty = 0, side = 0``, written when the book moves but nothing
+        trades) keep the *price* path alive on a thin tape, but every volume
+        median, flow regression or sign statistic that read them sat at zero
+        - that is why a whole column of formulas read flat off-simulator."""
+        ticks = self.ticks(asset)
+        if not ticks.size:
+            return ticks
+        return ticks[ticks[:, 2] > 0]
+
     def prices(self, asset: str):
         ticks = self.ticks(asset)
         return ticks[:, 1] if ticks.size else ticks.reshape(-1)

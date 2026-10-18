@@ -62,8 +62,8 @@ class State:
         obj.last_r = float(payload.get("last_r", 0.0))
         obj.last_flow_btc = float(payload.get("last_flow_btc", 0.0))
         obj.last_flow_paxg = float(payload.get("last_flow_paxg", 0.0))
-        obj.scale_btc = SelfScale.from_dict(payload.get("scale_btc", {}))
-        obj.scale_paxg = SelfScale.from_dict(payload.get("scale_paxg", {}))
+        obj.scale_btc = SelfScale.from_dict(payload.get("scale_btc", {}), floor=0.0)
+        obj.scale_paxg = SelfScale.from_dict(payload.get("scale_paxg", {}), floor=0.0)
         return obj
 
 

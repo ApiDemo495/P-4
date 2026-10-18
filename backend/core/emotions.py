@@ -794,9 +794,10 @@ def _herding(ticks: np.ndarray) -> float:
     Retail emotional moves are *runs* of same-side prints: a skew of +0.4 with
     runs of 9 prints in a row is a crowd, not a market.
     """
-    if ticks.shape[0] < 4:
-        return 0.0
     sides = np.sign(ticks[:, 3])
+    sides = sides[sides != 0]            # Round BT: quote prints have no aggressor
+    if sides.shape[0] < 4:
+        return 0.0
     runs: list[int] = []
     current = 1
     for a, b in zip(sides, sides[1:]):
@@ -948,6 +949,10 @@ def features(
     prices = np.asarray(ticks[:, 1], dtype=np.float64)
     now_ms = float(times_ms[-1])
     out["ticks"] = float(ticks.shape[0])
+    # Round BT: the tape carries quote prints (qty 0, side 0) between trades;
+    # count them apart so a "tick rate" is never mistaken for a trade rate.
+    out["trade_prints"] = float(np.count_nonzero(np.abs(ticks[:, 2]) > 0))
+    out["quote_prints"] = out["ticks"] - out["trade_prints"]
     out["span_us"] = float(max(0.0, (times_ms[-1] - times_ms[0]) * 1000.0))
     gaps_us = np.diff(times_ms) * 1000.0 if ticks.shape[0] > 1 else np.zeros(0)
     if gaps_us.size:

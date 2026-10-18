@@ -50,7 +50,8 @@ WARMUP_TICKS = 20
 #: just copied the latest tick, so the "divergence" was the last tick's noise.
 PRICE_SCALE = 1e-8
 """q / R are squared relative moves: 1e-8 = (1 bp)^2."""
-DIVERGENCE_FLOOR = 3e-5
+REALISED_SHARE = 0.4   # Round BT: was 0.75 (DSKD sat at 0.000 on every tape)
+DIVERGENCE_FLOOR = 1e-5   # Round BT: 0.1 bp (was 0.3 bp - above most tapes' whole gap)
 """0.3 bps: a divergence smaller than this is not a level shift."""
 
 
@@ -179,9 +180,12 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     baseline = state.div_baseline if state.div_baseline is not None else divergence
     fresh = divergence - baseline
 
-    # The scale to beat is the tape's own realised move over this window: a
-    # divergence smaller than three quarters of it is indistinguishable from the
-    # market's ordinary travel.
+    # Round BT: the scale is three running sigmas of the divergence itself
+    # (a level-shift z-score) or 40 % of the window's realised move,
+    # whichever is larger.  It used to be 0.75 x the realised move - a figure
+    # far above what a fast/slow Kalman gap reaches - so DSKD sat at 0.000
+    # on every tape.  40 % keeps the materiality idea (a shift smaller than
+    # that share of the window's travel is noise) without burying the estimate.
     window_ticks = snapshot.ticks(asset)
     window_prices = np.maximum(np.asarray(window_ticks[:, 1], dtype=np.float64), EPS)
     if window_prices.size > 2:
@@ -190,7 +194,7 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     else:
         realised = 0.0
     sigma = state.spread_window.std()
-    scale = max(sigma, DIVERGENCE_FLOOR, 0.75 * realised)
+    scale = max(3.0 * sigma, DIVERGENCE_FLOOR, REALISED_SHARE * realised)
     trace(ctx, "reference price", state.reference, "the price the series is normalised to")
     trace(ctx, "fast estimate", state.p_fast, "relative")
     trace(ctx, "slow estimate", state.p_slow, "relative")
@@ -199,7 +203,7 @@ def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None =
     trace(ctx, "fresh divergence (now - baseline)", fresh, "relative - this is what is scored")
     trace(ctx, "realised window move", realised, "relative (sigma x sqrt(n))")
     trace(ctx, "running sigma", sigma, "relative")
-    trace(ctx, "scale used", scale, "relative (floor = 0.75 x realised move)")
+    trace(ctx, "scale used", scale, "relative (max of 3 sigma, floor, 40 % of realised move)")
     return finite(tanh(fresh / (scale + EPS)))
 
 

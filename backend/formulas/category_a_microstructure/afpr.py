@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from backend.formulas._util import EPS, finite, trace
+from backend.formulas._util import real_trades, EPS, finite, trace
 
 NAME = "AFPR"
 CATEGORY = "A"
@@ -46,7 +46,7 @@ class State:
 
 
 def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None = None) -> float:
-    ticks = snapshot.ticks(asset)
+    ticks = real_trades(snapshot, asset)       # Round BT: aggressor flow lives in real prints only
     if ticks.shape[0] < 5:
         return 0.0
 

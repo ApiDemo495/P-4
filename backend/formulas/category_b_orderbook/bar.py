@@ -52,7 +52,7 @@ class State:
         obj = cls()
         obj.last_a_bid = float(payload.get("last_a_bid", 0.0))
         obj.last_a_ask = float(payload.get("last_a_ask", 0.0))
-        obj.asym_scale = SelfScale.from_dict(payload.get("asym_scale", {})) if payload.get("asym_scale") else obj.asym_scale
+        obj.asym_scale = SelfScale.from_dict(payload.get("asym_scale", {}), floor=FULL_VOTE_FRACTION) if payload.get("asym_scale") else obj.asym_scale
         return obj
 
 

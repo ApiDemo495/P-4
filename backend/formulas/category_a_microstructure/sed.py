@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from backend.formulas._util import EPS, SelfScale, finite, ols_slope, tanh, trace
+from backend.formulas._util import real_trades, EPS, SelfScale, finite, ols_slope, tanh, trace
 
 NAME = "SED"
 CATEGORY = "A"
@@ -30,7 +30,10 @@ GAIN = 1.0
 #: A spread move of 5 % of the average spread per typical unit of flow is
 #: already a strong elasticity; the self-scaling term raises the bar further in
 #: markets that are structurally jumpy.
-MEANINGFUL_EFFECT = 0.05
+# Round BT: the floor is a fraction of the average spread per typical print.
+# 0.05 (5 % of the spread per print) was 400x above what any tape produces,
+# so the self-scale never took over and SED read 0.00x everywhere.
+MEANINGFUL_EFFECT = 1e-4
 
 
 class State:
@@ -53,12 +56,12 @@ class State:
         obj = cls()
         obj.last_spread_avg = float(payload.get("last_spread_avg", 0.0))
         obj.last_beta = float(payload.get("last_beta", 0.0))
-        obj.effect_scale = SelfScale.from_dict(payload.get("effect_scale", {}))
+        obj.effect_scale = SelfScale.from_dict(payload.get("effect_scale", {}), floor=MEANINGFUL_EFFECT)
         return obj
 
 
 def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None = None) -> float:
-    ticks = snapshot.ticks(asset)
+    ticks = real_trades(snapshot, asset)       # Round BT: the flow regression needs real prints
     spreads = snapshot.spread_history(asset)
     if ticks.shape[0] < 5 or spreads.shape[0] < 3:
         return 0.0

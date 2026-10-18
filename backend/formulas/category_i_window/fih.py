@@ -47,7 +47,7 @@ class State:
         obj = cls()
         obj.last = float(payload.get("last", 0.0))
         if payload.get("scale"):
-            obj.scale = SelfScale.from_dict(payload["scale"])
+            obj.scale = SelfScale.from_dict(payload["scale"], floor=SCALE_FLOOR)
         return obj
 
 

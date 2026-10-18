@@ -51,7 +51,7 @@ GAIN = 1.0
 #: A Hurst change of 0.005 per window sustained over half an hour is a real
 #: regime shift; the adaptive term widens the bar in markets that are already
 #: changing constantly.
-MEANINGFUL_DELTA_H = 0.005
+MEANINGFUL_DELTA_H = 0.0005   # Round BT: 0.005 Hurst/window was 10x any measured velocity - the formula read 0.00
 #: The velocity has no direction of its own - the sign comes from the drift of
 #: the scored window, and only when that drift is statistically visible.
 MIN_T_STAT = 1.0
@@ -80,7 +80,7 @@ class State:
         obj.hurst_series = [float(x) for x in payload.get("hurst_series", [])][-HURST_HISTORY:]
         obj.last_hurst = float(payload.get("last_hurst", 0.5))
         obj.last_slope = float(payload.get("last_slope", 0.0))
-        obj.velocity_scale = SelfScale.from_dict(payload.get("velocity_scale", {}))
+        obj.velocity_scale = SelfScale.from_dict(payload.get("velocity_scale", {}), floor=MEANINGFUL_DELTA_H)
         return obj
 
 

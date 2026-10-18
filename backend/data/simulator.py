@@ -33,6 +33,19 @@ from backend.core import config as cfg
 log = logging.getLogger("drosophila.simulator")
 
 
+
+def _env_rate(name: str, default: float) -> float:
+    """Round BT: trades per second from the environment, so a *sparse* real
+    tape (Gemini BTC ~0.3-1 prints/s, PAXG a few per minute) can be rehearsed
+    offline - that is where formulas used to read flat."""
+    import os
+
+    try:
+        value = float(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+    return max(0.01, value)
+
 @dataclass
 class AssetSimState:
     symbol: str
@@ -61,7 +74,7 @@ class MarketSimulator:
                 symbol="BTCUSDT",
                 price=64_000.0 + float(master.uniform(-2000, 2000)),
                 sigma_1s=0.00022,
-                tick_rate=9.0,
+                tick_rate=_env_rate("SIMULATOR_BTC_TICK_RATE", 9.0),
                 lot_scale=0.012,
                 spread_bps=0.35,
                 rng=np.random.default_rng(seed + 1),
@@ -70,7 +83,7 @@ class MarketSimulator:
                 symbol="PAXGUSDT",
                 price=2_420.0 + float(master.uniform(-40, 40)),
                 sigma_1s=0.00013,
-                tick_rate=1.6,
+                tick_rate=_env_rate("SIMULATOR_PAXG_TICK_RATE", 1.6),
                 lot_scale=0.35,
                 spread_bps=1.6,
                 rng=np.random.default_rng(seed + 2),

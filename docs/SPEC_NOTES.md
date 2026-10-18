@@ -2662,3 +2662,32 @@ that still described an older round was brought to the current state:
   the Dockerfile, `JEV_BAKE=0` to skip); `run.sh` links `/opt/drosophila/jev`
   into `backend/models/jev`, so a fresh Codespace starts the server at once
   instead of downloading 630 MB.
+
+### BT — "Most of them are flat" (Binance tape, all panels)
+
+Root cause 1 — **quote-print dilution.** `MarketHub._quote_tick` writes a
+*quote print* (`qty = 0, side = 0`) to the tape whenever no trade arrived for
+2 s and the mid moved ≥ 0.5 bp. On every tape that is not dense (PAXG on all
+venues — so every hedge/C formula —, BTC on Gemini/Kraken, and thin moments
+on Binance) these rows become the majority of `snapshot.ticks()`. Volume
+medians, flow regressions and run statistics then read ≈ 0 ("baseline median
+vol 0" in the VSD trace) and the formula is honestly flat on a dishonest
+input. Fix: `FrozenMarketSnapshot.trades(asset)` (rows with qty > 0) and
+`_util.real_trades()`; VSD / SED / AFPR use it, `emotions._herding` drops
+side 0 before run statistics, emotions pulse reports `trade_prints` and
+`quote_prints` separately. Volume-weighted sums (TAI, SHRP, VPIN, kinetics)
+were already immune; window formulas already used `W.trades_only`.
+
+Root cause 2 — **floors pinned by persisted state.** `SelfScale.from_dict`
+restored the floor saved in the vault, so a formula kept the floor an older
+build chose forever. The floor is now a code constant passed at restore
+(`from_dict(payload, floor=CONST)` in every formula). Floors that were far
+above anything a tape produces: SED `MEANINGFUL_EFFECT` 0.05 → 1e-4, RSV
+`MEANINGFUL_DELTA_H` 0.005 → 0.0005, DSKD scale `0.75 × realised move` →
+`max(3σ_div, 1e-5, 0.4 × realised)` (self-test FLAT tolerance kept).
+
+Flat watch — `flat_watch` in `/api/formulas/live` (per-formula share of the
+last 50 locks inside ±0.02, the trace line that explains it, tape source and
+quote-print counts) and an `id="flat-watch"` line above the Formula Explorer.
+PIN / HSI are excluded (near-zero is their honest reading). Tests:
+`backend/tests/test_round_bt.py`.

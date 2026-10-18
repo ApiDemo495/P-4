@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from backend.formulas._util import finite, mad, tanh, trace
+from backend.formulas._util import real_trades, finite, mad, tanh, trace
 
 NAME = "VSD"
 CATEGORY = "A"
@@ -55,7 +55,7 @@ class State:
 
 
 def compute(snapshot, asset: str, state: State, params: dict, ctx: dict | None = None) -> float:
-    ticks = snapshot.ticks(asset)
+    ticks = real_trades(snapshot, asset)       # Round BT: volume statistics over real prints only
     base_window = int(params.get("vsd_baseline_window", 100))
     recent_window = int(params.get("vsd_recent_window", 20))
     need = base_window + recent_window
