@@ -881,6 +881,41 @@ Dashboard card "Physics layer" (every mechanism with its numbers and reason),
 `/api/physics/telemetry`, `/api/physics/spec`. Expected edges are model
 estimates; no "cannot lose" claim is made anywhere.
 
+## 9b-bis. Theory of Nearly Everything (unified evidence ledger)
+
+Honest framing first: no physical theory predicts a market. What the engine
+does rigorously is treat **every** source it already computes — the 31
+formulas, the physics gauges, the nine emotions, the AI agents, the brain,
+the regime features and four physics-derived estimators — as evidence about
+the one question that is scored (does Binance BTC/USDT print higher at :70
+than at :00?) and combine it the way evidence is combined:
+
+- each source gives evidence `e_i = a_i · z_i` in nats, where `a_i` is a ridge
+  logistic slope fitted walk-forward on the settled windows (a source that has
+  told us nothing gets `a_i ≈ 0`);
+- the sum is shrunk for double counting: `k_eff = k / (1 + (k − 1) ρ̄)` with
+  `ρ̄` the mean pairwise correlation of the sources, `L = Σ e_i · √(k_eff / k)`;
+- `P(up) = σ(b · L)` with a Platt slope `b` fitted on the graded record;
+- **predictability** `= 1 − H₂(P)` in bits is printed live: 0 means the window
+  is a coin flip whatever the panels say, and the information each source has
+  actually carried, `I(sign z_i ; outcome)`, is printed next to it.
+
+The four estimators (each with its working printed on the card): a
+non-parametric **Kramers–Moyal** Langevin decomposition (drift `D1(x)` and
+diffusion `D2(x)` as conditional moments, scored as a Péclet number over the
+window), a 1-D **Ising chain** on the aggressor signs (coupling `K = atanh ρ₁`,
+susceptibility `(1+ρ₁)/(1−ρ₁)`, expected mean sign of the next trades), a
+**fluctuation–dissipation** response (Kyle λ versus the price variance, flow
+persistence, expected flow-driven move against the diffusion width) and
+Jaynes' **maximum-entropy** distribution of the next window's return on the
+observed support under a mean and variance constraint, solved by Newton
+iteration (`P(up) = Σ p[r > 0]`).
+
+The ledger takes the side at second 0 only while its own strict-sign
+walk-forward record earns it — trailing ≥ 53 % over 40 graded windows, not
+below the recipe and not below the meta-combiner — and prints why either way.
+Card: "Theory of Nearly Everything"; endpoint `/api/everything`.
+
 ## 9c. Hedge outcomes
 
 The "Hedge Status" tiles were replaced by an outcome system. For the locked

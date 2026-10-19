@@ -2691,3 +2691,34 @@ last 50 locks inside ±0.02, the trace line that explains it, tape source and
 quote-print counts) and an `id="flat-watch"` line above the Formula Explorer.
 PIN / HSI are excluded (near-zero is their honest reading). Tests:
 `backend/tests/test_round_bt.py`.
+
+### BU — Theory of Nearly Everything (user: "use theory of nearly everything to improve prediction and predictability")
+
+Interpretation agreed with the user: (1) a unified evidence framework over
+every source + (2) physics-derived estimators, and the layer decides the
+side once its record earns it. Stated honestly in code, README and UI: no
+physical theory predicts a market.
+
+`backend/core/everything.py` — `UnifiedEvidence`: per-source 1-D ridge
+logistic slope `a_i` (no intercept, exp-weighted half-life 120 windows,
+robust standardisation, sources present in ≥ 60 % of rows), evidence
+`e_i = a_i z_i` nats, correlation shrinkage `k_eff = k/(1+(k−1)ρ̄)`,
+`L = Σe_i √(k_eff/k)`, Platt slope on the graded record (`CALIB_MIN=40`),
+predictability `1 − H₂(P)`, per-source mutual information from decayed sign
+counts. Walk-forward `build_record` (blocks of 20) on restore when no vault
+state exists. Takeover: trailing ≥ 0.53 over 40, ≥ recipe, ≥ meta-combiner.
+Applied after `_apply_meta` (`_apply_everything`), remembered at lock,
+settled at outcome, refit off-thread, vault key `everything`.
+
+`backend/core/physics_estimators.py` — Kramers–Moyal (D1/D2 conditional
+moments in 5 state bins on a 1 s grid, Péclet over the window), Ising chain
+on aggressor signs (quote prints excluded), fluctuation–dissipation (Kyle λ,
+Θ = R², gate `0.05 + 0.95Θ`), max-entropy window return (Newton on the
+empirical support, constraints mean = lag-1 regression forecast, variance).
+Inputs `physics:*` go into the hindsight inputs (group `physics`), so the
+hourly review, the meta-combiner and the ledger all grade them.
+
+UI card `#everything-card` (`renderEverything`, WS + snapshot), endpoint
+`/api/everything`, `FusionResult.everything`. Also fixed a latent
+`emotion_locked["dominant"] is None` crash in `_schedule_outcome` seen on a
+very sparse tape. Tests: `backend/tests/test_round_bu.py`.
