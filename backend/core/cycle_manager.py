@@ -56,6 +56,8 @@ from backend.core.warm_start import WarmStarter
 from backend.core.forward import ForwardExpectancy
 from backend.core.hindsight import HindsightReviewer
 from backend.core.meta import MetaCombiner
+from backend.core.everything import UnifiedEvidence
+from backend.core.physics_estimators import estimate_all
 from backend.core.superposition import Superposition
 from backend.core.competition import BoundaryPicker, CompetitionLedger, boundary_features
 from backend.core.dopamine import DopamineBrain
@@ -146,6 +148,10 @@ class CycleManager:
         # Round BK: one model learns how to weigh every recorded input
         self.meta = MetaCombiner()
         self._last_meta: dict = {}
+        # Round BU: every source as evidence in one ledger + four physics estimators
+        self.everything = UnifiedEvidence()
+        self._last_everything: dict = {}
+        self._last_physics_est: dict = {}
         self._last_recipe_side: str | None = None
         # Round BC: superposition - every source carried as |up>/|down>/|tie>
         # of the NEXT window from its measured AND its projected reading; the
@@ -1682,6 +1688,8 @@ class CycleManager:
             self.hindsight.record(signal.cycle_number, signal.signal, float(getattr(signal, "confidence", 0.0) or 0.0),
                                   self._last_hindsight["inputs"], self._last_hindsight["groups"])
         self.meta.remember(signal.cycle_number, self._last_meta or {}, self._last_recipe_side)
+        self.everything.remember(signal.cycle_number, self._last_everything or {}, self._last_recipe_side,
+                                 (self._last_hindsight if isinstance(self._last_hindsight, dict) else {}).get("inputs"))
         # Round BB: the forward tables remember this window's readings and are
         # settled on what the price does next (strict sign, ties counted).
         try:
@@ -1694,7 +1702,7 @@ class CycleManager:
         # transient of the previous window fades as a new one starts.
         if self._last_minds:
             self.triune.remember(signal.cycle_number, signal.asset, self._last_minds,
-                                 str((self.emotion_locked or {}).get("dominant", {}).get("name") or ""), signal.signal)
+                                 str(((self.emotion_locked or {}).get("dominant") or {}).get("name") or ""), signal.signal)
         self.dopamine.tick_window()
         self.brain.dopamine_phasic = self.dopamine.brain_gain()
         if ((self.last_fusion or {}).get("edge_guard") or {}).get("inverted"):
@@ -1764,6 +1772,8 @@ class CycleManager:
             self.hindsight.settle(signal.cycle_number, change_bps, cost_bps)
             self.meta.settle(signal.cycle_number, change_bps, cost_bps)
             await asyncio.to_thread(self.meta.refit, list(self.hindsight.rows))
+            self.everything.settle(signal.cycle_number, change_bps, cost_bps)
+            await asyncio.to_thread(self.everything.refit, list(self.hindsight.rows))
         except Exception as exc:  # noqa: BLE001
             log.debug("hindsight/meta settle skipped: %s", exc)
         if flat:
@@ -2054,6 +2064,7 @@ class CycleManager:
         payload["physics"] = self.physics_payload()
         payload["genesis"] = self.genesis_payload()
         payload["hindsight"] = self.hindsight_payload()
+        payload["everything"] = self.everything_payload()
         if include_history:
             payload["history"] = self.history_payload(limit=72)
             payload["outcomes"] = self.outcomes_payload()
@@ -2423,6 +2434,12 @@ class CycleManager:
         # are learned inputs too - the meta-combiner weighs them walk-forward.
         extras: dict[str, float] = {}
         try:
+            tk0 = snapshot.ticks(self.asset) if snapshot is not None else None
+            self._last_physics_est = estimate_all(tk0, float(self.settings.cycle_period_seconds)) if tk0 is not None else {}
+        except Exception as exc:  # noqa: BLE001
+            log.debug("physics estimators skipped: %s", exc)
+            self._last_physics_est = {}
+        try:
             from backend.core.hawkes import hawkes_flow
             from backend.core.temporal_arb import price_structures
             tk = snapshot.ticks(self.asset) if snapshot is not None else None
@@ -2463,8 +2480,13 @@ class CycleManager:
                 emotions=(crowd or {}).get("emotions") or [])
             for k, v in extras.items():
                 hs_inputs[k], hs_groups[k] = v, "feature"
+            # Round BU: the physics estimators are graded, learned and weighed too
+            for k, v in (self._last_physics_est.get("values") or {}).items():
+                hs_inputs[k], hs_groups[k] = float(v), "physics"
             self._last_hindsight = {"inputs": hs_inputs, "groups": hs_groups, "changed": hs_changed}
             self._last_meta = self.meta.predict(hs_inputs)
+            self._last_everything = self.everything.predict(hs_inputs)
+            self._last_everything["inputs_seen"] = len(hs_inputs)
         except Exception as exc:  # noqa: BLE001
             log.debug("hindsight inputs skipped: %s", exc)
         votes = EvidenceLedger.votes_from(
@@ -2516,7 +2538,43 @@ class CycleManager:
         fusion.hindsight = self._hindsight_applied()
         fusion = self._apply_triune(fusion)
         fusion = self._tape_veto_inner(fusion, snapshot)
-        return self._apply_meta(fusion)
+        return self._apply_everything(self._apply_meta(fusion))
+
+    def _apply_everything(self, fusion):
+        """Round BU: the unified ledger's call.  It takes the side only while
+        its walk-forward record is at least as good as the recipe's and the
+        meta-combiner's; the evidence is printed either way."""
+        if fusion is None:
+            return fusion
+        try:
+            pred = dict(self._last_everything or {})
+            meta_rate, _ = self.meta.trailing()
+            decide, why = self.everything.may_decide(meta_rate)
+            applied = {"decided": False, "why": why, "side_before": fusion.decision,
+                       "confidence_before": round(float(fusion.confidence), 4)}
+            if decide and pred.get("available") and pred.get("side") in ("BUY", "SELL"):
+                before = fusion.decision
+                fusion.decision = pred["side"]
+                fusion.confidence = float(min(0.95, max(0.05, 0.5 * float(fusion.confidence) + 0.5 * float(pred["confidence"]))))
+                fusion.score = (abs(float(fusion.score)) if fusion.score else float(pred["confidence"])) * (1.0 if pred["side"] == "BUY" else -1.0)
+                applied.update({"decided": True, "flipped": before != pred["side"], "confidence": round(fusion.confidence, 4)})
+                top = ", ".join(f"{s['name']} {s['evidence_nats']:+.2f}" for s in pred.get("sources", [])[:4])
+                fusion.reasoning = (f"unified ledger {pred['side']} p(up) {pred['p_up']:.2f} · {pred['sources_used']} sources, "
+                                    f"k_eff {pred['k_eff']} · predictability {pred['predictability']:.3f} bit ({why}; evidence: {top})"
+                                    f"{' — overrides ' + str(before) if before != pred['side'] else ' — agrees'} | "
+                                    + (fusion.reasoning or ""))[:900]
+            fusion.everything = {**pred, "applied": applied, "estimators": dict(self._last_physics_est.get("estimators") or {})}
+            self.everything.last = {k: v for k, v in fusion.everything.items() if k != "estimators"}
+            self._last_physics_est_locked = fusion.everything["estimators"]
+        except Exception as exc:  # noqa: BLE001
+            log.debug("unified ledger apply skipped: %s", exc)
+        return fusion
+
+    def everything_payload(self) -> dict:
+        payload = self.everything.to_dict()
+        payload["estimators"] = dict(getattr(self, "_last_physics_est_locked", None) or self._last_physics_est.get("estimators") or {})
+        payload["live"] = {k: v for k, v in (self._last_everything or {}).items() if k != "sources"}
+        return payload
 
     def _apply_meta(self, fusion):
         """Round BK: the meta-combiner's call.  It takes the side only while
@@ -3324,6 +3382,7 @@ class CycleManager:
         written["horizons"] = self.vault.save("horizons", self.horizons.export_state())
         written["hindsight"] = self.vault.save("hindsight", self.hindsight.export_state())
         written["meta"] = self.vault.save("meta", self.meta.export_state())
+        written["everything"] = self.vault.save("everything", self.everything.export_state())
         written["temporal_arb"] = self.vault.save("temporal_arb", self.temporal_arb.export_state())
         try:
             written["formulas"] = self.vault.save("formulas", self.formulas.export_state())
@@ -3374,6 +3433,14 @@ class CycleManager:
         mt = self.vault.load("meta", max_age=self.VAULT_MAX_AGE)
         if mt and self.meta.import_state(mt):
             restored.append("meta")
+        ev = self.vault.load("everything", max_age=self.VAULT_MAX_AGE)
+        if ev and self.everything.import_state(ev):
+            restored.append("everything")
+        elif hs:
+            try:
+                self.everything.build_record(list(self.hindsight.rows))
+            except Exception as exc:  # noqa: BLE001
+                log.debug("unified ledger record build skipped: %s", exc)
         payload = self.vault.load("formulas", max_age=self.VAULT_MAX_AGE)
         if payload:
             try:

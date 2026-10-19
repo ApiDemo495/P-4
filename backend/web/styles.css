@@ -1218,6 +1218,28 @@ body.pulse .widget-panel, body.pulse .card { animation: pulse-breath .6s var(--e
 @media (max-width: 720px) { .horizon-lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 /* Round BI: last-hour hindsight */
+/* Round BU: Theory of Nearly Everything */
+.ev-top { display: grid; grid-template-columns: 220px 1fr; gap: 14px; align-items: start; margin-bottom: 10px; }
+.ev-gauge { padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.04); }
+.ev-side { font-size: 26px; font-weight: 800; letter-spacing: .04em; }
+.ev-side.buy { color: #4ade80; } .ev-side.sell { color: #f87171; }
+.ev-p { font-size: 13px; margin: 2px 0 6px; }
+.ev-bar { position: relative; height: 8px; border-radius: 4px; background: rgba(248,113,113,.35); overflow: hidden; }
+.ev-bar-fill { height: 100%; background: #4ade80; width: 50%; transition: width .4s var(--ease); }
+.ev-bar-mid { position: absolute; left: 50%; top: -2px; width: 2px; height: 12px; background: rgba(255,255,255,.6); }
+.ev-status { font-size: 12.5px; line-height: 1.5; }
+.ev-sources { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px 12px; font-size: 12px; margin-bottom: 10px; }
+.ev-src { display: grid; grid-template-columns: 1fr 70px 60px; gap: 6px; align-items: center; }
+.ev-src .ev-track { position: relative; height: 6px; background: rgba(255,255,255,.06); border-radius: 3px; }
+.ev-src .ev-fill { position: absolute; top: 0; height: 100%; border-radius: 3px; }
+.ev-src .ev-fill.pos { background: #4ade80; left: 50%; } .ev-src .ev-fill.neg { background: #f87171; right: 50%; }
+.ev-estimators { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px; margin-bottom: 8px; }
+.ev-est { padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,.03); font-size: 11.5px; line-height: 1.45; }
+.ev-est b.pos { color: #4ade80; } .ev-est b.neg { color: #f87171; }
+.ev-est .ev-logic { color: var(--muted, #9aa3b2); margin-top: 3px; }
+.ev-rule { font-size: 11.5px; line-height: 1.5; }
+@media (max-width: 760px) { .ev-top { grid-template-columns: 1fr; } }
+
 .hindsight-verdict { font-size: 13px; line-height: 1.5; margin-bottom: 12px; }
 .hindsight-table td[data-act="damped"], .hindsight-table td[data-act="inverted"] { color: #f87171; }
 .hindsight-table td[data-act="boosted"] { color: #4ade80; }

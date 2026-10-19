@@ -225,6 +225,7 @@ function handle(msg) {
       break;
     case "TWIN":
       if (msg.data && msg.data.temporal_arb) renderTemporalArb(msg.data.temporal_arb);
+      if (msg.data && msg.data.everything) renderEverything(msg.data.everything);
       break;
     case "OUTCOME":
       refreshOutcomes();
@@ -1753,6 +1754,61 @@ function renderHorizons(h) {
 /* Round BL: Temporal Arbitrage - continuous 70 s risk against its synthetic
    twin (60 s leg rolled at :60 into a 10 s leg), priced at the boundary and
    settled on the last trade.  Nothing here moves the Signal Lock. */
+/* Round BU: the Theory of Nearly Everything card - every source as evidence
+   in nats, the correlation shrinkage, the predictability gauge, the four
+   physics estimators with their working, and the takeover record. */
+function renderEverything(ev) {
+  if (!ev || !$("ev-side")) return;
+  state.everything = ev;
+  markPanel("everything");
+  const last = ev.last || {};
+  const live = ev.live || {};
+  const pick = last.available ? last : (live.available ? live : null);
+  const pct = (x) => `${(Number(x || 0) * 100).toFixed(1)}%`;
+  const sideEl = $("ev-side");
+  if (pick) {
+    sideEl.textContent = pick.side;
+    sideEl.className = `ev-side ${pick.side === "BUY" ? "buy" : "sell"}`;
+    $("ev-p").textContent = `P(up) ${Number(pick.p_up).toFixed(3)} · L ${Number(pick.L) >= 0 ? "+" : ""}${Number(pick.L).toFixed(3)} nats`;
+    $("ev-bar-fill").style.width = `${Math.max(2, Math.min(98, Number(pick.p_up) * 100))}%`;
+    $("ev-predictability").textContent = `predictability ${Number(pick.predictability).toFixed(3)} bit · entropy ${Number(pick.entropy_bits).toFixed(3)} bit · information carried ${Number(pick.information_bits).toFixed(3)} bit`;
+  } else {
+    sideEl.textContent = "—";
+    sideEl.className = "ev-side";
+    $("ev-p").textContent = live.why || "not fitted yet";
+    $("ev-bar-fill").style.width = "50%";
+    $("ev-predictability").textContent = "predictability — (needs 40 decided windows)";
+  }
+  $("ev-head").textContent = ev.fitted
+    ? `fitted on ${ev.fit_rows} windows · ${ev.sources_fitted} sources · ρ̄ ${Number(ev.rho_bar).toFixed(3)} · calibration slope ${Number(ev.calib_slope).toFixed(2)}`
+    : "collecting decided windows";
+  const applied = last.applied || {};
+  const rec = ev.trailing_rate === null || ev.trailing_rate === undefined ? "no graded record yet" : `strict-sign ${pct(ev.trailing_rate)} over ${ev.trailing_n} (recipe ${ev.recipe_rate === null ? "—" : pct(ev.recipe_rate)})`;
+  $("ev-status").innerHTML =
+    `<div><b>${ev.decides ? "DECIDES THE SIDE" : "watching"}</b> — ${escapeHtml(ev.why || "")}</div>` +
+    `<div>${rec} · graded ${ev.graded || 0}</div>` +
+    (pick ? `<div>${pick.sources_used} sources carry evidence · k_eff ${pick.k_eff} (shrink ×${Number(pick.shrink).toFixed(3)}) · for ${Number(pick.for_nats).toFixed(2)} nats · against ${Number(pick.against_nats).toFixed(2)} nats</div>` : "") +
+    (applied.decided ? `<div>this window: ${applied.flipped ? `overrode ${escapeHtml(applied.side_before || "")}` : "agreed with the recipe"} · confidence ${pct(applied.confidence)}</div>` : "") +
+    `<div class="muted">${escapeHtml(ev.honest || "")}</div>`;
+  const srcs = (pick && pick.sources) || [];
+  const maxE = Math.max(0.05, ...srcs.map((s) => Math.abs(Number(s.evidence_nats))));
+  $("ev-sources").innerHTML = srcs.slice(0, 24).map((s) => {
+    const e = Number(s.evidence_nats);
+    const w = Math.min(50, Math.abs(e) / maxE * 50);
+    return `<div class="ev-src" title="z ${s.z} · slope ${s.slope} · t ${s.t} · ${s.bits} bit carried"><span>${escapeHtml(s.name)}</span>` +
+      `<span class="ev-track"><span class="ev-fill ${e >= 0 ? "pos" : "neg"}" style="width:${w}%"></span></span>` +
+      `<span>${e >= 0 ? "+" : ""}${e.toFixed(3)}</span></div>`;
+  }).join("") || `<div class="muted">per-source evidence appears after the first fit</div>`;
+  const est = ev.estimators || {};
+  $("ev-estimators").innerHTML = Object.keys(est).map((k) => {
+    const r = est[k] || {};
+    const sc = Number(r.score || 0);
+    return `<div class="ev-est"><div>${escapeHtml(r.label || k)} · ${r.covered ? `<b class="${sc >= 0 ? "pos" : "neg"}">${sc >= 0 ? "+" : ""}${sc.toFixed(3)}</b>` : `<span class="muted">${escapeHtml(r.why || "not covered")}</span>`}</div>` +
+      `<div class="ev-logic">${(r.logic || []).map((l) => escapeHtml(l)).join("<br>")}</div></div>`;
+  }).join("");
+  $("ev-rule").textContent = ev.rule || "";
+}
+
 function renderTemporalArb(t) {
   if (!t || !$("tw-head")) return;
   state.temporalArb = t;
@@ -3427,6 +3483,7 @@ function applySnapshot(data, opts = {}) {
   if (data.physics) renderPhysics(data.physics);
   if (data.genesis) renderGenesis(data.genesis);
   if (data.hindsight) renderHindsight(data.hindsight);
+  if (data.everything) renderEverything(data.everything);
   if (data.history) renderHistory(data.history);
   if (data.outcomes) renderOutcomes(data.outcomes);
   if (data.competition) renderCompetition(data.competition, data.boundary_pick);

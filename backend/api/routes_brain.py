@@ -73,6 +73,14 @@ async def horizons() -> dict:
     return {"horizons": get_manager().horizons_payload()}
 
 
+@router.get("/api/everything")
+async def everything() -> dict:
+    """Round BU: the unified evidence ledger (Theory of Nearly Everything) -
+    per-source evidence in nats, correlation shrinkage, predictability gauge,
+    the four physics estimators with their logic, and the takeover record."""
+    return {"everything": get_manager().everything_payload()}
+
+
 @router.get("/api/temporal-arb")
 async def temporal_arb() -> dict:
     """Round BL: continuous 70 s risk priced against its segmented twin

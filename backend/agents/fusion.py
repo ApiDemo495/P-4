@@ -82,6 +82,8 @@ class FusionResult:
     hawkes: dict | None = None
     #: Round BN: the change-point posterior (regime age, P(change), next-window P(up))
     bocpd: dict | None = None
+    #: Round BU: the unified evidence ledger's call (Theory of Nearly Everything)
+    everything: dict | None = None
 
     # -- binary direction fields (HOLD was removed) ----------------------
     @property
