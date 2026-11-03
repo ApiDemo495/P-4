@@ -11,14 +11,16 @@ own valence pathways — not a hand-written matrix pretending to be a brain.
 ---
 
 You are building the **brain component**. It must (1) download and cache the
-real connectome, (2) verify in five steps and fall back honestly, (3) convert
+real connectome, (2) verify in five steps and abstain honestly when it is not
+loaded (there is **no substitute matrix of any size** — the brain is the real
+connectome or it is absent), (3) convert
 market state into glomerular input, (4) propagate through the real wiring,
 (5) read the fly's own approach/avoid balance as the vote, (6) learn only
 through the fly's own learning rule (dopamine reward-prediction error), and
 (7) show its wiring in the UI. **"According to its will"** means: never
 override the circuit's valence with your own sign, never replace it with a
-random or hand-tuned matrix presented as the brain, and never fake its
-output when it is not loaded.
+random, hand-tuned or reduced matrix of any kind, and never fake its output
+when it is not loaded.
 
 ## 1. Data: what to import and from where
 
@@ -73,20 +75,22 @@ step 1  reach      neuPrint host answers /api/dbmeta/datasets    → "neuPrint r
 step 2  auth       token accepted                                → "neuPrint auth ok" | "invalid key" | "no key"
 step 3  query      one Cypher query returns a known MBON         → "neuPrint query ok"
 step 4  flywire    parquet + annotations downloaded or cached    → "FlyWire v783 ready (138,639 neurons)"
-step 5  fallback   80×80 GCN matrix loaded                       → "FALLBACK 80×80 — not the connectome"
+step 5  absent     nothing loaded                                → "BRAIN ABSENT — vote withheld, retrying in 60 s"
 ```
 
 - Steps 1–3 only run when a neuPrint key exists; they are **not** required
   for the brain to work (FlyWire is the primary source).
-- Step 5 is a **declared** fallback: the UI brain chip reads
-  `fallback 80×80` in amber, the vote's weight is halved, and the trace says
-  so. Never present the fallback as the real connectome; never remove it
-  either — it keeps the app alive offline.
+- Step 5 is **absence, not a fallback**: there is no stand-in matrix. The
+  UI brain chip reads `brain absent — <reason>` in red, the brain's fusion
+  weight is 0 and the other agents' weights are renormalised, the two brain
+  formulas report `zero_reasons = "brain absent"`, and the verification
+  retries every 60 s until the connectome loads.
 - Expose `GET /api/brain/status` with each step's outcome, duration, error
   message and the neuron/edge counts; `POST /api/brain/reconnect` re-runs
   the steps without restarting the app.
-- Never block the first prediction on the build: the engine starts on the
-  fallback and hot-swaps to the connectome when the worker finishes.
+- Never block the first prediction on the build: the engine starts with the
+  brain absent (weight 0, declared on screen) and hot-swaps the connectome in
+  when the worker finishes.
 
 ## 4. Market → odour: the input encoding
 
@@ -190,7 +194,7 @@ every other formula.
 ## 9. UI
 
 - Brain chip: `FlyWire v783 · 138,639 n · pass 0.21 s · 12 s ago` (green),
-  `fallback 80×80` (amber), `building 63 %` (blue), `failed: <reason>` (red).
+  `building 63 %` (blue), `brain absent — <reason>` (red).
 - Brain page: block matrix (`cell_class × cell_class` summed |W|, log
   colour), live activation trace per hop (ALPN → KC → MBON → DN bars),
   approach vs avoid bars, polarity map, dopamine panel (E, δ, drg, α, tonic),
@@ -204,7 +208,7 @@ every other formula.
 |---|---|---|
 | B-1 | pandas full-parquet load → 1.7 GB → silent OOM | pyarrow per-column, compact dtypes, worker process, progress |
 | B-2 | brain "connected" with vote ≈ 0 for weeks | polarity calibration + push-pull mirror + flat watch on the vote |
-| B-3 | 80×80 fallback shown as the brain | declared fallback chip, halved weight, trace text |
+| B-3 | a small stand-in matrix shown as the brain | removed entirely; brain is the connectome or absent with weight 0 |
 | B-4 | `/api/databaseInfo` removed by neuPrint → key test always failed | `/api/dbmeta/datasets`; distinguish 401 / timeout |
 | B-5 | neuPrint key written to `.env` | memory only; lint test greps the repo for token patterns |
 | B-6 | whole-brain pass on the request thread → UI stalls | worker thread every 2 s; MB path for per-tick |
@@ -212,14 +216,15 @@ every other formula.
 | B-8 | cached npz from an old build loaded after a logic change | `BUILD_VERSION` in the npz |
 | B-9 | KC layer dense → every input looked the same | top-5 % sparsity (APL) |
 | B-10 | vote flipped by a hand-set sign "to improve accuracy" | forbidden; only RPE updates KC→MBON, only hindsight re-weights |
-| B-11 | first prediction blocked by the download | start on fallback, hot-swap |
+| B-11 | first prediction blocked by the download | start with brain absent (weight 0), hot-swap |
 
 ## 11. Acceptance tests
 
 1. Build from a 200-row synthetic parquet: `W` is CSR float32, rows
    normalised, signs follow `nt_type`; `BUILD_VERSION` is in the npz.
 2. Verification reports all five steps with durations; with no network it
-   ends on step 5 and the chip reads `fallback 80×80`.
+   ends on step 5, the chip reads `brain absent`, the brain's fusion weight
+   is 0 and the fusion still produces a pick from the other sources.
 3. Input groups: `2 · N_INPUTS` contiguous ALPN groups, deterministic across
    runs.
 4. Flat input → vote exactly 0 with reason `flat input`; `vote(−x) == −vote(x)`
@@ -233,7 +238,7 @@ every other formula.
    on the request thread (assert thread name in trace).
 9. No neuPrint token string appears in any repo file or log line.
 10. Brain's vote in the fusion carries its horizon-specific hindsight
-    multiplier and the fallback halving.
+    multiplier; when absent it contributes exactly nothing.
 
 ## 12. Report back
 
