@@ -1,0 +1,69 @@
+# =============================================================================
+# Rehearse the Codespace start on GitHub's runners: build/pull the very image
+# devcontainer.json names, run the SAME lifecycle hooks (postCreate, postStart,
+# postAttach) the way Codespaces does, then prove the engine answers and a
+# signal locks - with no human command.  The transcript is posted on the
+# branch's PR so it can be read without the Actions UI.
+# =============================================================================
+name: devcontainer-rehearsal
+
+on:
+  push:
+    branches: ["arena/**"]
+    paths:
+      - ".devcontainer/**"
+      - "tools/codespace_autostart.sh"
+      - "tools/self_update.sh"
+      - "run.sh"
+      - ".github/workflows/devcontainer-rehearsal.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  rehearse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the devcontainer exactly as Codespaces would
+        id: dc
+        uses: devcontainers/ci@v0.3
+        with:
+          push: never
+          # postCreateCommand / postStartCommand / postAttachCommand from
+          # devcontainer.json run before runCmd, in this order, like a
+          # Codespace.  runCmd is the "user opens the terminal" moment.
+          runCmd: |
+            set +e
+            {
+            echo "=== whoami / python ==="; id; which python; python --version; echo "VIRTUAL_ENV=$VIRTUAL_ENV"
+            echo "=== autostart --status ==="; bash tools/codespace_autostart.sh --status
+            echo "=== journal ==="; cat .run/logs/autostart.journal 2>/dev/null | tail -60
+            echo "=== waiting up to 150 s for /api/health ==="
+            for i in $(seq 1 30); do curl -fsS --max-time 3 http://127.0.0.1:8000/api/health && break; sleep 5; done; echo
+            echo "=== /api/signal/current (lock) ==="
+            for i in $(seq 1 24); do curl -fsS --max-time 3 http://127.0.0.1:8000/api/signal/current | head -c 300 && break; sleep 5; done; echo
+            echo "=== run.sh --status ==="; bash run.sh --status
+            echo "=== server.log tail ==="; tail -40 server.log 2>/dev/null
+            echo "=== setup logs ==="; tail -30 .run/logs/setup-*.log 2>/dev/null
+            curl -fsS --max-time 3 http://127.0.0.1:8000/api/health >/dev/null && echo "REHEARSAL: ENGINE UP" || echo "REHEARSAL: ENGINE DOWN"
+            } 2>&1 | tee rehearsal-transcript.txt
+
+      - name: Post the transcript on the PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR=$(gh pr list --head "${GITHUB_REF_NAME}" --state open --json number --jq '.[0].number' || true)
+          {
+            echo "### devcontainer rehearsal (run ${{ github.run_id }}, ${GITHUB_SHA::8}) - outcome: ${{ steps.dc.outcome }}"
+            echo '```'
+            tail -c 60000 rehearsal-transcript.txt 2>/dev/null || echo "(no transcript - the container never reached runCmd; the hooks or the image failed)"
+            echo '```'
+          } > /tmp/t.md
+          [ -n "$PR" ] && gh pr comment "$PR" --body-file /tmp/t.md || true

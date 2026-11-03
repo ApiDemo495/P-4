@@ -1,0 +1,45 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug engine + dashboard (F5)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "backend.api.main",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}",
+        "PYTHONUNBUFFERED": "1"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "preLaunchTask": "Environment check (run.sh --check)"
+    },
+    {
+      "name": "Debug a fast cycle (TIME_SCALE=10)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "backend.api.main",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}",
+        "TIME_SCALE": "10",
+        "LOCAL_AGENT_STUB": "1",
+        "PYTHONUNBUFFERED": "1"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Debug the smoke run",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "backend.tests.smoke",
+      "args": ["--seconds", "30", "--scale", "20"],
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder}" },
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ]
+}
