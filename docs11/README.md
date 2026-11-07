@@ -13,6 +13,7 @@ multi-asset app with 22 / 44 / 130 / 247-minute windows.
 | `docs11-zeros.md` | the 0.00 problem: eleven root causes, fixes, tests | written |
 | `docs11-brain.md` | connectome import, verification, readout, dopamine learning | written |
 | `docs11-charts.md` | charts that move; TP/SL computed, drawn, settled | written |
+| `docs11-doublecheck.md` | double check = verify arithmetic, never block the pick; floor in the right unit | written |
 | `docs11-genesis.md` | generated formulas under a fitness regime | planned |
 | `docs11-agents.md` | Gemini / local / decision models, key ring | planned |
 | `docs11-ui.md` | dashboard, toggles, settings, countdown | planned |
