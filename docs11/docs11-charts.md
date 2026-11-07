@@ -217,7 +217,7 @@ const chart = LightweightCharts.createChart(el, {
   rightPriceScale: { borderColor: "#222", scaleMargins: { top: 0.08, bottom: 0.25 } },
   timeScale: { borderColor: "#222", timeVisible: true, secondsVisible: false, rightOffset: 12 },
   crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-  localization: { timezone: "Asia/Kolkata" },
+  // NOTE: the library has no timezone option — see D-3 for IST labels
 });
 const candles = chart.addCandlestickSeries({
   upColor: "#26a69a", downColor: "#ef5350", borderVisible: false,
@@ -331,6 +331,110 @@ updates. A reload rebuilds the chart from the two GETs in < 1 s.
 
 ---
 
+## PART D — Candles below the live price (chart desync): diagnosis and fix
+
+Observed after the Part C rebuild: the candle series runs 72,000 → 74,000 and
+ends at 09:50, while the live price is 76,081 (tag at the top of the axis),
+ENTRY 76,078 and SL 75,576 are drawn correctly, the ticker says BTC +12.15 %,
+PAXG +53 %, ETH −36 %, and the system clock says 15:21 IST. Read together,
+this is **not a drawing bug** — the candles are not the same data as the
+price. Three facts prove it:
+
+1. The candles are a smooth, evenly-sized ramp. Real 1-minute BTC candles
+   are jagged. A smooth ramp is **synthesised** history (a bootstrap that
+   generated bars when the REST kline fetch failed, or a simulator/replay
+   feed used as the chart source).
+2. The percentage changes (+12 %, +53 %, −36 %) are the live price compared
+   with the **first synthetic bar**, which is why they are absurd.
+3. The last candle ends at "09:50" = 15:20 IST shown in UTC — the bars were
+   stamped backwards from *now*, so they are current in time but fake in
+   price.
+
+### D-1 The rule
+> **The chart may only show bars that come from the exchange (REST klines)
+> or that the app itself built from real trades. If neither exists, the
+> chart is empty with a reason. No bar is ever synthesised, interpolated,
+> replayed from a simulator, or extrapolated backwards.**
+
+### D-2 Diagnose it in two minutes
+```
+GET /api/chart/BTC?tf=1m&limit=3        → look at the last bar's close and time
+compare with GET /api/price/BTC          → last trade
+```
+- close ≠ price by > 0.2 %  → different sources (D-4).
+- last bar time ≠ now ± 60 s → bootstrap stale, live bar not updated (D-5).
+- bars perfectly regular (|close−open| nearly constant, volume uniform)
+  → synthetic generator; find and delete it (D-4).
+- percentage on the ticker uses `bars[0].open` → wrong reference (D-6).
+
+### D-3 Fix the sources (server)
+```
+bootstrap(asset, tf):
+    klines = exchange_rest_klines(symbol, tf, limit=400)      # Binance /api/v3/klines, Kraken OHLC, Gemini candles, equity provider bars
+    if klines fails (network / 451 / symbol):  retry 3× with back-off, then
+        bars = []  and  chart_status = "no history — <provider> <error>"   # NOT a generator
+    store bars; verify: last_close within 0.5 % of the live price, else
+        chart_status = "history source disagrees with live feed (<provider> vs <feed>)"; discard the bars
+live:
+    on every trade (price, qty, ts) from THE SAME stream that feeds the ticker and the settlement:
+        bar = bars.last if same minute else new bar(open=price)
+        bar.high = max, bar.low = min, bar.close = price, bar.volume += qty
+        broadcast CANDLE
+```
+- One source of truth per asset: the trade stream that settles windows.
+  REST klines are only for the **past**; from the first live trade onward,
+  bars are built from trades. If the REST source is a different venue from
+  the live stream (e.g. Kraken bars, Binance trades), say so on the chart
+  and accept the small gap — never scale bars to "match".
+- Delete every code path that fabricates bars: random walks,
+  `np.linspace` ramps, "replay" tapes used as history, simulator output fed
+  to the chart. The simulator may exist for self-tests but **must not be a
+  chart or ticker source**; if a sim source is active, print `SIM` in red on
+  the chart and in the ticker (the user asked for this honesty elsewhere).
+- Time: store bar times as **UTC epoch seconds**. Lightweight Charts has no
+  timezone option; to label in IST feed it `time + 19800` and keep the real
+  UTC time in the bar object for logic. Do this in one adapter function so
+  logic never sees shifted times.
+
+### D-4 Reconcile continuously (browser + server)
+```
+every 5 s:  desync = |lastBar.close − lastPrice| / lastPrice
+   if desync > 0.002 →  badge "CHART DESYNC 2.8 % — rebuilding"; re-fetch /api/chart; log it
+   if lastBar.time < now − 2·tf →  badge "live bar stalled"; resubscribe
+```
+The ticker, the last-price axis tag, the live candle's close and the
+settlement price must be the **same number**. Assert it in a test.
+
+### D-5 The live bar in the browser
+- `candles.update(bar)` on every `CANDLE` message; new minute → new bar
+  (the library appends when `time` is greater than the last).
+- On `LEVELS` after a lock, the entry line must sit **on** the current
+  candle's close (entry is the first trade after the boundary). If the
+  entry line is 2,000 points above the candles, the bars are wrong, not the
+  line.
+
+### D-6 Ticker percentage
+`change % = (last − session_open) / session_open` where `session_open` is
+the exchange's day-open (Binance 24 h ticker `/api/v3/ticker/24hr` →
+`priceChangePercent`, or your equity provider's previous close), never the
+first bar of whatever history the chart happens to hold.
+
+### D-7 Tests for Part D
+1. `last_bar.close == last_price` within one tick, for every asset, 1,000
+   consecutive checks on a live tape.
+2. With the REST kline endpoint disabled, the chart is empty with
+   `no history — <provider> <error>`, the live bar still forms from trades,
+   and no bar exists with time earlier than the first live trade.
+3. Lint: no `linspace`, `random`, `replay` or simulator import in the chart
+   / candle module.
+4. Bars' `time` are UTC epoch seconds; the axis shows IST (`15:21`, not
+   `09:51`) with the adapter offset applied only at render.
+5. Ticker change % equals the exchange's 24 h figure within 0.05 %.
+6. Injecting a 3 % wrong bar triggers the DESYNC badge and a re-fetch
+   within 5 s.
+
+---
+
 ## Errors we hit — do not repeat
 
 | id | error | fix |
@@ -351,6 +455,8 @@ updates. A reload rebuilds the chart from the two GETs in < 1 s.
 | C-14 | q5–q95 fan painted over the whole chart | q50 + q25–q75 inside the window, toggle, default off |
 | C-15 | hand-drawn canvas path instead of candles | Lightweight Charts candlesticks from server candles |
 | C-16 | chart begins at app start (no history) | REST kline bootstrap, last 3 windows + current |
+| D-1 | candles synthesised when the kline fetch failed → bars 2.8 % below the live price, ticker +12 % / +53 % | no generator; empty chart with reason; reconcile badge |
+| D-2 | time axis in UTC for an IST user | UTC storage, +19800 s adapter at render |
 
 ## Acceptance tests
 
