@@ -20,7 +20,7 @@ pixel. Everything looks flat even though the data moves.
 **Fix:** compute `lo`/`hi` from **the data on screen only** (path points,
 fan quantiles, TP, SL, entry), then pad:
 ```js
-let lo = Math.min(...values), hi = Math.max(...values);
+let lo = Math.min(...candleLowsOnScreen, entry), hi = Math.max(...candleHighsOnScreen, entry);
 const pad = (hi - lo) * 0.08 || entry * 0.0005;   // 8 % of range; 5 bps if range is 0
 lo -= pad; hi += pad;
 const Y = (p) => H - 18 - ((p - lo) / (hi - lo)) * (H - 30);
@@ -135,7 +135,7 @@ const risk = state.signal?.risk || {};
 const rule = (price, colour, label) => {
   if (!(price > 0)) return;                 // no entry yet → draw nothing, show "levels pending"
   const y = Y(price);                       // SAME Y as the path and the fan
-  if (y < 0 || y > H) return;               // outside range → include it in lo/hi instead (see A-1)
+  if (y < 0 || y > H) { pinTag(price, label, colour, y < 0 ? "top" : "bottom"); return; }
   ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.moveTo(44, y); ctx.lineTo(W - 12, y);
   ctx.strokeStyle = colour; ctx.stroke(); ctx.setLineDash([]);
   ctx.fillStyle = colour; ctx.font = "10px monospace"; ctx.fillText(label, 46, y - 3);
@@ -144,8 +144,11 @@ rule(risk.take_profit, "rgba(61,220,132,.8)", `TP ${fmt(risk.take_profit)} (+${r
 rule(risk.stop_loss,   "rgba(255,92,92,.8)",  `SL ${fmt(risk.stop_loss)} (−${risk.sl_bps} bps)`);
 rule(risk.entry,       "rgba(255,255,255,.35)", `entry ${fmt(risk.entry)}`);
 ```
-- Include `take_profit`, `stop_loss` and `entry` in the `lo/hi` computation
-  of A-1 so they are always on screen.
+- **Do not** stretch the y-axis to fit TP/SL. The axis is scaled to the
+  candles/path on screen (plus `entry`); a level outside that range is shown
+  as a **pinned tag at the top/bottom edge** (`▲ TP 77,050 · +132 bps`), not
+  by squashing the price into a flat line. (We did it the other way once —
+  the price became a 3-pixel squiggle between two far lines. See Part C.)
 - Draw the **expected path fan** (q5/q25/q50/q75/q95 of
   `entry·exp(drift·t ± z·σ·√t)`) under the price path; TP/SL rules on top
   of it; the live path on top of everything.
@@ -185,6 +188,149 @@ the levels in the context of the day.
 
 ---
 
+## PART C — Make it a real trading chart (what the screenshots show is wrong)
+
+What the current chart does, read from the screenshots: the y-axis runs
+75,400 → 77,200 because it was stretched to the TP (77,050) and SL (75,544);
+the price (76,046) is a 3-pixel squiggle in the middle; a huge translucent
+fan dominates the canvas; the path starts at 13:15 with nothing before it;
+volume is two giant blocks; the four mini cards are red noise lines. Nobody
+can read a trade off that. A trading chart is **candles, auto-scaled to the
+candles, with levels as thin horizontal lines carrying price tags on the
+right axis**. Build exactly that.
+
+### C-1 Use a real charting library — do not hand-draw candles on a canvas
+Use **TradingView Lightweight Charts** (`lightweight-charts` on npm, Apache
+2.0, ~45 kB, no account, no iframe). Vendor the single file
+`lightweight-charts.standalone.production.js` into `static/vendor/` at
+setup time (download from `https://registry.npmjs.org/lightweight-charts/-/lightweight-charts-<ver>.tgz`
+and extract `dist/`), so the app works offline and never depends on a CDN.
+It gives candlesticks, volume histogram, price lines with axis tags,
+markers, crosshair, time axis, zoom/pan, autoscale — everything the
+hand-drawn canvas lacks.
+
+### C-2 One main chart per asset, this exact layout
+```js
+const chart = LightweightCharts.createChart(el, {
+  layout: { background: { color: "#0b0f14" }, textColor: "#9aa4b2" },
+  grid: { vertLines: { color: "#161c24" }, horzLines: { color: "#161c24" } },
+  rightPriceScale: { borderColor: "#222", scaleMargins: { top: 0.08, bottom: 0.25 } },
+  timeScale: { borderColor: "#222", timeVisible: true, secondsVisible: false, rightOffset: 12 },
+  crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+  localization: { timezone: "Asia/Kolkata" },
+});
+const candles = chart.addCandlestickSeries({
+  upColor: "#26a69a", downColor: "#ef5350", borderVisible: false,
+  wickUpColor: "#26a69a", wickDownColor: "#ef5350",
+  priceFormat: { type: "price", precision: 2, minMove: 0.01 },   // per asset: gold 2 dp, BTC 1 dp, NIFTY 2 dp
+});
+const volume = chart.addHistogramSeries({
+  priceFormat: { type: "volume" }, priceScaleId: "",            // own overlay scale at the bottom
+});
+volume.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+```
+- **Candle resolution per timeframe:** TF 22 m → 1-minute candles,
+  44 m → 1-minute, 130 m → 5-minute, 247 m → 5-minute (switchable 1/5/15).
+  Show **the last 3 windows of history plus the current window** so the
+  current window has context (22-minute TF → the last ~90 minutes).
+- **Candles come from the server**, built from the same trade stream the
+  settlement uses, bootstrapped from the exchange's REST klines at start
+  (Binance `/api/v3/klines`, Kraken OHLC, your equity feed's bars) so the
+  chart is full from the first second, never "starts at 13:15".
+- Update the live candle with `candles.update({time, open, high, low, close})`
+  on every price tick (≥ 1 Hz); push a new bar when the minute rolls over.
+  Never `setData` the whole array per tick.
+
+### C-3 Levels: entry / TP / SL as price lines with axis tags
+```js
+const line = (price, color, title, style) => candles.createPriceLine({
+  price, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title,
+});
+state.lines = {
+  entry: line(risk.entry, "#c9d1d9", "ENTRY", LightweightCharts.LineStyle.Dotted),
+  tp:    line(risk.take_profit, "#26a69a", `TP +${risk.tp_bps} bps`, LightweightCharts.LineStyle.Dashed),
+  sl:    line(risk.stop_loss,   "#ef5350", `SL −${risk.sl_bps} bps`, LightweightCharts.LineStyle.Dashed),
+};
+// at the next lock: candles.removePriceLine(old) for each, create new ones.
+```
+- Levels do **not** change the autoscale (`autoscaleInfoProvider` on the
+  candle series returns the candles' own min/max). If TP is off-screen the
+  library still shows its tag on the price axis edge — that is the correct
+  behaviour, and it tells the user "the target is 132 bps away, above the
+  screen", which is itself information.
+- Shade the TP zone (entry→TP) faint green and the SL zone (entry→SL) faint
+  red **only between the lock time and the window end**, using two
+  area/baseline series or a canvas overlay aligned with
+  `chart.timeScale().timeToCoordinate` / `candles.priceToCoordinate`. This
+  is the standard "position tool" look.
+- Markers: `candles.setMarkers([{ time: lockTime, position: "belowBar",
+  shape: "arrowUp", color: "#26a69a", text: "LOCK BUY" }, { time: hitTime,
+  position: "aboveBar", shape: "circle", color, text: "TP hit +138 bps" }])`.
+  Vertical window boundaries: thin dotted vertical lines drawn on an overlay
+  at every boundary time; the current window's end labelled with the
+  countdown.
+
+### C-4 The fan and the first-touch replay are secondary, not the chart
+- The quantile fan belongs **inside the current window only**, drawn as a
+  thin `q50` dashed line plus a faint q25–q75 band — never a q5–q95 cone
+  painted over the whole canvas. Make it a toggle (`expected path: on/off`),
+  default off on the main chart, on in the probability panel.
+- The "NEITHER 96 % / STOP" first-touch bar and the replay belong in the
+  probability panel, not over the chart.
+
+### C-5 The four timeframe mini-cards
+Each card gets a small Lightweight Chart (height 90 px) with the same candle
+series and the three price lines, **no volume, no fan, no red noise line**;
+`handleScroll/handleScale: false`; candle resolution per card as in C-2;
+the current window shaded. The card's number line stays below.
+
+### C-6 Volume
+Volume is the histogram of **trade quantity per candle** from the same
+stream (not two blocks): colour by candle direction; for assets where the
+feed has no volume (some FX/CFD feeds), hide the pane and say `no volume on
+this feed` instead of drawing fake bars.
+
+### C-7 Axis, formatting, time
+- Right price axis with the asset's tick size (`minMove`), left axis off.
+- Time axis in the user's zone (IST), `HH:mm`, with the window boundaries
+  labelled; `rightOffset` ≈ 10 bars so the current window's remainder is
+  visible as empty space up to the window end.
+- Last-price tag on the axis (built in), crosshair with OHLC tooltip
+  (`subscribeCrosshairMove` → a legend line `O 76,040 H 76,112 L 76,020
+  C 76,046 · vol 12.4`).
+- Resize with `ResizeObserver` → `chart.applyOptions({ width, height })`.
+
+### C-8 Data contract (server → browser)
+```
+GET  /api/chart/{asset}?tf=1m&limit=400       → [{time, open, high, low, close, volume}]
+WS   {type:"CANDLE", asset, tf, bar}           every tick for the live bar
+WS   {type:"LEVELS", asset, horizon, entry, take_profit, stop_loss, tp_bps, sl_bps, lock_time, window_end}
+WS   {type:"LEVEL_HIT", asset, horizon, level, price, time}
+GET  /api/chart/{asset}/markers?since=…        → locks, hits, boundaries (for reload)
+```
+The browser never computes candles from ticks on its own; it only applies
+updates. A reload rebuilds the chart from the two GETs in < 1 s.
+
+### C-9 Acceptance tests for Part C
+1. Main chart shows ≥ 90 one-minute candles for the 22 m TF at first paint,
+   oldest from REST bootstrap, newest live.
+2. Autoscale range equals the on-screen candles' low/high (±margins) and
+   does **not** change when TP/SL move; an off-screen TP shows its axis tag.
+3. Entry/TP/SL price lines exist with tags; after a new lock the old lines
+   are removed (count stays 3).
+4. Live candle's `close` equals the last price in the tape within one tick.
+5. Markers: lock marker at the boundary; hit marker at the hit time, same
+   price as the server's `LEVEL_HIT`.
+6. Volume histogram sum over a candle equals the trade quantity sum for
+   that minute from the tape.
+7. No fan on the main chart by default; toggle draws q50 + q25–q75 band
+   only within the current window.
+8. Mini cards: candles + 3 price lines, no red noise line, same scale rule.
+9. Works with the vendored library file; no external CDN request is made.
+10. Reload mid-window restores candles, lines and markers from the API.
+
+---
+
 ## Errors we hit — do not repeat
 
 | id | error | fix |
@@ -201,6 +347,10 @@ the levels in the context of the day.
 | C-10 | touch detected in the browser on a different feed | server-side on the settlement stream |
 | C-11 | gap through both levels counted as TP | SL wins on the same print |
 | C-12 | flat chart during market close looked like a bug | `closed — opens …` state |
+| C-13 | y-axis stretched to TP/SL → price a 3-px squiggle | autoscale to candles only; off-screen levels as axis tags |
+| C-14 | q5–q95 fan painted over the whole chart | q50 + q25–q75 inside the window, toggle, default off |
+| C-15 | hand-drawn canvas path instead of candles | Lightweight Charts candlesticks from server candles |
+| C-16 | chart begins at app start (no history) | REST kline bootstrap, last 3 windows + current |
 
 ## Acceptance tests
 
